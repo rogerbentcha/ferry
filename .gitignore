@@ -3,4 +3,7 @@ target/
 *.db
 *.db-*
 .DS_Store
-/.claude/
+# Claude Code: the shared skills and agents are part of the repo, the rest stays local.
+/.claude/*
+!/.claude/skills/
+!/.claude/agents/
