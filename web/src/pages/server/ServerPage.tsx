@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useSearchParams } from 'react-router'
-import { Activity, Code2, Globe, Plug, Settings2, UserRound } from 'lucide-react'
+import { Activity, Code2, Globe, Plug, ScrollText, Settings2, UserRound } from 'lucide-react'
 
 import { PageContainer } from '@/components/patterns/Page'
 import { API_DOCS_URL, DESIGN_DOC_URL, DOCS_URL, REPO_URL } from '@/components/shell/nav'
@@ -9,12 +9,14 @@ import { useOpenApiSpec } from '@/lib/api/queries'
 import { AccountSection } from './AccountSection'
 import { DomainsSection } from './DomainsSection'
 import { MonitoringSection } from './MonitoringSection'
+import { ServerLogsSection } from './ServerLogsSection'
 import { ServerMenu, type ServerMenuItem } from './ServerMenu'
 import { ApiSection, ConnectionsSection, GeneralSection } from './sections'
 
 const SECTIONS: (ServerMenuItem & { Component: React.ComponentType })[] = [
   { id: 'general', label: 'General', icon: <Settings2 />, Component: GeneralSection },
   { id: 'monitoring', label: 'Monitoring', icon: <Activity />, Component: MonitoringSection },
+  { id: 'logs', label: 'Server logs', icon: <ScrollText />, Component: ServerLogsSection },
   { id: 'domains', label: 'Domains', icon: <Globe />, Component: DomainsSection },
   { id: 'account', label: 'Account', icon: <UserRound />, Component: AccountSection },
   { id: 'connections', label: 'Connections', icon: <Plug />, Component: ConnectionsSection },
@@ -31,9 +33,10 @@ const LINKS = [
 /**
  * `/server` — Studio "Settings"-style page with an inner menu:
  * General (server info + theme), Monitoring (how busy the machine and its
- * containers are), Domains (the domains services are served
- * under, their DNS and certificates), Account (password, API tokens,
- * sessions), Connections (CLI, git accounts, GitHub webhook), API.
+ * containers are), Server logs (what ferryd logs, live), Domains (the
+ * domains services are served under, their DNS and certificates), Account
+ * (password, API tokens, sessions), Connections (CLI, git accounts, GitHub
+ * webhook), API.
  * The section lives in `?section=` (the route has no sub-paths).
  */
 export function ServerPage() {

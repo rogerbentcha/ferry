@@ -4,7 +4,7 @@ import { stripAnsi } from '@/lib/format'
 import { useSignedIn } from '@/stores/auth'
 
 import { ApiError, errorMessage } from './client'
-import { backoffDelay, isAbortError, readSse, sleep } from './sse'
+import { backoffDelay, isAbortError, readSse, sleep, type SseEvent } from './sse'
 import type { LogLine } from './types'
 
 export type LogStreamStatus = 'idle' | 'connecting' | 'live' | 'ended' | 'error'
@@ -16,11 +16,21 @@ export interface LogEntry extends LogLine {
   text: string
 }
 
-export interface LogStreamOptions {
+/** One event of the stream as a line (`seq` is its number), or null to leave it out. */
+export type LogEventParser<T> = (event: SseEvent, seq: number) => T | null
+
+export interface LogStreamOptions<T = LogEntry> {
   /** Keep the stream open for new lines (`?follow=true`). Default true. */
   follow?: boolean
   /** Runtime logs only: number of past lines per instance (`?tail=`). */
   tail?: number
+  /** Other query parameters (e.g. the server log's `level`). */
+  query?: Record<string, string | number | boolean>
+  /**
+   * Turns events into lines; a module-level function (a new one reopens the
+   * stream). Default: `event: log` with a `LogLine`.
+   */
+  parse?: LogEventParser<T>
   /** Set false to keep the stream closed. Default true. */
   enabled?: boolean
   /** Ring-buffer size; older lines are dropped. Default 5000. */
@@ -29,8 +39,8 @@ export interface LogStreamOptions {
   reconnect?: boolean
 }
 
-export interface LogStreamResult {
-  lines: LogEntry[]
+export interface LogStreamResult<T = LogEntry> {
+  lines: T[]
   status: LogStreamStatus
   /** Error message when status is `error` (or the last reconnect reason). */
   error: string | null
@@ -40,26 +50,50 @@ export interface LogStreamResult {
   restart: () => void
 }
 
+/** `event: log` with a `LogLine` (runtime, build and job logs). */
+export function parseLogLine(event: SseEvent, seq: number): LogEntry | null {
+  if (event.event !== 'log') return null
+  try {
+    const line = JSON.parse(event.data) as LogLine
+    if (typeof line.line !== 'string') return null
+    return { ...line, seq, text: stripAnsi(line.line) }
+  } catch {
+    return null // malformed line: skip
+  }
+}
+
 /**
  * Stream an SSE log endpoint (`event: log` lines, `event: end` terminator).
  *
  * `path` e.g. `streamPaths.deployLogs(id)`; pass null to stay idle.
  * Lines are batched per animation frame so fast builds don't re-render per
  * line. On a network drop while following it reconnects with backoff:
- * finite logs (deploy/job) are replayed from scratch, runtime logs (with
- * `tail`) resume with `tail=0` so nothing is duplicated.
+ * finite logs (deploy/job) and the server's log are replayed from scratch,
+ * runtime logs (with `tail`) resume with `tail=0` so nothing is duplicated.
  */
-export function useLogStream(path: string | null, options: LogStreamOptions = {}): LogStreamResult {
-  const { follow = true, tail, enabled = true, maxLines = 5000, reconnect = true } = options
+export function useLogStream(path: string | null, options?: LogStreamOptions<LogEntry>): LogStreamResult<LogEntry>
+export function useLogStream<T extends { seq: number }>(
+  path: string | null,
+  options: LogStreamOptions<T> & { parse: LogEventParser<T> },
+): LogStreamResult<T>
+export function useLogStream<T extends { seq: number }>(
+  path: string | null,
+  options: LogStreamOptions<T> = {},
+): LogStreamResult<T> {
+  const { follow = true, tail, query, enabled = true, maxLines = 5000, reconnect = true } = options
+  // Without `parse`, the first signature: T is LogEntry.
+  const parse = options.parse ?? (parseLogLine as unknown as LogEventParser<T>)
   const signedIn = useSignedIn()
+  // The query as a value, so a new object with the same parameters keeps the stream.
+  const queryKey = query ? JSON.stringify(query) : ''
 
-  const [lines, setLines] = useState<LogEntry[]>([])
+  const [lines, setLines] = useState<T[]>([])
   const [status, setStatus] = useState<LogStreamStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [generation, setGeneration] = useState(0)
 
   const seqRef = useRef(0)
-  const pendingRef = useRef<LogEntry[]>([])
+  const pendingRef = useRef<T[]>([])
   const frameRef = useRef<number | null>(null)
   const maxRef = useRef(maxLines)
   useEffect(() => {
@@ -68,7 +102,7 @@ export function useLogStream(path: string | null, options: LogStreamOptions = {}
 
   // Reset the buffer when the stream identity changes (render-time reset, no effect).
   const active = Boolean(path && enabled && signedIn)
-  const streamKey = active ? `${path}|${follow}|${tail ?? ''}|${generation}` : null
+  const streamKey = active ? `${path}|${follow}|${tail ?? ''}|${queryKey}|${generation}` : null
   const [currentKey, setCurrentKey] = useState<string | null>(null)
   if (streamKey !== currentKey) {
     setCurrentKey(streamKey)
@@ -109,18 +143,8 @@ export function useLogStream(path: string | null, options: LogStreamOptions = {}
     const ctrl = new AbortController()
     const { signal } = ctrl
     const resumable = tail !== undefined
+    const extra = queryKey ? (JSON.parse(queryKey) as Record<string, string | number | boolean>) : {}
     pendingRef.current = []
-
-    const push = (raw: string) => {
-      try {
-        const line = JSON.parse(raw) as LogLine
-        if (typeof line.line !== 'string') return
-        pendingRef.current.push({ ...line, seq: ++seqRef.current, text: stripAnsi(line.line) })
-        scheduleFlush()
-      } catch {
-        /* malformed line: skip */
-      }
-    }
 
     void (async () => {
       let attempt = 0
@@ -128,7 +152,7 @@ export function useLogStream(path: string | null, options: LogStreamOptions = {}
       while (!signal.aborted) {
         let ended = false
         try {
-          const query: Record<string, string | number | boolean> = { follow }
+          const query: Record<string, string | number | boolean> = { ...extra, follow }
           if (tail !== undefined) query.tail = firstConnect ? tail : 0
           if (!firstConnect && !resumable) {
             // finite log replayed from the start: drop what we had
@@ -144,8 +168,15 @@ export function useLogStream(path: string | null, options: LogStreamOptions = {}
               setStatus('live')
             },
             onEvent: (ev) => {
-              if (ev.event === 'log') push(ev.data)
-              else if (ev.event === 'end') ended = true
+              if (ev.event === 'end') {
+                ended = true
+                return
+              }
+              const entry = parse(ev, ++seqRef.current)
+              if (entry) {
+                pendingRef.current.push(entry)
+                scheduleFlush()
+              }
             },
           })
           if (ended || !follow) {
@@ -187,7 +218,7 @@ export function useLogStream(path: string | null, options: LogStreamOptions = {}
         frameRef.current = null
       }
     }
-  }, [path, follow, tail, enabled, signedIn, reconnect, generation, flush, scheduleFlush])
+  }, [path, follow, tail, queryKey, parse, enabled, signedIn, reconnect, generation, flush, scheduleFlush])
 
   return { lines, status, error, clear, restart }
 }

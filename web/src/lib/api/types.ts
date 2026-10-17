@@ -200,6 +200,24 @@ export interface LogLine {
 }
 
 // ---------------------------------------------------------------------------
+// The server's own log (server_logs.rs)
+// ---------------------------------------------------------------------------
+
+/** How important a line of the server's log is (`trace` lines count as `debug`). */
+export type ServerLogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+/** One line of the server's log: `event: log` of `GET /api/v1/server/logs`. */
+export interface ServerLogLine {
+  ts: Timestamp
+  level: ServerLogLevel
+  /** The module that logged it, e.g. `ferry_engine::deploy`. */
+  target: string
+  message: string
+  /** The other values of the line (`service`, `deploy`, `path`…), as text. */
+  fields: Record<string, string>
+}
+
+// ---------------------------------------------------------------------------
 // DTOs (dto.rs)
 // ---------------------------------------------------------------------------
 

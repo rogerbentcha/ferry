@@ -183,4 +183,5 @@ export const streamPaths = {
   deployLogs: (deployId: string) => `${V1}/deploys/${seg(deployId)}/logs`,
   jobLogs: (jobId: string) => `${V1}/jobs/${seg(jobId)}/logs`,
   serviceLogs: (ref: string) => `${V1}/services/${seg(ref)}/logs`,
+  serverLogs: `${V1}/server/logs`,
 }
