@@ -817,14 +817,19 @@ mod tests {
     async fn children_are_recorded_while_they_run() {
         let d = tempfile::tempdir().unwrap();
         let dir = d.path().join("children");
+        // The record is written just after the spawn, so the child itself may
+        // run ahead of it: read it from the stdout callback, which runs once
+        // `spawn` has written it and before the guard removes it.
+        let mut seen = None;
         let mut cmd = Command::new("sh");
-        cmd.args(["-c", &format!("echo $$; cat '{}'/$$", dir.display())]);
-        let out = record_children_in(dir.clone(), run_capture(cmd, None, None)).await.unwrap();
-        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-        let mut lines = stdout.lines();
-        let pid = lines.next().unwrap();
-        let record = crate::orphans::parse_record(lines.next().unwrap()).unwrap();
-        assert_eq!((record.pid.to_string().as_str(), record.program.as_str()), (pid, "sh"));
+        cmd.args(["-c", "echo $$"]);
+        let on_stdout = |pid: &str| seen = Some((pid.to_string(), std::fs::read_to_string(dir.join(pid))));
+        let cancel = CancellationToken::new();
+        let run = run_streaming(cmd, &cancel, 0, on_stdout, |_| {});
+        record_children_in(dir.clone(), run).await.unwrap();
+        let (pid, record) = seen.expect("the child printed its pid");
+        let record = crate::orphans::parse_record(&record.expect("the running child is recorded")).unwrap();
+        assert_eq!((record.pid.to_string(), record.program.as_str()), (pid, "sh"));
         assert!(std::fs::read_dir(&dir).unwrap().next().is_none(), "the record outlived the child");
 
         // Outside a build nothing is recorded.
