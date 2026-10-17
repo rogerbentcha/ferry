@@ -1,7 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 
 import { endpoints } from '../endpoints'
 import { keys } from '../keys'
+import type { MetricsRange } from '../types'
 
 /** How often the Monitoring section asks for fresh numbers. */
 export const SERVER_METRICS_INTERVAL_MS = 5_000
@@ -20,5 +21,25 @@ export function useServerMetrics() {
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     staleTime: 0,
+  })
+}
+
+/** How often the history charts ask again: ferryd reads the server every 10 s. */
+export const METRICS_HISTORY_INTERVAL_MS = 10_000
+
+/**
+ * `GET /api/v1/server/metrics/history?range=` — the last hour, 6 hours or 24 hours of the server's
+ * metrics. Polled every 10 s while the tab is visible, like `useServerMetrics`; switching the range
+ * keeps the previous charts until the new ones arrive.
+ */
+export function useMetricsHistory(range: MetricsRange) {
+  return useQuery({
+    queryKey: keys.metricsHistory(range),
+    queryFn: ({ signal }) => endpoints.metricsHistory(range, signal),
+    refetchInterval: METRICS_HISTORY_INTERVAL_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+    placeholderData: keepPreviousData,
   })
 }

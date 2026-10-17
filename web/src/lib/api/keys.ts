@@ -1,3 +1,5 @@
+import type { MetricsRange } from './types'
+
 /**
  * TanStack Query key factory. Hierarchical so a prefix invalidates a subtree:
  * `keys.service(ref)` covers the service's status, deploys, env, domains and jobs.
@@ -7,6 +9,8 @@ export const keys = {
   info: () => ['info'] as const,
   /** How busy the machine and its containers are (never invalidated: polled). */
   serverMetrics: () => ['server', 'metrics'] as const,
+  /** The last hour / 6 hours / 24 hours of those (never invalidated: polled). */
+  metricsHistory: (range: MetricsRange) => ['server', 'metrics', 'history', range] as const,
 
   /** The account: its sessions, its API tokens, pending `ferry login` requests. */
   auth: () => ['auth'] as const,
