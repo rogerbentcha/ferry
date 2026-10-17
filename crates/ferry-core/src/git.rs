@@ -41,13 +41,14 @@ pub fn normalize_repo_url(url: &str) -> String {
 }
 
 /// Remove credentials from a URL for display in logs:
-/// `https://user:token@github.com/a/b` → `https://***@github.com/a/b`.
+/// `https://user:token@github.com/a/b` → `https://***@github.com/a/b`. They
+/// end at the last `@` before the path (a password may hold one, as git
+/// reads it).
 pub fn redact_url(url: &str) -> String {
     if let Some(scheme_end) = url.find("://") {
         let rest = &url[scheme_end + 3..];
-        if let Some(at) = rest.find('@')
-            && !rest[..at].contains('/')
-        {
+        let authority = &rest[..rest.find('/').unwrap_or(rest.len())];
+        if let Some(at) = authority.rfind('@') {
             return format!("{}***@{}", &url[..scheme_end + 3], &rest[at + 1..]);
         }
     }
@@ -166,6 +167,9 @@ mod tests {
         assert_eq!(redact_url("https://u:t@github.com/a/b"), "https://***@github.com/a/b");
         assert_eq!(redact_url("https://github.com/a/b"), "https://github.com/a/b");
         assert_eq!(redact_url("git@github.com:a/b"), "git@github.com:a/b");
+        // A password with an `@` of its own, and an `@` in the path.
+        assert_eq!(redact_url("https://oauth2:abc@def@gitlab.com/x"), "https://***@gitlab.com/x");
+        assert_eq!(redact_url("https://github.com/a/b@v1"), "https://github.com/a/b@v1");
     }
 
     #[test]

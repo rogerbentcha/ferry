@@ -19,7 +19,7 @@ description: A deploy that cannot resolve a reference fails. The message gives t
 | `invalid reference '${{…}}': expected ${{kind.name.property}}` | The reference has fewer or more than three parts. |
 | `unknown reference kind 'bucket' (use datastore or service)` | The kind is not `datastore`, `db`, `database`, `service` or `svc`. |
 | `unknown datastore property 'nope'` / `unknown service property 'nope'` | The property does not exist for that kind. Note: `hostport` is a property of a service only. |
-| `unterminated reference in '…'` | A `${{` has no `}}` after it. |
+| `unterminated reference: '${{' has no '}}' after it` | A `${{` has no `}}` after it. The message does not show the value, because the value can contain a secret. |
 
 ## Errors in the target
 
