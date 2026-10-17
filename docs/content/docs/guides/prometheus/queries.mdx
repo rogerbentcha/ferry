@@ -1,0 +1,50 @@
+---
+title: The queries
+description: These PromQL queries give in Grafana the numbers of the Monitoring page of Ferry.
+---
+
+```text title="Requests per second of each service"
+sum by (instance, name) (rate(ferry_http_requests_total{target!~"dashboard|unrouted"}[5m]))
+```
+
+Ferry publishes the counts as they are. Prometheus calculates the rates and the <Term id="percentile">percentiles</Term> with <Term id="promql" />.
+
+`by (instance)` keeps your Ferry servers apart when one Prometheus collects more than one server. `target!~"dashboard|unrouted"` keeps only your services, as on the Monitoring page.
+
+## The machine
+
+```text title="CPU use of the machine, in percent"
+100 * (1 - sum by (instance) (rate(ferry_host_cpu_seconds_total{mode=~"idle|iowait"}[1m]))
+         / sum by (instance) (rate(ferry_host_cpu_seconds_total[1m])))
+```
+
+```text title="Memory in use, in bytes"
+ferry_host_memory_total_bytes - ferry_host_memory_available_bytes
+```
+
+```text title="Disk reads and network traffic, in bytes per second"
+rate(ferry_host_disk_read_bytes_total[1m])
+sum by (instance) (rate(ferry_host_network_receive_bytes_total[1m]))
+```
+
+## The requests
+
+```text title="Error rate of each service, in percent"
+100 * sum by (instance, name) (rate(ferry_http_requests_total{target!~"dashboard|unrouted", status_class="5xx"}[5m]))
+    / sum by (instance, name) (rate(ferry_http_requests_total{target!~"dashboard|unrouted"}[5m]))
+```
+
+```text title="p95 latency of each service, in seconds"
+histogram_quantile(0.95, sum by (instance, name, le) (rate(ferry_http_request_duration_seconds_bucket{target!~"dashboard|unrouted"}[5m])))
+```
+
+The Monitoring page shows the latency in milliseconds. Multiply by 1000 to get the same number.
+
+<Accordions>
+  <Accordion title="Small differences">
+    The Monitoring page uses a step of 10 seconds or more. A query uses the range that you give, for example `[1m]`. Over the same time, the numbers are the same. The percentiles come from the same buckets, thus they are exact to one bucket.
+  </Accordion>
+  <Accordion title="An alert">
+    For example, an alert when the disk of the data is 90% full: `ferry_host_disk_used_bytes / ferry_host_disk_total_bytes > 0.9`.
+  </Accordion>
+</Accordions>

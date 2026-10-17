@@ -1,0 +1,68 @@
+---
+title: Create a token for Prometheus
+description: Prometheus needs an API token. Create a named token for it, and keep the token in a file.
+---
+
+<Flow
+  steps={[
+    { icon: 'key', title: 'New token', text: 'Create a named token in the dashboard.' },
+    { icon: 'file-key', title: 'Token file', text: 'Put the token in a file that only Prometheus reads.' },
+    { icon: 'gauge', title: 'Prometheus', text: 'Prometheus sends the token with each request.', tone: 'success' },
+  ]}
+/>
+
+`/metrics` needs an <Term id="api-token" />, like the rest of the API. Without a token, or with a bad token, Ferry answers `401`.
+
+<Steps>
+<Step>
+
+### Create the token
+
+In the dashboard, open **Server → Account → API tokens**. Click **New token**. Give the name `prometheus`.
+
+The dashboard shows the token one time.
+
+</Step>
+<Step>
+
+### Put the token in a file
+
+Do this on the machine of Prometheus. The file must be for the user of Prometheus only.
+
+```bash title="Terminal"
+sudo install -m 600 -o prometheus /dev/null /etc/prometheus/ferry-token
+sudoedit /etc/prometheus/ferry-token   # paste the token, then save
+```
+
+</Step>
+<Step>
+
+### Test the token
+
+```bash title="Terminal"
+curl -H "Authorization: Bearer $(sudo cat /etc/prometheus/ferry-token)" http://127.0.0.1:7878/metrics
+```
+
+The answer starts with the version of Ferry:
+
+```text noCopy
+# HELP ferry_build_info Always 1: the version of ferryd is in the label.
+# TYPE ferry_build_info gauge
+ferry_build_info{version="0.1.0"} 1
+```
+
+</Step>
+</Steps>
+
+<Callout type="warning" title="The token has full access">
+An API token can do all in the API, not only read `/metrics`. Keep the file for the user of Prometheus only. You can revoke the token at each time in **Server → Account**.
+</Callout>
+
+<Accordions>
+  <Accordion title="A token with an expiry">
+    When the token expires, Ferry answers `401` and Prometheus shows the target as down. Create the token without an expiry, or put a new token in the file before the end.
+  </Accordion>
+  <Accordion title="The server token">
+    The <Term id="server-token" /> also works. But you cannot revoke it in the dashboard. A named token is safer. See [API tokens](/docs/reference/api-overview/tokens).
+  </Accordion>
+</Accordions>

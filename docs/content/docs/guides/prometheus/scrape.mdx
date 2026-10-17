@@ -1,0 +1,47 @@
+---
+title: The scrape config
+description: A job in prometheus.yml tells Prometheus where Ferry is, which token to send, and how often to ask.
+---
+
+```yaml title="prometheus.yml"
+scrape_configs:
+  - job_name: ferry
+    scrape_interval: 15s
+    authorization:
+      credentials_file: /etc/prometheus/ferry-token
+    static_configs:
+      - targets: ['127.0.0.1:7878']
+```
+
+Each request of Prometheus to `/metrics` is a <Term id="scrape" />. This job is for a Prometheus on the server of Ferry.
+
+## The lines
+
+| Line | Function |
+|---|---|
+| `job_name: ferry` | The name of the job. Prometheus adds the label `job="ferry"` to each number. |
+| `scrape_interval: 15s` | Prometheus asks every 15 seconds. ferryd reads the machine every 10 seconds: a shorter interval gives no new values. |
+| `credentials_file` | The file with the [token](/docs/guides/prometheus/token). Prometheus sends `Authorization: Bearer <token>`. |
+| `targets` | The address of the API: the flag `--api-addr` of ferryd, `127.0.0.1:7878` by default |
+
+Prometheus uses the path `/metrics` and `http` by default.
+
+## Check the target
+
+```bash title="Terminal"
+sudo systemctl reload prometheus
+```
+
+In Prometheus, open **Status → Target health**. The target `ferry` must be **UP**.
+
+<Accordions>
+  <Accordion title="The target is down with 401">
+    The token is wrong, expired or revoked. Test it with `curl`, as on the page [Create a token](/docs/guides/prometheus/token).
+  </Accordion>
+  <Accordion title="Prometheus in a container">
+    In a container, `127.0.0.1` is the container itself. Start the container of Prometheus with `--network host`, or collect through the [dashboard host](/docs/guides/prometheus/remote).
+  </Accordion>
+  <Accordion title="Each answer is fast">
+    ferryd answers with the numbers that it has. They are the last numbers that it read from the machine and the containers, and the counts of the proxy. A scrape does not read the machine and does not call Docker. If ferryd read these numbers more than 30 seconds before, they are not in the answer.
+  </Accordion>
+</Accordions>

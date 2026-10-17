@@ -157,6 +157,36 @@ export const terms = {
     definition: 'A time that a part of the requests did not go above. A p95 of 2 s: 95% of the requests took 2 s or less.',
     see: ['latency'],
   },
+  prometheus: {
+    term: 'Prometheus',
+    definition: 'A monitoring program that you install yourself. It collects the numbers of your programs at regular intervals, keeps them, and sends alerts.',
+    see: ['scrape', 'grafana'],
+  },
+  grafana: {
+    term: 'Grafana',
+    definition: 'A program that shows the numbers of Prometheus and of other sources in charts and dashboards.',
+    see: ['prometheus'],
+  },
+  scrape: {
+    term: 'scrape',
+    definition: 'One request of Prometheus to a program, to get its numbers. With Ferry, a scrape is a GET of /metrics.',
+    see: ['prometheus'],
+  },
+  counter: {
+    term: 'counter',
+    definition: 'A number that only goes up, for example the requests since the start. Prometheus calculates a rate from two values.',
+    see: ['prometheus'],
+  },
+  histogram: {
+    term: 'histogram',
+    definition: 'Counts in buckets: the requests that took 1 ms or less, 2 ms or less, and so on. Percentiles come from these counts.',
+    see: ['percentile'],
+  },
+  promql: {
+    term: 'PromQL',
+    definition: 'The query language of Prometheus. Grafana uses it to calculate rates and percentiles from the numbers that Prometheus keeps.',
+    see: ['prometheus'],
+  },
 
   // --- Self-healing --------------------------------------------------------
   'actual-state': {

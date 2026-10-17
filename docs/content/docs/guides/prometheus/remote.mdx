@@ -1,0 +1,58 @@
+---
+title: Collect from another machine
+description: A Prometheus on another machine collects the metrics through the dashboard host, with HTTPS.
+---
+
+<Diagram
+  nodes={[
+    { id: 'prom', at: [0, 0.5], icon: 'gauge', label: 'Prometheus', note: 'another machine' },
+    { id: 'proxy', at: [1.25, 0.5], icon: 'route', label: 'Ferry proxy', note: 'port 443, HTTPS' },
+    { id: 'api', at: [2.5, 0.5], icon: 'server', label: 'API of ferryd', note: '127.0.0.1:7878' },
+  ]}
+  edges={[
+    { from: 'prom', to: 'proxy', label: 'API token', flow: true },
+    { from: 'proxy', to: 'api', flow: true },
+  ]}
+  groups={[{ label: 'Your Ferry server', around: ['proxy', 'api'] }]}
+/>
+
+The API of ferryd listens on `127.0.0.1`. Another machine cannot get to it. The <Term id="dashboard-host" /> gives the API a hostname on the <Term id="proxy" />, with HTTPS.
+
+## Do it
+
+<Steps>
+<Step>
+
+### Publish the dashboard host
+
+Start ferryd with `--dashboard-host`. See [Open the dashboard without a tunnel](/docs/guides/production/dashboard-host).
+
+</Step>
+<Step>
+
+### Change the job
+
+```yaml title="prometheus.yml"
+scrape_configs:
+  - job_name: ferry
+    scheme: https
+    authorization:
+      credentials_file: /etc/prometheus/ferry-token
+    static_configs:
+      - targets: ['ferry.apps.example.com']
+```
+
+Prometheus asks for `https://ferry.apps.example.com/metrics`.
+
+</Step>
+</Steps>
+
+<Callout type="warning" title="Send the token over HTTPS only">
+Do not change `--api-addr` to `0.0.0.0` for Prometheus. Then the token goes over the network without encryption.
+</Callout>
+
+<Accordions>
+  <Accordion title="The scrapes in the request counts">
+    The requests of Prometheus go through the proxy. Ferry counts them with the target `dashboard` in `ferry_http_requests_total`.
+  </Accordion>
+</Accordions>
