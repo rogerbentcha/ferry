@@ -21,11 +21,10 @@ pub(crate) fn redact_text(text: &str, url: &str) -> String {
 fn credential_parts(url: &str) -> Vec<String> {
     let Some(scheme_end) = url.find("://") else { return Vec::new() };
     let rest = &url[scheme_end + 3..];
-    let Some(at) = rest.find('@') else { return Vec::new() };
-    let userinfo = &rest[..at];
-    if userinfo.contains('/') {
-        return Vec::new();
-    }
+    // The userinfo ends at the last `@` before the path, like in `redact_url`.
+    let authority = &rest[..rest.find('/').unwrap_or(rest.len())];
+    let Some(at) = authority.rfind('@') else { return Vec::new() };
+    let userinfo = &authority[..at];
     let mut parts = vec![userinfo.to_string()];
     match userinfo.split_once(':') {
         Some((user, pass)) => {
@@ -44,7 +43,7 @@ fn credential_parts(url: &str) -> Vec<String> {
 }
 
 /// Mask the userinfo of every `scheme://userinfo@host` occurrence in `text`.
-fn redact_embedded_urls(text: &str) -> String {
+pub(crate) fn redact_embedded_urls(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(idx) = rest.find("://") {
@@ -76,6 +75,14 @@ mod tests {
         let text = format!("fatal: unable to access '{url}': 403\nhint: token s3cr3t-token rejected");
         let r = redact_text(&text, url);
         assert!(!r.contains("s3cr3t-token"), "{r}");
+        assert!(r.contains("https://***@gitlab.example.com/a/b.git"), "{r}");
+    }
+
+    #[test]
+    fn redacts_a_password_with_an_at_sign() {
+        let url = "https://oauth2:s3cr3t@pa55word@gitlab.example.com/a/b.git";
+        let r = redact_text(&format!("fatal: could not read from {url}; password s3cr3t@pa55word"), url);
+        assert!(!r.contains("s3cr3t") && !r.contains("pa55word"), "{r}");
         assert!(r.contains("https://***@gitlab.example.com/a/b.git"), "{r}");
     }
 

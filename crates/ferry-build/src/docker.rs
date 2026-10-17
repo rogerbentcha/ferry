@@ -26,6 +26,7 @@ use tokio::process::Command;
 
 use crate::dockerfile::{ENV_DIGEST_ARG, RESERVED_PREFIX, secret_id};
 use crate::process::{RunError, run_streaming};
+use crate::redact::redact_embedded_urls;
 
 /// Lines of output kept to explain a failure.
 const TAIL_LINES: usize = 200;
@@ -148,6 +149,13 @@ fn mask(line: &str, secrets: &[String]) -> String {
     out
 }
 
+/// A line of a failed build's output as its failure reason shows it (the
+/// reason reaches the server's log): secret values masked, and no credentials
+/// in a URL (`https://user:token@…`, a datastore's URL…).
+fn failure_line(line: &str, secrets: &[String]) -> String {
+    redact_embedded_urls(&mask(line, secrets))
+}
+
 /// Run the build. Returns `Error::Build` with a concise reason on failure and
 /// `Error::Canceled` when `cancel` fires (the docker process tree is killed).
 pub(crate) async fn build(b: &DockerBuild<'_>, logs: &LogSink, cancel: &CancellationToken) -> Result<()> {
@@ -168,7 +176,7 @@ pub(crate) async fn build(b: &DockerBuild<'_>, logs: &LogSink, cancel: &Cancella
     match res {
         Ok((status, _)) if status.success() => Ok(()),
         Ok((status, tail)) => {
-            let tail: Vec<String> = tail.iter().map(|l| mask(l, &secrets)).collect();
+            let tail: Vec<String> = tail.iter().map(|l| failure_line(l, &secrets)).collect();
             Err(Error::Build(failure_reason(&tail, status)))
         }
         Err(RunError::Canceled) => Err(Error::Canceled),
@@ -365,6 +373,15 @@ mod tests {
     fn status(code: i32) -> ExitStatus {
         use std::os::unix::process::ExitStatusExt;
         ExitStatus::from_raw(code << 8)
+    }
+
+    #[test]
+    fn a_failure_line_shows_no_secret() {
+        let secrets = vec!["sk_live_0123456789".to_string()];
+        let line = "npm ERR! fetch https://ci:ghp_abcdef123456@github.com/acme/lib.git failed, key sk_live_0123456789";
+        let shown = failure_line(line, &secrets);
+        assert_eq!(shown, "npm ERR! fetch https://***@github.com/acme/lib.git failed, key ***");
+        assert_eq!(failure_line("redis://:p4ss@db:6379 refused", &[]), "redis://***@db:6379 refused");
     }
 
     #[cfg(unix)]
