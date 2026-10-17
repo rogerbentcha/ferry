@@ -542,6 +542,75 @@ async fn start_twice_is_a_conflict_and_needs_docker() {
     shutdown.cancel();
 }
 
+/// Runs only inside [`start_kills_the_builds_a_killed_server_left_running`]'s
+/// child process: a server with a build child running that dies without
+/// stopping it. The child leads its own process group and is recorded under
+/// `FERRY_ENGINE_ORPHAN_HELPER` as `ferry-build` records its children
+/// (`<pid> <start, unix seconds> <program>`, see `write_record` in
+/// crates/ferry-build/src/orphans.rs).
+#[cfg(unix)]
+#[test]
+// Never waits for its child on purpose: the child must outlive it.
+#[allow(clippy::zombie_processes)]
+fn orphan_helper() {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let Some(records) = std::env::var_os("FERRY_ENGINE_ORPHAN_HELPER") else { return };
+    let child = Command::new("sleep")
+        .arg("60")
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let records = std::path::Path::new(&records);
+    std::fs::create_dir_all(records).unwrap();
+    std::fs::write(records.join(child.id().to_string()), format!("{} {now} sleep\n", child.id())).unwrap();
+    // Exits without waiting for it: `sleep` is re-parented, as after a SIGKILL.
+}
+
+/// Whether `pid` runs (`ps` knows it and it is not a zombie).
+#[cfg(unix)]
+fn running(pid: u32) -> bool {
+    let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+    out.status.success() && !String::from_utf8_lossy(&out.stdout).trim_start().starts_with('Z')
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn start_kills_the_builds_a_killed_server_left_running() {
+    let f = fixture(2).await;
+    let build_dir = f.engine.inner.config.builds_dir().join("dep-1");
+    let records = build_dir.join("children");
+    let helper = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tests::orphan_helper", "--nocapture", "--test-threads=1"])
+        .env("FERRY_ENGINE_ORPHAN_HELPER", &records)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(helper.success());
+    let entry = std::fs::read_dir(&records).unwrap().next().expect("the build child is recorded").unwrap();
+    let pid: u32 = entry.file_name().to_str().unwrap().parse().unwrap();
+    assert!(running(pid), "the orphaned build child runs");
+
+    let shutdown = ferry_core::CancellationToken::new();
+    // Docker is unreachable: the boot stops at the network, after the cleanup.
+    assert!(f.engine.start(shutdown.clone()).await.is_err());
+    shutdown.cancel();
+    let start = std::time::Instant::now();
+    while running(pid) {
+        if start.elapsed() > Duration::from_secs(5) {
+            // Not left running for a minute after the test.
+            let _ = std::process::Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
+            panic!("the orphaned build child {pid} survived the start");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!build_dir.exists(), "the stale scratch directory is removed");
+}
+
 #[tokio::test]
 async fn restarts_fold_into_queued_deploys_and_follow_the_live_deploy() {
     let f = fixture(1).await;

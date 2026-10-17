@@ -969,6 +969,14 @@ are never checked; on non-Unix systems the check does nothing.
   replaces it.
 * Shutdown: first SIGINT/SIGTERM drains (API ≤ 10s, then the engine stops
   jobs and records interrupted deploys, ≤ 25s); a second signal exits at once.
+* A server killed with SIGKILL cannot stop its builds' `git` / `docker
+  build` processes (on Linux the direct child dies with it, on macOS
+  nothing stops them). `ferry-build` records each one while it runs
+  (`builds/<deploy id>/children/<pid>`); the next engine start calls
+  `Builder::reap_orphans`, which kills the recorded process groups whose
+  leader is still the recorded process (a reused pid is left alone), and
+  only then deletes the stale scratch directories in `builds/`. In the
+  engine's boot, both come before anything that needs Docker.
 * Proxy: `X-Forwarded-For` is the peer address only (client-supplied
   forwarding headers are dropped; RFC 7239 `Forwarded` is set). Connection
   timeouts (TLS handshake, header read, idle) and a connection cap derived
