@@ -16,9 +16,15 @@ to Linear before the human approves the draft.
 
 - **The human owns the why.** Never invent a stakeholder, a benefit, a number
   or a decision. If it is not in the issue, the code or the conversation, ask.
-- **Talk plainly** to the human: short sentences, everyday words, a
-  recommended answer first.
-- **Write the issue in a product owner's voice**: see [TEMPLATE.md](TEMPLATE.md).
+- **Talk caveman.** Load the `caveman` skill
+  ([../caveman/SKILL.md](../caveman/SKILL.md)) before your first message and
+  follow it for every message to the human: answer first, no fluff, every
+  fact kept, a recommended answer first. Questions and options stay full
+  sentences, as caveman says.
+- **Write the issue in a product owner's voice, compressed with caveman**:
+  see [TEMPLATE.md](TEMPLATE.md). Here caveman applies to the issue too,
+  even though caveman alone keeps text saved outside the chat in plain
+  prose.
 - Keep your own context small: send code exploration to an Explore agent and
   keep only its conclusions.
 
