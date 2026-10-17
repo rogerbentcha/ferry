@@ -89,6 +89,8 @@ pub fn router(state: AppState) -> axum::Router {
     let api = Router::new()
         .route("/v1/info", get(info::info))
         .route("/v1/events", get(events::stream).layer(axum::Extension(hub.clone())))
+        // how the server is doing
+        .route("/v1/server/metrics", get(server::metrics))
         // services
         .route("/v1/services", get(services::list).post(services::create))
         .route("/v1/services/{id}", get(services::get).patch(services::update).delete(services::delete))

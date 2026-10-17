@@ -22,6 +22,8 @@ const ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/openapi.json"),
     ("GET", "/api/v1/info"),
     ("GET", "/api/v1/events"),
+    // how the server is doing
+    ("GET", "/api/v1/server/metrics"),
     // the account, its sessions and API tokens, `ferry login`
     ("GET", "/api/v1/auth/status"),
     ("POST", "/api/v1/auth/setup"),
@@ -128,6 +130,7 @@ const PUBLIC: &[&str] = &[
 
 const TAGS: &[&str] = &[
     "info",
+    "server",
     "auth",
     "services",
     "deploys",

@@ -9,7 +9,9 @@ use async_trait::async_trait;
 use axum::Router;
 use axum::body::Body;
 use ferry_api::{AppState, router};
-use ferry_core::dto::{InstanceStatus, RuntimeStatus};
+use ferry_core::dto::{
+    ContainerKind, ContainerMetrics, DiskMetrics, HostMetrics, InstanceStatus, RuntimeStatus, ServerMetrics,
+};
 use ferry_core::tls::{CertificateStatus, Certificates};
 use ferry_core::{
     CancellationToken, CheckOutcome, Config, Deploy, DeployRequest, DeploySource, DeployStatus, DeployTrigger, Domain,
@@ -312,6 +314,52 @@ impl Engine for MockEngine {
     async fn public_addresses(&self) -> Vec<std::net::IpAddr> {
         self.record("public_addresses".into());
         self.public_ips.lock().unwrap().clone()
+    }
+
+    /// A busy service instance, a datastore Docker did not measure in time
+    /// and a host without network counters.
+    async fn server_metrics(&self) -> Result<ServerMetrics> {
+        self.record("server_metrics".into());
+        Ok(ServerMetrics {
+            at: chrono::Utc::now(),
+            host: HostMetrics {
+                cpu_percent: Some(37.5),
+                cpu_count: 4,
+                memory_used_bytes: Some(3 << 30),
+                memory_total_bytes: Some(8 << 30),
+                disks: vec![DiskMetrics {
+                    mount_point: "/".into(),
+                    used_bytes: 40 << 30,
+                    total_bytes: 100 << 30,
+                    read_bytes_per_sec: Some(1 << 20),
+                    write_bytes_per_sec: Some(512 << 10),
+                }],
+                network_rx_bytes_per_sec: None,
+                network_tx_bytes_per_sec: None,
+            },
+            containers: Some(vec![
+                ContainerMetrics {
+                    kind: ContainerKind::Service,
+                    id: "srv-1".into(),
+                    name: "web".into(),
+                    instance: Some("9f8e7d".into()),
+                    cpu_percent: Some(120.0),
+                    memory_bytes: Some(300 << 20),
+                    memory_limit_bytes: Some(512 << 20),
+                    cpu_limit: Some(2.0),
+                },
+                ContainerMetrics {
+                    kind: ContainerKind::Datastore,
+                    id: "ds-1".into(),
+                    name: "db".into(),
+                    instance: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    memory_limit_bytes: None,
+                    cpu_limit: None,
+                },
+            ]),
+        })
     }
 }
 

@@ -190,9 +190,31 @@ pub(crate) fn oom_message(subject: &str, limit_bytes: Option<i64>, owner: &str) 
 
 /// Free space (bytes) available to unprivileged users on the filesystem of
 /// `path`.
+pub(crate) fn free_disk_bytes(path: &Path) -> std::io::Result<u64> {
+    disk_space(path).map(|s| s.available_bytes)
+}
+
+/// The size of a filesystem, from `statvfs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DiskSpace {
+    pub total_bytes: u64,
+    /// Free, including the blocks reserved for root.
+    pub free_bytes: u64,
+    /// Free for unprivileged users.
+    pub available_bytes: u64,
+}
+
+impl DiskSpace {
+    /// Used space, like the `Used` column of `df`.
+    pub fn used_bytes(&self) -> u64 {
+        self.total_bytes.saturating_sub(self.free_bytes)
+    }
+}
+
+/// The size of the filesystem of `path`.
 #[cfg(unix)]
 #[allow(clippy::unnecessary_cast, clippy::useless_conversion)]
-pub(crate) fn free_disk_bytes(path: &Path) -> std::io::Result<u64> {
+pub(crate) fn disk_space(path: &Path) -> std::io::Result<DiskSpace> {
     use std::os::unix::ffi::OsStrExt;
     let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "the path contains a NUL byte"))?;
@@ -206,12 +228,17 @@ pub(crate) fn free_disk_bytes(path: &Path) -> std::io::Result<u64> {
     // SAFETY: statvfs succeeded, so the struct is initialized.
     let st = unsafe { st.assume_init() };
     // The field types differ between platforms (u32 / u64).
-    Ok(u64::from(st.f_bavail).saturating_mul(st.f_frsize as u64))
+    let block = st.f_frsize as u64;
+    Ok(DiskSpace {
+        total_bytes: u64::from(st.f_blocks).saturating_mul(block),
+        free_bytes: u64::from(st.f_bfree).saturating_mul(block),
+        available_bytes: u64::from(st.f_bavail).saturating_mul(block),
+    })
 }
 
 #[cfg(not(unix))]
-pub(crate) fn free_disk_bytes(_path: &Path) -> std::io::Result<u64> {
-    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "free disk space is only checked on Unix"))
+pub(crate) fn disk_space(_path: &Path) -> std::io::Result<DiskSpace> {
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "disk space is only read on Unix"))
 }
 
 /// The error when `path` has only `free_bytes` left, below `min_mb`.
@@ -421,6 +448,9 @@ mod tests {
         if cfg!(unix) {
             let free = free_disk_bytes(dir.path()).unwrap();
             assert!(free > 0);
+            let space = disk_space(dir.path()).unwrap();
+            assert!(space.available_bytes <= space.free_bytes && space.free_bytes <= space.total_bytes, "{space:?}");
+            assert_eq!(space.used_bytes(), space.total_bytes - space.free_bytes);
             // Nothing has a petabyte free; everything has more than 0 bytes.
             let huge = 1u64 << 30; // MiB = 1 PiB
             let m = first_low(&[dir.path().to_path_buf()], huge).unwrap();

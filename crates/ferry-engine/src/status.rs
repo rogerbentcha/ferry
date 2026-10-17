@@ -21,8 +21,8 @@ use crate::util::{instance_id, lock, with_timeout};
 
 /// Bounds on Docker calls made while answering the API (never hang it).
 const LIST_TIMEOUT: Duration = Duration::from_secs(10);
-const INSPECT_TIMEOUT: Duration = Duration::from_secs(3);
-const STATS_TIMEOUT: Duration = Duration::from_secs(4);
+pub(crate) const INSPECT_TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) const STATS_TIMEOUT: Duration = Duration::from_secs(4);
 /// How often a followed log stream looks for new containers.
 const DISCOVER_INTERVAL: Duration = Duration::from_secs(2);
 /// Lines requested when re-attaching to a container that restarted (older
@@ -73,13 +73,22 @@ fn to_status(info: &ContainerInfo, stats: Option<ferry_docker::ContainerStats>) 
         restart_count: info.restart_count,
         cpu_percent: stats.map(|s| s.cpu_percent),
         memory_bytes: stats.map(|s| s.memory_bytes),
-        // The configured limit (docker stats reports the host's memory for
-        // unlimited containers).
-        memory_limit_bytes: info.memory_limit_bytes.and_then(|l| u64::try_from(l).ok()).filter(|l| *l > 0),
-        cpu_limit: info.nano_cpus.filter(|n| *n > 0).map(|n| round_cpus(n as f64 / 1e9)),
+        memory_limit_bytes: memory_limit(info),
+        cpu_limit: cpu_limit(info),
         oom_killed: info.oom_killed,
         exit_code: info.exit_code,
     }
+}
+
+/// A container's configured memory limit (docker stats reports the host's
+/// memory for unlimited containers); `None` when unlimited.
+pub(crate) fn memory_limit(info: &ContainerInfo) -> Option<u64> {
+    info.memory_limit_bytes.and_then(|l| u64::try_from(l).ok()).filter(|l| *l > 0)
+}
+
+/// A container's configured CPU limit, in CPUs; `None` when unlimited.
+pub(crate) fn cpu_limit(info: &ContainerInfo) -> Option<f64> {
+    info.nano_cpus.filter(|n| *n > 0).map(|n| round_cpus(n as f64 / 1e9))
 }
 
 /// The containers whose logs make up the service's runtime logs: those of
