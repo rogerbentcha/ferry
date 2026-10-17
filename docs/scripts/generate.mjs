@@ -32,6 +32,7 @@ const check = process.argv.includes('--check');
 /** Friendly page titles for the OpenAPI tags (the tag names are the resource names). */
 const TAG_TITLES = {
   info: 'Server info',
+  server: 'Server metrics',
   services: 'Services',
   deploys: 'Deploys',
   env: 'Environment variables',
@@ -55,6 +56,7 @@ const TAG_TITLES = {
 const PATH_ORDER = [
   '/api/v1/info',
   '/healthz',
+  '/api/v1/server/metrics',
   '/api/openapi.json',
   '/api/v1/services',
   '/api/v1/services/{id}',

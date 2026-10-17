@@ -128,6 +128,25 @@ async fn deploy_validation_errors() {
 }
 
 #[tokio::test]
+async fn server_metrics_report_the_host_when_docker_does_not_answer() {
+    let f = fixture(2).await;
+    let m = f.engine.server_metrics().await.unwrap();
+    assert!(m.containers.is_none(), "Docker is unreachable: {:?}", m.containers);
+    assert!(m.host.cpu_count > 0);
+    // The filesystem of the data directory, wherever it is mounted.
+    let data_dir = f._dir.path().canonicalize().unwrap();
+    assert_eq!(m.host.disks.len(), 1, "{:?}", m.host.disks);
+    assert!(data_dir.starts_with(&m.host.disks[0].mount_point), "{:?}", m.host.disks);
+    if cfg!(target_os = "linux") {
+        assert!(m.host.cpu_percent.is_some_and(|c| (0.0..=100.0).contains(&c)), "{:?}", m.host);
+        assert!(m.host.memory_used_bytes.is_some() && m.host.memory_total_bytes.is_some(), "{:?}", m.host);
+        assert!(m.host.network_rx_bytes_per_sec.is_some(), "{:?}", m.host);
+    } else {
+        assert_eq!((m.host.cpu_percent, m.host.memory_total_bytes), (None, None), "no /proc here");
+    }
+}
+
+#[tokio::test]
 async fn failing_pull_marks_build_failed_with_logs() {
     let f = fixture(2).await;
     let svc = service(&f.store, "web", ServiceType::WebService, |s| s.image = Some("nginx:alpine".into())).await;

@@ -25,7 +25,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
 use utoipa_swagger_ui::{Config, SwaggerUi};
 
 use crate::routes::{
-    auth, blueprints, custom_domains, datastores, deploys, domains, env, env_groups, git, hooks, info, jobs, services,
+    auth, blueprints, custom_domains, datastores, deploys, domains, env, env_groups, git, hooks, info, jobs, server,
+    services,
 };
 
 /// Where the document is served.
@@ -125,6 +126,7 @@ down.";
         auth::cli_deny,
         auth::cli_token,
         crate::events::stream,
+        server::metrics,
         services::list,
         services::create,
         services::get,
@@ -219,6 +221,11 @@ down.";
         ferry_core::dto::LinkEnvGroup,
         ferry_core::dto::InstanceStatus,
         ferry_core::dto::RuntimeStatus,
+        ferry_core::dto::ServerMetrics,
+        ferry_core::dto::HostMetrics,
+        ferry_core::dto::DiskMetrics,
+        ferry_core::dto::ContainerMetrics,
+        ferry_core::dto::ContainerKind,
         ferry_core::dto::CreateDatastore,
         ferry_core::dto::UpdateDatastore,
         ferry_core::dto::DatastoreView,
@@ -282,6 +289,7 @@ down.";
     modifiers(&Security),
     tags(
         (name = "info", description = "Server info, liveness and this document."),
+        (name = "server", description = "How the server is doing: how busy the machine is, and which service or datastore uses it."),
         (name = "auth", description = "The account of the server (its administrator), signing in and out of the dashboard, the sessions and the API tokens, and `ferry login` (a terminal asks, the dashboard approves). The status, the first-run setup, signing in and out, and the two calls of a terminal need no authentication; the others only accept the dashboard's session, never an API token."),
         (name = "services", description = "Web services, private services, background workers, static sites and cron jobs: CRUD, lifecycle actions (restart, suspend, resume, scale, rollback), status and runtime logs."),
         (name = "deploys", description = "Deploy history, manual deploys, source uploads (`ferry up`), cancellation and build logs."),

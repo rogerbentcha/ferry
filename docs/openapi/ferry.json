@@ -3757,6 +3757,56 @@
         ]
       }
     },
+    "/api/v1/server/metrics": {
+      "get": {
+        "tags": [
+          "server"
+        ],
+        "summary": "Live server metrics",
+        "description": "How busy the machine and its containers are right now. The host: CPU use (0–100 % of the whole machine) and CPU count, memory used without the page cache and total, the used and total space and the read / write speed of the disk of the data directory (and of Docker's data directory when it is another local disk), and the network traffic without the loopback and Docker's own interfaces. The containers: every running service instance and datastore with its CPU use (100 = one core), memory use and limits, the busiest first. Speeds are bytes per second since the previous call (within a minute) or over one second, so a call takes about a second. Nothing is kept. A value the server can't read is `null` (on macOS, most host values); `containers` is `null` when Docker does not answer, and the CPU and memory of a container that does not answer in time are `null`.",
+        "operationId": "getServerMetrics",
+        "responses": {
+          "200": {
+            "description": "The server's metrics.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerMetrics"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API token, or no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server error (`docker_error` as 502, `database_error`, `internal_error`...).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/services": {
       "get": {
         "tags": [
@@ -6871,6 +6921,77 @@
         },
         "additionalProperties": false
       },
+      "ContainerKind": {
+        "type": "string",
+        "description": "What a container of `ServerMetrics.containers` runs.",
+        "enum": [
+          "service",
+          "datastore"
+        ]
+      },
+      "ContainerMetrics": {
+        "type": "object",
+        "description": "CPU and memory of one running container.",
+        "required": [
+          "kind",
+          "id",
+          "name"
+        ],
+        "properties": {
+          "cpu_limit": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The container's CPU limit (CPUs); `null` when unlimited (or unknown)."
+          },
+          "cpu_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "CPU use in percent of one core (100 = one full core), like\n`InstanceStatus.cpu_percent`. `null` when Docker did not answer in\ntime."
+          },
+          "id": {
+            "type": "string",
+            "description": "Id of the service or datastore."
+          },
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The instance, as in the logs (last 6 characters of the container\nname). `null` for a datastore: it has one container."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ContainerKind"
+          },
+          "memory_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Memory use without the page cache. `null` when Docker did not answer\nin time.",
+            "minimum": 0
+          },
+          "memory_limit_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The container's memory limit; `null` when unlimited (or unknown).",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the service or datastore."
+          }
+        }
+      },
       "CreateApiToken": {
         "type": "object",
         "description": "`POST /api/v1/auth/tokens`",
@@ -7504,6 +7625,49 @@
           "env_change",
           "upload"
         ]
+      },
+      "DiskMetrics": {
+        "type": "object",
+        "description": "One filesystem of `HostMetrics.disks`.",
+        "required": [
+          "mount_point",
+          "used_bytes",
+          "total_bytes"
+        ],
+        "properties": {
+          "mount_point": {
+            "type": "string",
+            "description": "Where the filesystem is mounted, e.g. `/`."
+          },
+          "read_bytes_per_sec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Read from its device. `null` when the kernel does not count it for\nthis filesystem (network filesystems, btrfs, ZFS, macOS).",
+            "minimum": 0
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Used space (like the `Used` column of `df`).",
+            "minimum": 0
+          },
+          "write_bytes_per_sec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
       "DnsRecord": {
         "type": "object",
@@ -8178,6 +8342,72 @@
           }
         }
       },
+      "HostMetrics": {
+        "type": "object",
+        "description": "The machine ferryd runs on. A value ferryd can't read is `null` (on\nmacOS: everything but the CPU count and the disks' space).",
+        "required": [
+          "cpu_count",
+          "disks"
+        ],
+        "properties": {
+          "cpu_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "CPUs of the machine.",
+            "minimum": 0
+          },
+          "cpu_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "CPU use of the whole machine, 0–100 %, since the previous reading\n(at least one second)."
+          },
+          "disks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiskMetrics"
+            },
+            "description": "The filesystem of the data directory, then Docker's data directory\nwhen it is on another filesystem of this machine."
+          },
+          "memory_total_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "memory_used_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Memory in use, without the page cache (like `free`).",
+            "minimum": 0
+          },
+          "network_rx_bytes_per_sec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Received over the network interfaces, without the loopback and\nDocker's own (`docker0`, `br-*`, `veth*`).",
+            "minimum": 0
+          },
+          "network_tx_bytes_per_sec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Sent over the same interfaces.",
+            "minimum": 0
+          }
+        }
+      },
       "InstanceStatus": {
         "type": "object",
         "description": "Live container state of one instance.",
@@ -8622,6 +8852,34 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "ServerMetrics": {
+        "type": "object",
+        "description": "`GET /api/v1/server/metrics` — how busy the machine and its containers\nare right now (DESIGN.md §22). Nothing is kept: every call reads again.",
+        "required": [
+          "at",
+          "host"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the values were read."
+          },
+          "containers": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ContainerMetrics"
+            },
+            "description": "The running instances of services and the running datastores, the\nbusiest (CPU) first. `null` when Docker did not answer."
+          },
+          "host": {
+            "$ref": "#/components/schemas/HostMetrics"
           }
         }
       },
@@ -9214,6 +9472,10 @@
     {
       "name": "info",
       "description": "Server info, liveness and this document."
+    },
+    {
+      "name": "server",
+      "description": "How the server is doing: how busy the machine is, and which service or datastore uses it."
     },
     {
       "name": "auth",

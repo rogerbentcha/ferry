@@ -17,7 +17,8 @@
 //! `datastores`, `status` (status + runtime logs), `logs` (deploy/job log
 //! hub), `images` (pull policy + retention), `limits` (container resource
 //! limits, OOM messages, free-disk check), `domains` (the domains services
-//! are served under, and their verification).
+//! are served under, and their verification), `metrics` (how busy the host
+//! and the containers are).
 
 mod datastores;
 mod deploy;
@@ -28,6 +29,7 @@ mod instances;
 mod jobs;
 mod limits;
 mod logs;
+mod metrics;
 mod ops;
 mod pipeline;
 mod reconcile;
@@ -43,7 +45,7 @@ use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use ferry_build::Builder;
-use ferry_core::dto::RuntimeStatus;
+use ferry_core::dto::{RuntimeStatus, ServerMetrics};
 use ferry_core::{
     CancellationToken, Config, Deploy, DeployRequest, DeployTrigger, Domain, Engine, Error, JobRun, JobTrigger,
     LogOptions, LogStream, Result, Store,
@@ -270,5 +272,9 @@ impl Engine for FerryEngine {
 
     async fn public_addresses(&self) -> Vec<std::net::IpAddr> {
         domains::public_addresses(&self.inner).await
+    }
+
+    async fn server_metrics(&self) -> Result<ServerMetrics> {
+        metrics::server_metrics(&self.inner).await
     }
 }

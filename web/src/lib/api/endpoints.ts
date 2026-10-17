@@ -36,6 +36,7 @@ import type {
   RunJobRequest,
   RuntimeStatus,
   ServerInfo,
+  ServerMetrics,
   ServiceView,
   SessionView,
   SetupAccount,
@@ -68,6 +69,7 @@ export const endpoints = {
 
   // info
   info: (signal?: AbortSignal) => api.get<ServerInfo>(`${V1}/info`, undefined, signal),
+  serverMetrics: (signal?: AbortSignal) => api.get<ServerMetrics>(`${V1}/server/metrics`, undefined, signal),
 
   // services
   listServices: (signal?: AbortSignal) => api.get<ServiceView[]>(`${V1}/services`, undefined, signal),

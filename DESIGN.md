@@ -38,7 +38,7 @@ code).
 | Suspend / resume, restart | ✅ |
 | One-off jobs | ✅ `ferry run` |
 | Blueprints (`render.yaml`) | ✅ `ferry blueprint apply` (same schema, subset) |
-| Logs (build + runtime, live tail), basic metrics | ✅ SSE streams, CPU/mem in status |
+| Logs (build + runtime, live tail), basic metrics | ✅ SSE streams, CPU/mem in status, live host and container metrics (§22) |
 | Dashboard, CLI, REST API | ✅ |
 | `ferry up` (deploy a local directory without git) | ➕ Ferry extra |
 
@@ -72,7 +72,7 @@ auth, secret files, IP allow lists, teams/RBAC.
 | `ferry-scm` | lib | core | git providers (§18): GitHub / GitLab REST clients, authorizing an account in the browser (GitHub App manifest + installation, GitLab OAuth), the tokens of a connection (minted or renewed on demand), which connection reads a repository |
 | `ferry-proxy` | lib | core | `RouteTable`, HTTP/HTTPS reverse proxy, websockets, error pages |
 | `ferry-tls` | lib | core | ACME certificates, SNI resolver, `TlsHooks` impl, the state of each certificate (`Certificates`) |
-| `ferry-engine` | lib | core, docker, build, proxy, scm | `FerryEngine: Engine` — deploys, reconciler, cron, jobs, datastores, logs, verifying domains (§21) |
+| `ferry-engine` | lib | core, docker, build, proxy, scm | `FerryEngine: Engine` — deploys, reconciler, cron, jobs, datastores, logs, verifying domains (§21), server metrics (§22) |
 | `ferry-api` | lib | core, build, scm | axum router: REST, SSE (logs + `/api/v1/events`), webhooks, blueprints, OpenAPI + Swagger UI, git connections (§18; `build` only for the branches of a remote), serves the embedded web client (`web/dist`) |
 | `ferry-cli` | bin `ferry` | core | CLI client |
 | `ferryd` | bin | all | wiring (already written) |
@@ -416,6 +416,7 @@ routes and checks that the document, the router and `lib.rs` agree.
 | `POST /api/v1/auth/cli/{id}/approve` · `/deny` | `CliLoginView`; approving creates the API token the terminal collects |
 | `POST /api/v1/auth/cli/{id}/token` | `CliLoginPoll` `{secret}` → `CliLoginResult` `{status, token?}` (no auth): `pending`, `denied`, or `approved` with the token, once. 401 for another secret, 404 once expired or collected |
 | `GET /api/v1/info` | `ServerInfo` (including `base_domain`, the `default_domain` service URLs are shown with (§21), the default limits `default_memory_limit_mb` / `default_cpu_limit`, 0 = unlimited, the Docker host's `docker_cpus` / `docker_memory_bytes`, `null` when unknown, `github_webhook_enabled` — `/hooks/github` takes deliveries: a connected GitHub account's app has a webhook (§18), or the server has a webhook secret — and `github_webhook_secret_set`, the second case alone) |
+| `GET /api/v1/server/metrics` | `ServerMetrics` `{at, host, containers}` (§22): how busy the machine is right now — `HostMetrics` `{cpu_percent, cpu_count, memory_used_bytes, memory_total_bytes, disks, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`, each `DiskMetrics` `{mount_point, used_bytes, total_bytes, read_bytes_per_sec, write_bytes_per_sec}` — and every running service instance and datastore, `ContainerMetrics` `{kind, id, name, instance, cpu_percent, memory_bytes, memory_limit_bytes, cpu_limit}`, the busiest first (`engine.server_metrics`). A value that can't be read is `null`; `containers` is `null` when Docker does not answer. Takes about a second |
 | `GET /api/v1/events` | SSE change feed: `event: ready` (`data: {}`) once the feed watches the store (refetch after it), then `event: change` with `ChangeEvent` `{kind, id, service_id, action}` — `kind` ∈ `service`/`deploy`/`datastore`/`env_group`/`job`/`git_connection`/`domain`, `action` ∈ `created`/`updated`/`deleted`, `service_id` set for services (own id), deploys and jobs; a lagging subscriber gets `{kind:"all", id:"*", service_id:null, action:"resync"}` (refetch everything). The store is polled every second while someone listens and nudged after every API/webhook write |
 | `GET /api/v1/services` | `[ServiceView]` |
 | `POST /api/v1/services` | `CreateService` → 201 `ServiceView` (queues a `create` deploy when it has a repo/image, unless `deploy:false`) |
@@ -677,7 +678,8 @@ Rust build never runs Node.
   resources, custom domains, deploy hook) · datastores (+ detail,
   connection strings, resources) · env groups (+ detail) · blueprints (paste
   YAML → dry run → apply) · server (incl. default container limits, the
-  Docker host's size, the connected git accounts, **Domains** — below —
+  Docker host's size, **Monitoring** — below —, the connected git
+  accounts, **Domains** — below —
   and **Account**: the
   email, changing the password, the API tokens — created with a name and
   an expiry, shown once, revoked — and the sessions).
@@ -739,6 +741,17 @@ Rust build never runs Node.
   how to turn HTTPS on. `src/lib/domains.ts` mirrors
   `ferry_core::domains::connectable_name`. The server's name in the top
   bar and the URL previewed for a new service use the default domain.
+* **Monitoring in the UI** (§22): Server → Monitoring
+  (`?section=monitoring`) asks `GET /api/v1/server/metrics` every 5 s
+  (`useServerMetrics`; TanStack Query stops asking while the tab is
+  hidden and asks again when it is back). Cards for the host — CPU with
+  the CPU count, memory, each disk with its read / write speed, network
+  received / sent — with a `UsageBar` where there is a total, then a
+  table of the running service instances and datastores, in the API's
+  order (the busiest first), each linked to its page, with "—" for a
+  container Docker did not measure. A value that is `null` says "Not
+  available"; no container running is an empty state, `containers:
+  null` says Docker did not answer.
 * **Resource limits in the UI** (§14): "Memory limit" / "CPU limit" selects
   (`Server default (512 MiB)` from `/api/v1/info`, presets, Custom…) in the
   service's Settings → Resources ("Changes apply on the next deploy or
@@ -1684,3 +1697,53 @@ on without a restart; verifying from outside (the check runs on the
 server: it can't see a firewall that only lets the server reach itself);
 choosing the domains per service (every service is served under every
 domain); internationalized names (use the punycode form).
+
+## 22. Monitoring
+
+Server → Monitoring answers "why is it slow?" without SSH: how busy the
+machine is right now, and which service or datastore uses it. Nothing to
+install: ferryd reads the numbers when asked, and keeps none (history,
+requests and ferryd's own logs come later; Prometheus and Grafana are not
+bundled).
+
+`GET /api/v1/server/metrics` (§10) → `engine.server_metrics()`
+(`ferry-engine/src/metrics.rs`), which reads the host and the containers
+at the same time:
+
+* **Host** (Linux): CPU from `/proc/stat` — busy time over all the CPUs,
+  0–100 % of the whole machine, waiting for I/O counted as idle — and
+  the CPU count (its `cpuN` lines); memory from `/proc/meminfo` — used =
+  `MemTotal - MemAvailable`, without the page cache, like `free`
+  (`MemTotal - MemFree - Buffers - Cached - SReclaimable` before Linux
+  3.14); network from `/proc/net/dev`, summed over the interfaces but
+  `lo`, `docker*`, `br-*` and `veth*` (the same traffic would count
+  twice); disks: the filesystem of the data directory, then Docker's root
+  directory when it is a local one on another filesystem (not on Docker
+  Desktop), each found by walking up to its mount point, its space from
+  `statvfs` (used = blocks − free blocks, like `df`) and its speed from
+  `/proc/diskstats` (the line of its `major:minor`, sectors of 512
+  bytes; none for btrfs, ZFS or network filesystems). Read in a blocking
+  task, bounded by 3 s. No crate: a few small parsers, unit-tested on
+  sample `/proc` files.
+* **Rates.** CPU % and every bytes-per-second value compare two readings
+  of the kernel's counters. The engine keeps the last one
+  (`HostSampler`): a call within a minute of it measures since then (at
+  least one second); otherwise the call reads, waits a second, and
+  reads again — while Docker samples the containers, which takes as
+  long. A counter that went back (a removed interface) gives `null` that
+  time.
+* **Containers**: the running containers of the server (`ferry.instance`),
+  of a service or a datastore the store knows (jobs and builds are left
+  out), each inspected (its limits, 3 s) while Docker samples it
+  (`docker.stats`, 4 s), all in parallel. A container that does not
+  answer in time keeps its row with `null` CPU and memory; listing them
+  is bounded by 3 s, after which `containers` is `null` and the host's
+  values come back alone. CPU keeps the `cpu_percent` convention (100 =
+  one core); memory without the page cache; the limits are the
+  container's own, `null` when unlimited. Sorted by CPU, the busiest
+  first, unmeasured ones last.
+
+**Platforms.** Linux is the target. Where a value can't be read — on
+macOS, everything but the CPU count (`available_parallelism`) and the
+disks' space — it is `null` in the API and "Not available" on the page,
+logged at `debug` only, and nothing waits for a second reading.

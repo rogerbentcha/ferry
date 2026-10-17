@@ -1,0 +1,58 @@
+---
+title: "Server: Monitoring"
+description: The Monitoring section shows how busy the server is now, and which service or datastore uses it.
+---
+
+<Diagram
+  nodes={[
+    { id: 'page', at: [0, 0.5], icon: 'browser', label: 'Monitoring', note: 'every 5 seconds' },
+    { id: 'ferryd', at: [1.25, 0.5], icon: 'server', label: 'ferryd' },
+    { id: 'kernel', at: [2.5, 0], icon: 'cpu', label: 'Linux kernel', note: '/proc' },
+    { id: 'docker', at: [2.5, 1], icon: 'container', label: 'Docker', note: 'docker stats' },
+  ]}
+  edges={[
+    { from: 'page', to: 'ferryd', label: '/server/metrics' },
+    { from: 'ferryd', to: 'kernel' },
+    { from: 'ferryd', to: 'docker' },
+  ]}
+  steps={[
+    { caption: 'The page asks ferryd for the numbers every 5 seconds.', flow: ['page>ferryd'], tones: { page: 'primary' } },
+    { caption: 'ferryd reads the CPU, the memory, the disks and the network of the machine.', flow: ['ferryd>kernel'], tones: { kernel: 'primary' } },
+    { caption: 'ferryd asks Docker for the CPU and the memory of each container.', flow: ['ferryd>docker'], tones: { docker: 'primary' } },
+  ]}
+/>
+
+Click **Server** in the icon rail. Then click **Monitoring**. The section shows the <Term id="metric">metrics</Term> of the server at this moment. Ferry does not keep a history of them.
+
+## The server
+
+| Card | Content |
+|---|---|
+| **CPU** | The use of all the <Term id="cpu-core">CPUs</Term> of the machine, from 0% to 100%, and the number of CPUs |
+| **Memory** | The memory in use, and the total. The cache that the <Term id="kernel" /> gives back to programs is not in use. |
+| **Disk** | The space in use, the total, and the speed of reads and writes. One card for the <Term id="data-directory" />. One more card for the directory of Docker if it is on a different disk. |
+| **Network** | The bytes per second that the server receives and sends. The traffic of the loopback and of the <Term id="network-interface">interfaces</Term> of Docker does not count. |
+
+## Services and datastores
+
+The table shows each <Term id="instance" /> of a service and each <Term id="datastore" /> that runs, with its CPU and its memory. The busiest container comes first. Click a name to open its page.
+
+| You see | Meaning |
+|---|---|
+| `120.0%` | The CPU use. 100% is one full core. |
+| `300 MiB` | The memory use |
+| `limit 2 CPUs`, `limit 512 MiB` | The [CPU limit](/docs/concepts/resource-limits/cpu) and the [memory limit](/docs/concepts/resource-limits/memory) of the container |
+| `no limit` | The container has no limit. |
+| `—` | Docker did not answer in time for this container. |
+
+<Accordions>
+  <Accordion title="Not available">
+    If ferryd cannot read a value, the page shows **Not available**. On a Mac, ferryd reads only the number of CPUs and the space of the disks. If Docker does not answer, the table shows **Not available**.
+  </Accordion>
+  <Accordion title="When the numbers change">
+    The page asks for new numbers every 5 seconds. If you go to a different tab, the page stops. When you come back, it asks again immediately.
+  </Accordion>
+  <Accordion title="API">
+    The section reads `GET /api/v1/server/metrics`. See [Server metrics](/docs/reference/api/server).
+  </Accordion>
+</Accordions>

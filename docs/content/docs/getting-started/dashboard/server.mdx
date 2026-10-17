@@ -1,19 +1,21 @@
 ---
 title: The Server page
-description: The Server page has the settings of the full server, in five sections.
+description: The Server page has the settings of the full server, in six sections.
 ---
 
 <Diagram
   nodes={[
     { id: 'general', at: [0, 0], icon: 'info', label: 'General' },
-    { id: 'domains', at: [1, 0], icon: 'globe', label: 'Domains' },
-    { id: 'account', at: [2, 0], icon: 'user', label: 'Account' },
-    { id: 'conn', at: [0.5, 1], icon: 'plug', label: 'Connections' },
-    { id: 'api', at: [1.5, 1], icon: 'braces', label: 'API' },
+    { id: 'monitoring', at: [1, 0], icon: 'activity', label: 'Monitoring' },
+    { id: 'domains', at: [2, 0], icon: 'globe', label: 'Domains' },
+    { id: 'account', at: [0, 1], icon: 'user', label: 'Account' },
+    { id: 'conn', at: [1, 1], icon: 'plug', label: 'Connections' },
+    { id: 'api', at: [2, 1], icon: 'braces', label: 'API' },
   ]}
-  groups={[{ label: 'Server', around: ['general', 'domains', 'account', 'conn', 'api'] }]}
+  groups={[{ label: 'Server', around: ['general', 'monitoring', 'domains', 'account', 'conn', 'api'] }]}
   steps={[
     { caption: 'General: the versions, the limits and the addresses of the server.', tones: { general: 'primary' } },
+    { caption: 'Monitoring: how busy the server is now, and which service uses it.', tones: { monitoring: 'primary' } },
     { caption: 'Domains: the domains of the server and the certificates.', tones: { domains: 'primary' } },
     { caption: 'Account: your password, the API tokens and the sessions.', tones: { account: 'primary' } },
     { caption: 'Connections: how the CLI, GitHub and GitLab connect to the server.', tones: { conn: 'primary' } },
@@ -21,13 +23,14 @@ description: The Server page has the settings of the full server, in five sectio
   ]}
 />
 
-Click **Server** in the icon rail. A side menu shows the five sections.
+Click **Server** in the icon rail. A side menu shows the six sections.
 
 ## The sections
 
 | Section | Content |
 |---|---|
 | **General** | The versions of Ferry and Docker. The default limits of a container, with the CPUs and the memory of the Docker host. The default domain, the proxy URL and the dashboard URL. If TLS and the deploys on push are on. The state of the live updates. The theme. |
+| **Monitoring** | See [Server: Monitoring](/docs/getting-started/dashboard/server-monitoring). |
 | **Domains** | See [Server: Domains](/docs/getting-started/dashboard/server-domains). |
 | **Account** | See [Server: Account](/docs/getting-started/dashboard/server-account). |
 | **Connections** | The `ferry login` command. The `FERRY_SERVER` and `FERRY_TOKEN` variables for CI. The connected GitHub and GitLab accounts, and which of them deploy on push. The settings of a webhook that you add to a repository by hand. A link to the deploy hooks of the services. |

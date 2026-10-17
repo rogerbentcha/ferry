@@ -5,7 +5,7 @@ mod common;
 use axum::body::Body;
 use common::{TOKEN, TestApp};
 use http::{Method, Request, StatusCode};
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn req(method: Method, uri: &str) -> http::request::Builder {
     Request::builder().method(method).uri(uri)
@@ -222,6 +222,52 @@ async fn server_info() {
     .await;
     let v = app.get("/api/v1/info").await.json();
     assert_eq!((v["default_memory_limit_mb"].clone(), v["default_cpu_limit"].clone()), (json!(2048), json!(0.5)));
+}
+
+#[tokio::test]
+async fn server_metrics_come_from_the_engine_and_need_auth() {
+    let app = TestApp::new().await;
+    let r = app.send(req(Method::GET, "/api/v1/server/metrics").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert!(app.engine.calls_with("server_metrics").is_empty(), "nothing is read without a token");
+
+    let r = app.get("/api/v1/server/metrics").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(app.engine.calls_with("server_metrics"), ["server_metrics"]);
+    let v = r.json();
+    assert!(v["at"].as_str().is_some_and(|at| at.ends_with('Z')), "{v}");
+    let host = &v["host"];
+    assert_eq!((&host["cpu_percent"], &host["cpu_count"]), (&json!(37.5), &json!(4)));
+    assert_eq!((&host["memory_used_bytes"], &host["memory_total_bytes"]), (&json!(3u64 << 30), &json!(8u64 << 30)));
+    // A value that can't be read is null, not missing.
+    assert!(host.get("network_rx_bytes_per_sec").is_some_and(|v| v.is_null()), "{host}");
+    assert_eq!(
+        host["disks"],
+        json!([{
+            "mount_point": "/",
+            "used_bytes": 40u64 << 30,
+            "total_bytes": 100u64 << 30,
+            "read_bytes_per_sec": 1 << 20,
+            "write_bytes_per_sec": 512 << 10,
+        }])
+    );
+    let containers = v["containers"].as_array().unwrap();
+    assert_eq!(containers.len(), 2);
+    assert_eq!(
+        containers[0],
+        json!({
+            "kind": "service",
+            "id": "srv-1",
+            "name": "web",
+            "instance": "9f8e7d",
+            "cpu_percent": 120.0,
+            "memory_bytes": 300 << 20,
+            "memory_limit_bytes": 512 << 20,
+            "cpu_limit": 2.0,
+        })
+    );
+    assert_eq!((&containers[1]["kind"], &containers[1]["instance"]), (&json!("datastore"), &Value::Null));
+    assert!(containers[1]["cpu_percent"].is_null() && containers[1]["memory_bytes"].is_null());
 }
 
 #[tokio::test]

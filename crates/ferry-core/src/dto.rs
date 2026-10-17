@@ -241,6 +241,86 @@ pub struct RuntimeStatus {
     pub instances: Vec<InstanceStatus>,
 }
 
+/// `GET /api/v1/server/metrics` — how busy the machine and its containers
+/// are right now (DESIGN.md §22). Nothing is kept: every call reads again.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ServerMetrics {
+    /// When the values were read.
+    pub at: DateTime<Utc>,
+    pub host: HostMetrics,
+    /// The running instances of services and the running datastores, the
+    /// busiest (CPU) first. `null` when Docker did not answer.
+    pub containers: Option<Vec<ContainerMetrics>>,
+}
+
+/// The machine ferryd runs on. A value ferryd can't read is `null` (on
+/// macOS: everything but the CPU count and the disks' space).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct HostMetrics {
+    /// CPU use of the whole machine, 0–100 %, since the previous reading
+    /// (at least one second).
+    pub cpu_percent: Option<f64>,
+    /// CPUs of the machine.
+    pub cpu_count: u32,
+    /// Memory in use, without the page cache (like `free`).
+    pub memory_used_bytes: Option<u64>,
+    pub memory_total_bytes: Option<u64>,
+    /// The filesystem of the data directory, then Docker's data directory
+    /// when it is on another filesystem of this machine.
+    pub disks: Vec<DiskMetrics>,
+    /// Received over the network interfaces, without the loopback and
+    /// Docker's own (`docker0`, `br-*`, `veth*`).
+    pub network_rx_bytes_per_sec: Option<u64>,
+    /// Sent over the same interfaces.
+    pub network_tx_bytes_per_sec: Option<u64>,
+}
+
+/// One filesystem of `HostMetrics.disks`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DiskMetrics {
+    /// Where the filesystem is mounted, e.g. `/`.
+    pub mount_point: String,
+    /// Used space (like the `Used` column of `df`).
+    pub used_bytes: u64,
+    pub total_bytes: u64,
+    /// Read from its device. `null` when the kernel does not count it for
+    /// this filesystem (network filesystems, btrfs, ZFS, macOS).
+    pub read_bytes_per_sec: Option<u64>,
+    pub write_bytes_per_sec: Option<u64>,
+}
+
+/// What a container of `ServerMetrics.containers` runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerKind {
+    Service,
+    Datastore,
+}
+
+/// CPU and memory of one running container.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ContainerMetrics {
+    pub kind: ContainerKind,
+    /// Id of the service or datastore.
+    pub id: String,
+    /// Name of the service or datastore.
+    pub name: String,
+    /// The instance, as in the logs (last 6 characters of the container
+    /// name). `null` for a datastore: it has one container.
+    pub instance: Option<String>,
+    /// CPU use in percent of one core (100 = one full core), like
+    /// `InstanceStatus.cpu_percent`. `null` when Docker did not answer in
+    /// time.
+    pub cpu_percent: Option<f64>,
+    /// Memory use without the page cache. `null` when Docker did not answer
+    /// in time.
+    pub memory_bytes: Option<u64>,
+    /// The container's memory limit; `null` when unlimited (or unknown).
+    pub memory_limit_bytes: Option<u64>,
+    /// The container's CPU limit (CPUs); `null` when unlimited (or unknown).
+    pub cpu_limit: Option<f64>,
+}
+
 /// `POST /api/v1/datastores`
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]

@@ -12,7 +12,7 @@
 use async_trait::async_trait;
 
 use crate::Result;
-use crate::dto::RuntimeStatus;
+use crate::dto::{RuntimeStatus, ServerMetrics};
 use crate::logs::LogStream;
 use crate::models::{Deploy, DeploySource, DeployTrigger, Domain, JobRun, JobTrigger};
 
@@ -147,5 +147,13 @@ pub trait Engine: Send + Sync + 'static {
     /// finds out (and remembers). Empty when it can't tell.
     async fn public_addresses(&self) -> Vec<std::net::IpAddr> {
         Vec::new()
+    }
+
+    /// How busy the machine and the running containers of services and
+    /// datastores are right now (`GET /api/v1/server/metrics`, §22). A value
+    /// that can't be read is `None`; one container that does not answer
+    /// never delays the answer by more than a few seconds.
+    async fn server_metrics(&self) -> Result<ServerMetrics> {
+        Err(crate::Error::invalid("server metrics are not supported by this engine"))
     }
 }
