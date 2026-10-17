@@ -268,6 +268,24 @@ async fn server_metrics_come_from_the_engine_and_need_auth() {
     );
     assert_eq!((&containers[1]["kind"], &containers[1]["instance"]), (&json!("datastore"), &Value::Null));
     assert!(containers[1]["cpu_percent"].is_null() && containers[1]["memory_bytes"].is_null());
+    let requests = v["requests"].as_array().unwrap();
+    assert_eq!(
+        requests[0],
+        json!({
+            "target": "srv-1",
+            "name": "web",
+            "requests_per_sec": 12.5,
+            "status_2xx": 90,
+            "status_3xx": 0,
+            "status_4xx": 0,
+            "status_5xx": 10,
+            "p50_ms": 1.0,
+            "p95_ms": 4.0,
+        })
+    );
+    // Without a request to time, the percentiles are null, not missing.
+    assert_eq!(requests[1]["target"], json!("unrouted"));
+    assert!(requests[1].get("p95_ms").is_some_and(Value::is_null), "{}", requests[1]);
 }
 
 #[tokio::test]
@@ -296,6 +314,27 @@ async fn the_metrics_history_takes_a_range_and_needs_auth() {
         (&json!("service"), &json!("web"), &json!("9f8e7d"))
     );
     assert_eq!(containers[0]["points"][0]["cpu_percent"], json!(150.0));
+    let requests = v["requests"].as_array().unwrap();
+    assert_eq!(
+        requests[0],
+        json!({
+            "at": host[0]["at"],
+            "seconds": 10,
+            "requests_per_sec": 2.5,
+            "status_2xx": 20,
+            "status_3xx": 1,
+            "status_4xx": 2,
+            "status_5xx": 2,
+            "p50_ms": 12.0,
+            "p95_ms": 180.0,
+        })
+    );
+    assert!(requests[1].get("p50_ms").is_some_and(Value::is_null), "{}", requests[1]);
+    let targets = v["request_targets"].as_array().unwrap();
+    assert_eq!(
+        (&targets[0]["target"], &targets[0]["name"], &targets[0]["p95_ms"]),
+        (&json!("srv-1"), &json!("web"), &json!(180.0))
+    );
 
     for (range, step) in [("1h", 10), ("6h", 60), ("24h", 240)] {
         let r = app.get(&format!("/api/v1/server/metrics/history?range={range}")).await;

@@ -11,7 +11,7 @@ use axum::body::Body;
 use ferry_api::{AppState, router};
 use ferry_core::dto::{
     ContainerKind, ContainerMetrics, ContainerPoint, ContainerSeries, DiskMetrics, HostMetrics, HostPoint,
-    InstanceStatus, MetricsHistory, MetricsRange, RuntimeStatus, ServerMetrics,
+    InstanceStatus, MetricsHistory, MetricsRange, RequestMetrics, RequestPoint, RuntimeStatus, ServerMetrics,
 };
 use ferry_core::tls::{CertificateStatus, Certificates};
 use ferry_core::{
@@ -317,8 +317,9 @@ impl Engine for MockEngine {
         self.public_ips.lock().unwrap().clone()
     }
 
-    /// A busy service instance, a datastore Docker did not measure in time
-    /// and a host without network counters.
+    /// A busy service instance, a datastore Docker did not measure in time,
+    /// a host without network counters, and the requests of a service and
+    /// unrouted ones.
     async fn server_metrics(&self) -> Result<ServerMetrics> {
         self.record("server_metrics".into());
         Ok(ServerMetrics {
@@ -360,11 +361,15 @@ impl Engine for MockEngine {
                     cpu_limit: None,
                 },
             ]),
+            requests: vec![
+                request_metrics("srv-1", "web", 12.5, Some(4.0)),
+                request_metrics("unrouted", "unrouted", 0.2, None),
+            ],
         })
     }
 
-    /// Two steps of the host, the second without CPU (macOS), and one
-    /// service instance.
+    /// Two steps of the host, the second without CPU (macOS), one service
+    /// instance, and the requests of both steps (none in the second).
     async fn metrics_history(&self, range: MetricsRange) -> Result<MetricsHistory> {
         self.record(format!("metrics_history {}", serde_json::to_value(range).unwrap().as_str().unwrap()));
         let to = chrono::Utc::now();
@@ -392,7 +397,47 @@ impl Engine for MockEngine {
                 instance: Some("9f8e7d".into()),
                 points: vec![ContainerPoint { at: at(0), cpu_percent: Some(150.0), memory_bytes: Some(300 << 20) }],
             }],
+            requests: vec![
+                RequestPoint {
+                    at: at(0),
+                    seconds: step,
+                    requests_per_sec: 2.5,
+                    status_2xx: 20,
+                    status_3xx: 1,
+                    status_4xx: 2,
+                    status_5xx: 2,
+                    p50_ms: Some(12.0),
+                    p95_ms: Some(180.0),
+                },
+                RequestPoint {
+                    at: at(1),
+                    seconds: step,
+                    requests_per_sec: 0.0,
+                    status_2xx: 0,
+                    status_3xx: 0,
+                    status_4xx: 0,
+                    status_5xx: 0,
+                    p50_ms: None,
+                    p95_ms: None,
+                },
+            ],
+            request_targets: vec![request_metrics("srv-1", "web", 0.01, Some(180.0))],
         })
+    }
+}
+
+/// The requests of one target: 90 % 2xx, the rest 5xx.
+fn request_metrics(target: &str, name: &str, requests_per_sec: f64, p95_ms: Option<f64>) -> RequestMetrics {
+    RequestMetrics {
+        target: target.into(),
+        name: name.into(),
+        requests_per_sec,
+        status_2xx: 90,
+        status_3xx: 0,
+        status_4xx: 0,
+        status_5xx: 10,
+        p50_ms: p95_ms.map(|p| p / 4.0),
+        p95_ms,
     }
 }
 

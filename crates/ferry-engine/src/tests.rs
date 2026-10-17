@@ -194,6 +194,35 @@ async fn the_metrics_history_shows_the_last_range_and_the_5_busiest_containers()
     assert!(day.host.len() >= 2 && day.host.len() <= 3, "{:?}", day.host);
 }
 
+/// The requests the proxy counts in the route table the engine shares with
+/// it reach both the live metrics and the history.
+#[tokio::test]
+async fn the_live_metrics_and_the_history_have_the_proxys_requests() {
+    let f = fixture(2).await;
+    let web = service(&f.store, "web", ServiceType::WebService, |_| {}).await;
+    f.routes.set_service_routes(&web.id, &["web.localhost".into()], vec![]);
+    let stats = f.routes.request_stats();
+    let web_target = ferry_proxy::RequestTarget::Service(web.id.clone());
+    for status in [200, 200, 200, 503] {
+        stats.record(&web_target, status, Duration::from_millis(40));
+    }
+    stats.record(&ferry_proxy::RequestTarget::Unrouted, 404, Duration::from_millis(1));
+    assert!(f.engine.server_metrics().await.unwrap().requests.is_empty(), "before the first reading");
+
+    let mut sampler = crate::requests::RequestSampler::new();
+    crate::requests::read(&f.engine.inner, &mut sampler).await;
+    let live = f.engine.server_metrics().await.unwrap().requests;
+    let summary: Vec<_> = live.iter().map(|r| (r.name.as_str(), r.status_2xx, r.status_4xx, r.status_5xx)).collect();
+    assert_eq!(summary, [("web", 3, 0, 1), ("unrouted", 0, 1, 0)]);
+    assert!(live[0].p95_ms.is_some_and(|p| (30.0..=50.0).contains(&p)), "{live:?}");
+
+    let history = f.engine.metrics_history(MetricsRange::Hour).await.unwrap();
+    let points: Vec<_> = history.requests.iter().map(|p| (p.status_2xx, p.status_5xx)).collect();
+    assert_eq!(points, [(3, 1)], "the services' requests, without the unrouted ones");
+    let targets: Vec<_> = history.request_targets.iter().map(|t| (t.target.as_str(), t.name.as_str())).collect();
+    assert_eq!(targets, [(web.id.as_str(), "web"), ("unrouted", "unrouted")]);
+}
+
 #[tokio::test]
 async fn every_series_of_the_metrics_history_has_360_points_at_most() {
     let f = fixture(2).await;

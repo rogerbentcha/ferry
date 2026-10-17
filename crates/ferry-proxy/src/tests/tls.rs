@@ -99,6 +99,29 @@ async fn redirects_http_to_https_when_host_has_certificate() {
     assert_eq!(Echo::parse(&r.text().await.unwrap()).path, "/followed");
 }
 
+/// Requests over HTTPS are counted like the others; the redirect to HTTPS
+/// counts for the service of the host (DESIGN.md §22).
+#[tokio::test]
+async fn https_requests_and_redirects_are_counted_for_their_service() {
+    let (proxy, cert, _up) = tls_proxy(true).await;
+    let https_port = proxy.https.unwrap().port();
+    let c = tls_client(&cert);
+    for _ in 0..3 {
+        let r = c.get(format!("https://secure.test:{https_port}/")).send().await.unwrap();
+        assert_eq!(r.status(), 200);
+    }
+    let r = c.get(proxy.url("secure.test", "/")).send().await.unwrap();
+    assert_eq!(r.status(), 308);
+    let r = c.get(format!("https://unknown.test:{https_port}/")).send().await.unwrap();
+    assert_eq!(r.status(), 404);
+
+    let snapshot = proxy.routes.request_stats().snapshot();
+    let of = |target: crate::RequestTarget| snapshot.iter().find(|t| t.target == target).unwrap().counts;
+    let secure = of(crate::RequestTarget::Service("secure".into()));
+    assert_eq!((secure.status_2xx, secure.status_3xx, secure.total(), secure.latency.count()), (3, 1, 4, 4));
+    assert_eq!(of(crate::RequestTarget::Unrouted).status_4xx, 1);
+}
+
 #[tokio::test]
 async fn no_redirect_when_disabled() {
     let (proxy, cert, _up) = tls_proxy(false).await;

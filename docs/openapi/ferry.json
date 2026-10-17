@@ -3763,7 +3763,7 @@
           "server"
         ],
         "summary": "Live server metrics",
-        "description": "How busy the machine and its containers are right now. The host: CPU use (0–100 % of the whole machine) and CPU count, memory used without the page cache and total, the used and total space and the read / write speed of the disk of the data directory (and of Docker's data directory when it is another local disk), and the network traffic without the loopback and Docker's own interfaces. The containers: every running service instance and datastore with its CPU use (100 = one core), memory use and limits, the busiest first. Speeds are bytes per second since the previous call (within a minute) or over one second, so a call takes about a second. Every call reads again: the last 24 hours are `GET /api/v1/server/metrics/history`. A value the server can't read is `null` (on macOS, most host values); `containers` is `null` when Docker does not answer, and the CPU and memory of a container that does not answer in time are `null`.",
+        "description": "How busy the machine and its containers are right now. The host: CPU use (0–100 % of the whole machine) and CPU count, memory used without the page cache and total, the used and total space and the read / write speed of the disk of the data directory (and of Docker's data directory when it is another local disk), and the network traffic without the loopback and Docker's own interfaces. The containers: every running service instance and datastore with its CPU use (100 = one core), memory use and limits, the busiest first. Speeds are bytes per second since the previous call (within a minute) or over one second, so a call takes about a second. The requests: what the proxy answered in its last reading (the last 10 s), one entry per target that had any — a service (by id), `dashboard` (the dashboard's host) or `unrouted` (a host no service has) — the services busiest first, then `dashboard` and `unrouted`: requests per second, the requests by status class (2xx counts the WebSockets that opened; 4xx the requests whose client went away before the answer, as 499; 5xx the proxy's own 502 and 503 pages) and the p50 and p95 latency in milliseconds, until the response headers went out (WebSockets left out; `null` without a request to time). Every call reads again: the last 24 hours are `GET /api/v1/server/metrics/history`. A value the server can't read is `null` (on macOS, most host values); `containers` is `null` when Docker does not answer, and the CPU and memory of a container that does not answer in time are `null`.",
         "operationId": "getServerMetrics",
         "responses": {
           "200": {
@@ -3813,7 +3813,7 @@
           "server"
         ],
         "summary": "Server metrics of the last 24 hours",
-        "description": "The server's metrics over the last hour, 6 hours or 24 hours. ferryd reads the server every 10 s while it runs and keeps 24 hours of readings in its database. They come back averaged into steps (`step_seconds`: 10, 60 or 240), 360 points at most per series, oldest first, each at the start of its step. A step without a reading — ferryd was stopped — has no point, so a gap between two points is a time without data. The host: CPU use (0–100 % of the machine), memory used and total, the read / write speed of its disks together and the network traffic, like `GET /api/v1/server/metrics`. The containers: the 5 service instances and datastores whose CPU use (100 = one core) was the highest in the range, the busiest first, with their memory. A value that could not be read in a whole step is `null`.",
+        "description": "The server's metrics over the last hour, 6 hours or 24 hours. ferryd reads the server every 10 s while it runs and keeps 24 hours of readings in its database. They come back averaged into steps (`step_seconds`: 10, 60 or 240), 360 points at most per series, oldest first, each at the start of its step. A step without a reading — ferryd was stopped — has no point, so a gap between two points is a time without data. The host: CPU use (0–100 % of the machine), memory used and total, the read / write speed of its disks together and the network traffic, like `GET /api/v1/server/metrics`. The containers: the 5 service instances and datastores whose CPU use (100 = one core) was the highest in the range, the busiest first, with their memory. A value that could not be read in a whole step is `null`. The requests, which the proxy counts and ferryd stores every 10 s: `requests` has the services' together (neither the dashboard's nor the unrouted ones) for every step ferryd ran in and stored requests for — the requests per second over `seconds` (the step, or less for the last one, still filling), the requests by status class, and the p50 and p95 latency in milliseconds, `null` in a step without a request to time — and `request_targets` each target that had requests over the whole range, the services busiest first, then `dashboard` and `unrouted`. Percentiles come from a histogram with fixed buckets: they are exact to the bucket.",
         "operationId": "getServerMetricsHistory",
         "parameters": [
           {
@@ -8876,7 +8876,9 @@
           "from",
           "to",
           "host",
-          "containers"
+          "containers",
+          "requests",
+          "request_targets"
         ],
         "properties": {
           "containers": {
@@ -8900,6 +8902,20 @@
           },
           "range": {
             "$ref": "#/components/schemas/MetricsRange"
+          },
+          "request_targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestMetrics"
+            },
+            "description": "Each target that had requests in the range, over the whole range:\nthe services, the busiest first, then `dashboard` and `unrouted`."
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestPoint"
+            },
+            "description": "The requests to the services (neither the dashboard's nor the\nunrouted ones), oldest first: a point for every step ferryd ran in\nand stored requests for, with zeros when no request came."
           },
           "step_seconds": {
             "type": "integer",
@@ -8957,6 +8973,142 @@
           }
         },
         "additionalProperties": false
+      },
+      "RequestMetrics": {
+        "type": "object",
+        "description": "The requests the proxy answered for one target over a time\n(DESIGN.md §22).",
+        "required": [
+          "target",
+          "name",
+          "requests_per_sec",
+          "status_2xx",
+          "status_3xx",
+          "status_4xx",
+          "status_5xx"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The service's name (its last one in the range); the target itself\nfor `dashboard` and `unrouted`."
+          },
+          "p50_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Half the requests got their response headers within this many\nmilliseconds. Exact to a bucket of the histogram (DESIGN.md §22);\nWebSockets left out. `null` without such a request."
+          },
+          "p95_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "95 % of the requests got their response headers within this many\nmilliseconds."
+          },
+          "requests_per_sec": {
+            "type": "number",
+            "format": "double",
+            "description": "The requests per second, on average over the time."
+          },
+          "status_2xx": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The requests answered 2xx, and the WebSockets that opened.",
+            "minimum": 0
+          },
+          "status_3xx": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status_4xx": {
+            "type": "integer",
+            "format": "int64",
+            "description": "With the requests that ended before their answer (the client went\naway), counted as 499.",
+            "minimum": 0
+          },
+          "status_5xx": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The proxy's own 502 and 503 pages included.",
+            "minimum": 0
+          },
+          "target": {
+            "type": "string",
+            "description": "A service id; `dashboard` for the dashboard's host; `unrouted` for a\nhost no service has (and the requests without a valid host)."
+          }
+        }
+      },
+      "RequestPoint": {
+        "type": "object",
+        "description": "The requests to the services over one step.",
+        "required": [
+          "at",
+          "seconds",
+          "requests_per_sec",
+          "status_2xx",
+          "status_3xx",
+          "status_4xx",
+          "status_5xx"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The start of the step."
+          },
+          "p50_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Half the requests of the step got their response headers within\nthis many milliseconds (WebSockets left out). `null` without such a\nrequest."
+          },
+          "p95_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "95 % of them got their response headers within this many milliseconds."
+          },
+          "requests_per_sec": {
+            "type": "number",
+            "format": "double",
+            "description": "All of them, per second, on average over `seconds`."
+          },
+          "seconds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The time the counts of the step cover, in seconds: `step_seconds`,\nor less for the last step, still filling (ferryd stores the\nrequests every 10 s).",
+            "minimum": 0
+          },
+          "status_2xx": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The requests of the step answered 2xx, and the WebSockets that opened.",
+            "minimum": 0
+          },
+          "status_3xx": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status_4xx": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status_5xx": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The proxy's own 502 and 503 pages included.",
+            "minimum": 0
+          }
+        }
       },
       "RollbackRequest": {
         "type": "object",
@@ -9129,7 +9281,8 @@
         "description": "`GET /api/v1/server/metrics` — how busy the machine and its containers\nare right now (DESIGN.md §22). Every call reads again; the last 24 hours\nare [`MetricsHistory`].",
         "required": [
           "at",
-          "host"
+          "host",
+          "requests"
         ],
         "properties": {
           "at": {
@@ -9149,6 +9302,13 @@
           },
           "host": {
             "$ref": "#/components/schemas/HostMetrics"
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestMetrics"
+            },
+            "description": "The requests the proxy answered in the last 10 s (its last reading),\none entry per target that had any: the services, the busiest first,\nthen `dashboard` and `unrouted`. Empty before the first reading."
           }
         }
       },

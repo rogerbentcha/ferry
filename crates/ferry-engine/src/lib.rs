@@ -18,7 +18,8 @@
 //! hub), `images` (pull policy + retention), `limits` (container resource
 //! limits, OOM messages, free-disk check), `domains` (the domains services
 //! are served under, and their verification), `metrics` (how busy the host
-//! and the containers are), `history` (the last 24 hours of those metrics).
+//! and the containers are), `history` (the last 24 hours of those metrics),
+//! `requests` (the requests the proxy answered, stored every 10 s).
 
 mod datastores;
 mod deploy;
@@ -34,6 +35,7 @@ mod metrics;
 mod ops;
 mod pipeline;
 mod reconcile;
+mod requests;
 mod spec;
 mod state;
 mod status;
@@ -86,7 +88,8 @@ impl FerryEngine {
     ///    background;
     /// 7. spawn deploy workers, the reconcile loop, the route and OOM
     ///    watchers, the cron scheduler, the domain verifier, the metrics
-    ///    sampler (a reading every 10 s, kept 24 hours) and datastore
+    ///    sampler (a reading every 10 s, kept 24 hours), the sampler of the
+    ///    proxy's requests (every 10 s, into the same history) and datastore
     ///    provisioning for rows still `creating`.
     ///
     /// Calling it twice is a `Conflict` error.
@@ -142,6 +145,7 @@ impl FerryEngine {
         inner.spawn(jobs::run_scheduler(inner.clone()));
         inner.spawn(domains::run_verifier(inner.clone()));
         inner.spawn(history::run_sampler(inner.clone()));
+        inner.spawn(requests::run_sampler(inner.clone()));
         inner.spawn(deploy::fail_queued_on_shutdown(inner.clone()));
         datastores::resume_provisioning(inner).await?;
         info!(prefix = %inner.naming.prefix(), "engine started");

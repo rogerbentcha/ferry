@@ -252,6 +252,39 @@ pub struct ServerMetrics {
     /// The running instances of services and the running datastores, the
     /// busiest (CPU) first. `null` when Docker did not answer.
     pub containers: Option<Vec<ContainerMetrics>>,
+    /// The requests the proxy answered in the last 10 s (its last reading),
+    /// one entry per target that had any: the services, the busiest first,
+    /// then `dashboard` and `unrouted`. Empty before the first reading.
+    pub requests: Vec<RequestMetrics>,
+}
+
+/// The requests the proxy answered for one target over a time
+/// (DESIGN.md §22).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct RequestMetrics {
+    /// A service id; `dashboard` for the dashboard's host; `unrouted` for a
+    /// host no service has (and the requests without a valid host).
+    pub target: String,
+    /// The service's name (its last one in the range); the target itself
+    /// for `dashboard` and `unrouted`.
+    pub name: String,
+    /// The requests per second, on average over the time.
+    pub requests_per_sec: f64,
+    /// The requests answered 2xx, and the WebSockets that opened.
+    pub status_2xx: u64,
+    pub status_3xx: u64,
+    /// With the requests that ended before their answer (the client went
+    /// away), counted as 499.
+    pub status_4xx: u64,
+    /// The proxy's own 502 and 503 pages included.
+    pub status_5xx: u64,
+    /// Half the requests got their response headers within this many
+    /// milliseconds. Exact to a bucket of the histogram (DESIGN.md §22);
+    /// WebSockets left out. `null` without such a request.
+    pub p50_ms: Option<f64>,
+    /// 95 % of the requests got their response headers within this many
+    /// milliseconds.
+    pub p95_ms: Option<f64>,
 }
 
 /// The machine ferryd runs on. A value ferryd can't read is `null` (on
@@ -370,6 +403,38 @@ pub struct MetricsHistory {
     /// The 5 service instances and datastores whose CPU use was the highest
     /// in the range, the busiest first.
     pub containers: Vec<ContainerSeries>,
+    /// The requests to the services (neither the dashboard's nor the
+    /// unrouted ones), oldest first: a point for every step ferryd ran in
+    /// and stored requests for, with zeros when no request came.
+    pub requests: Vec<RequestPoint>,
+    /// Each target that had requests in the range, over the whole range:
+    /// the services, the busiest first, then `dashboard` and `unrouted`.
+    pub request_targets: Vec<RequestMetrics>,
+}
+
+/// The requests to the services over one step.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct RequestPoint {
+    /// The start of the step.
+    pub at: DateTime<Utc>,
+    /// The time the counts of the step cover, in seconds: `step_seconds`,
+    /// or less for the last step, still filling (ferryd stores the
+    /// requests every 10 s).
+    pub seconds: u32,
+    /// All of them, per second, on average over `seconds`.
+    pub requests_per_sec: f64,
+    /// The requests of the step answered 2xx, and the WebSockets that opened.
+    pub status_2xx: u64,
+    pub status_3xx: u64,
+    pub status_4xx: u64,
+    /// The proxy's own 502 and 503 pages included.
+    pub status_5xx: u64,
+    /// Half the requests of the step got their response headers within
+    /// this many milliseconds (WebSockets left out). `null` without such a
+    /// request.
+    pub p50_ms: Option<f64>,
+    /// 95 % of them got their response headers within this many milliseconds.
+    pub p95_ms: Option<f64>,
 }
 
 /// The machine over one step (or one reading, when it is stored). A value

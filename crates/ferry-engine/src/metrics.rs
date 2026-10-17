@@ -1,7 +1,8 @@
 //! Server metrics (`Engine::server_metrics`, DESIGN.md §22): how busy the
 //! machine is — CPU, memory and network from `/proc`, the disks from
-//! `statvfs` and `/proc/diskstats` — and the CPU / memory of every running
-//! service instance and datastore, from Docker.
+//! `statvfs` and `/proc/diskstats` — the CPU / memory of every running
+//! service instance and datastore, from Docker, and the requests of the
+//! proxy's last reading (`requests`).
 //!
 //! CPU % and the throughputs are rates between two readings of the kernel's
 //! counters. [`HostSampler`] keeps the last reading: a call within a minute
@@ -48,7 +49,7 @@ const SECTOR_BYTES: u64 = 512;
 /// `Engine::server_metrics`.
 pub(crate) async fn server_metrics(inner: &Inner) -> Result<ServerMetrics> {
     let (host, containers) = tokio::join!(host(inner, &inner.host_sampler), containers(inner, true));
-    Ok(ServerMetrics { at: Utc::now(), host, containers: containers? })
+    Ok(ServerMetrics { at: Utc::now(), host, containers: containers?, requests: inner.requests.last() })
 }
 
 /// The host's values, with the rates since the last reading of `sampler`.

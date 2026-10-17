@@ -28,11 +28,20 @@ _openapi:
           every running service instance and datastore with its CPU use (100 =
           one core), memory use and limits, the busiest first. Speeds are bytes
           per second since the previous call (within a minute) or over one
-          second, so a call takes about a second. Every call reads again: the
-          last 24 hours are `GET /api/v1/server/metrics/history`. A value the
-          server can't read is `null` (on macOS, most host values); `containers`
-          is `null` when Docker does not answer, and the CPU and memory of a
-          container that does not answer in time are `null`."
+          second, so a call takes about a second. The requests: what the proxy
+          answered in its last reading (the last 10 s), one entry per target
+          that had any — a service (by id), `dashboard` (the dashboard's host)
+          or `unrouted` (a host no service has) — the services busiest first,
+          then `dashboard` and `unrouted`: requests per second, the requests by
+          status class (2xx counts the WebSockets that opened; 4xx the requests
+          whose client went away before the answer, as 499; 5xx the proxy's own
+          502 and 503 pages) and the p50 and p95 latency in milliseconds, until
+          the response headers went out (WebSockets left out; `null` without a
+          request to time). Every call reads again: the last 24 hours are `GET
+          /api/v1/server/metrics/history`. A value the server can't read is
+          `null` (on macOS, most host values); `containers` is `null` when
+          Docker does not answer, and the CPU and memory of a container that
+          does not answer in time are `null`."
         heading: live-server-metrics
       - content: "The server's metrics over the last hour, 6 hours or 24 hours. ferryd
           reads the server every 10 s while it runs and keeps 24 hours of
@@ -45,7 +54,17 @@ _openapi:
           network traffic, like `GET /api/v1/server/metrics`. The containers:
           the 5 service instances and datastores whose CPU use (100 = one core)
           was the highest in the range, the busiest first, with their memory. A
-          value that could not be read in a whole step is `null`."
+          value that could not be read in a whole step is `null`. The requests,
+          which the proxy counts and ferryd stores every 10 s: `requests` has
+          the services' together (neither the dashboard's nor the unrouted ones)
+          for every step ferryd ran in and stored requests for — the requests
+          per second over `seconds` (the step, or less for the last one, still
+          filling), the requests by status class, and the p50 and p95 latency in
+          milliseconds, `null` in a step without a request to time — and
+          `request_targets` each target that had requests over the whole range,
+          the services busiest first, then `dashboard` and `unrouted`.
+          Percentiles come from a histogram with fixed buckets: they are exact
+          to the bucket."
         heading: server-metrics-of-the-last-24-hours
 ---
 
