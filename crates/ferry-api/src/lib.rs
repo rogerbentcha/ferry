@@ -91,6 +91,7 @@ pub fn router(state: AppState) -> axum::Router {
         .route("/v1/events", get(events::stream).layer(axum::Extension(hub.clone())))
         // how the server is doing
         .route("/v1/server/metrics", get(server::metrics))
+        .route("/v1/server/metrics/history", get(server::history))
         // services
         .route("/v1/services", get(services::list).post(services::create))
         .route("/v1/services/{id}", get(services::get).patch(services::update).delete(services::delete))

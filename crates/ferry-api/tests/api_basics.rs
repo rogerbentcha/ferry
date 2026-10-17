@@ -271,6 +271,51 @@ async fn server_metrics_come_from_the_engine_and_need_auth() {
 }
 
 #[tokio::test]
+async fn the_metrics_history_takes_a_range_and_needs_auth() {
+    let app = TestApp::new().await;
+    let r = app.send(req(Method::GET, "/api/v1/server/metrics/history").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert!(app.engine.calls_with("metrics_history").is_empty(), "nothing is read without a token");
+
+    // The last hour by default.
+    let r = app.get("/api/v1/server/metrics/history").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let v = r.json();
+    assert_eq!((&v["range"], &v["step_seconds"]), (&json!("1h"), &json!(10)));
+    assert!(v["from"].as_str().is_some_and(|at| at.ends_with('Z')), "{v}");
+    assert!(v["to"].as_str().is_some_and(|at| at.ends_with('Z')), "{v}");
+    let host = v["host"].as_array().unwrap();
+    assert_eq!(host.len(), 2);
+    assert_eq!((&host[0]["cpu_percent"], &host[0]["memory_used_bytes"]), (&json!(12.5), &json!(1u64 << 30)));
+    // A value that wasn't read is null, not missing.
+    assert!(host[1].get("cpu_percent").is_some_and(Value::is_null), "{}", host[1]);
+    assert!(host[1].get("network_rx_bytes_per_sec").is_some_and(Value::is_null), "{}", host[1]);
+    let containers = v["containers"].as_array().unwrap();
+    assert_eq!(
+        (&containers[0]["kind"], &containers[0]["name"], &containers[0]["instance"]),
+        (&json!("service"), &json!("web"), &json!("9f8e7d"))
+    );
+    assert_eq!(containers[0]["points"][0]["cpu_percent"], json!(150.0));
+
+    for (range, step) in [("1h", 10), ("6h", 60), ("24h", 240)] {
+        let r = app.get(&format!("/api/v1/server/metrics/history?range={range}")).await;
+        assert_eq!(r.status, StatusCode::OK, "{range}: {}", r.text());
+        assert_eq!((&r.json()["range"], &r.json()["step_seconds"]), (&json!(range), &json!(step)));
+    }
+    assert_eq!(
+        app.engine.calls_with("metrics_history"),
+        ["metrics_history 1h", "metrics_history 1h", "metrics_history 6h", "metrics_history 24h"]
+    );
+
+    for range in ["2h", "1H", "", "7d"] {
+        let r = app.get(&format!("/api/v1/server/metrics/history?range={range}")).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{range}: {}", r.text());
+        assert!(r.json()["error"]["message"].as_str().is_some_and(|m| m.contains("range")), "{}", r.text());
+    }
+    assert_eq!(app.engine.calls_with("metrics_history").len(), 4, "an unknown range reads nothing");
+}
+
+#[tokio::test]
 async fn every_error_outside_the_api_is_json_too() {
     let app = TestApp::new().await;
     for (method, path) in [

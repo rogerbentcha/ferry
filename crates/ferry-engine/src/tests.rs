@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ferry_build::Builder;
+use ferry_core::dto::{ContainerKind, ContainerMetrics, HostPoint, MetricsRange};
 use ferry_core::{
     CheckOutcome, Config, Datastore, DatastoreKind, Deploy, DeployRequest, DeploySource, DeployStatus, DeployTrigger,
     Domain, DomainSource, DomainStatus, Engine, Error, GitConnection, GitProvider, JobRun, JobStatus, JobTrigger,
@@ -143,6 +144,81 @@ async fn server_metrics_report_the_host_when_docker_does_not_answer() {
         assert!(m.host.network_rx_bytes_per_sec.is_some(), "{:?}", m.host);
     } else {
         assert_eq!((m.host.cpu_percent, m.host.memory_total_bytes), (None, None), "no /proc here");
+    }
+}
+
+#[tokio::test]
+async fn a_reading_for_the_history_keeps_the_host_when_docker_does_not_answer() {
+    let f = fixture(2).await;
+    let sampler = crate::metrics::HostSampler::new();
+    let (host, containers) = crate::history::read(&f.engine.inner, &sampler).await.unwrap();
+    assert!(containers.is_empty(), "Docker is unreachable");
+    assert!((chrono::Utc::now() - host.at).num_seconds() < 10);
+    if cfg!(target_os = "linux") {
+        assert!(host.cpu_percent.is_some() && host.memory_used_bytes.is_some(), "{host:?}");
+    }
+    f.store.insert_metrics(&host, &containers).await.unwrap();
+    let history = f.engine.metrics_history(MetricsRange::Hour).await.unwrap();
+    assert_eq!(history.host.len(), 1, "{history:?}");
+}
+
+#[tokio::test]
+async fn the_metrics_history_shows_the_last_range_and_the_5_busiest_containers() {
+    let f = fixture(2).await;
+    let now = chrono::Utc::now();
+    let ago = |secs: i64| now - chrono::TimeDelta::seconds(secs);
+    let container = |n: u32, cpu: f64| ContainerMetrics {
+        kind: ContainerKind::Service,
+        id: format!("srv-{n}"),
+        name: format!("app{n}"),
+        instance: Some("aaaaaa".into()),
+        cpu_percent: Some(cpu),
+        memory_bytes: Some(1 << 20),
+        memory_limit_bytes: None,
+        cpu_limit: None,
+    };
+    let containers: Vec<_> = (1..=7).map(|n| container(n, f64::from(n))).collect();
+    // A reading 2 hours ago (out of the last hour), and two in the last minute.
+    for at in [ago(7200), ago(45), ago(30)] {
+        let host = HostPoint { at, cpu_percent: Some(50.0), ..HostPoint::default() };
+        f.store.insert_metrics(&host, &containers).await.unwrap();
+    }
+    let hour = f.engine.metrics_history(MetricsRange::Hour).await.unwrap();
+    assert_eq!((hour.range, hour.step_seconds), (MetricsRange::Hour, 10));
+    assert!(hour.from > ago(3600) && hour.from <= ago(3590) && hour.to >= now, "{} {}", hour.from, hour.to);
+    assert_eq!(hour.host.len(), 2, "{:?}", hour.host);
+    let names: Vec<_> = hour.containers.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["app7", "app6", "app5", "app4", "app3"]);
+    let day = f.engine.metrics_history(MetricsRange::Day).await.unwrap();
+    assert_eq!((day.step_seconds, day.containers.len()), (240, 5));
+    assert!(day.host.len() >= 2 && day.host.len() <= 3, "{:?}", day.host);
+}
+
+#[tokio::test]
+async fn every_series_of_the_metrics_history_has_360_points_at_most() {
+    let f = fixture(2).await;
+    let now = chrono::Utc::now().timestamp();
+    let web = ContainerMetrics {
+        kind: ContainerKind::Service,
+        id: "srv-1".into(),
+        name: "web".into(),
+        instance: Some("aaaaaa".into()),
+        cpu_percent: Some(1.0),
+        memory_bytes: None,
+        memory_limit_bytes: None,
+        cpu_limit: None,
+    };
+    // A reading every 10 s for more than an hour, then every minute for
+    // more than 24 hours before that.
+    let times = (0..400).map(|n| now - n * 10).chain((65..1_600).map(|n| now - n * 60));
+    for at in times {
+        let host = HostPoint { at: chrono::DateTime::from_timestamp(at, 0).unwrap(), ..HostPoint::default() };
+        f.store.insert_metrics(&host, std::slice::from_ref(&web)).await.unwrap();
+    }
+    for (range, least) in [(MetricsRange::Hour, 355), (MetricsRange::SixHours, 355), (MetricsRange::Day, 355)] {
+        let h = f.engine.metrics_history(range).await.unwrap();
+        assert!((least..=360).contains(&h.host.len()), "{range:?}: {} points", h.host.len());
+        assert!((least..=360).contains(&h.containers[0].points.len()), "{range:?}");
     }
 }
 

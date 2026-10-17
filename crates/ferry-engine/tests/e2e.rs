@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use ferry_build::Builder;
+use ferry_core::dto::MetricsRange;
 use ferry_core::{
     CancellationToken, Config, Datastore, DatastoreKind, DatastoreStatus, Deploy, DeployRequest, DeploySource,
     DeployStatus, DeployTrigger, Engine, JobStatus, JobTrigger, LogLine, LogOptions, Service, ServiceState,
@@ -373,6 +374,19 @@ async fn image_web_service_lifecycle() {
     assert_eq!(status.instances.len(), 1);
     assert_eq!(status.instances[0].state, "running");
     assert!(status.instances[0].started_at.is_some());
+
+    // The engine reads the server every 10 s: the instance shows in the
+    // metrics history.
+    let container = status.instances[0].name.clone();
+    h.wait_until("the instance in the metrics history", Duration::from_secs(30), || async {
+        let history = h.engine.metrics_history(MetricsRange::Hour).await.unwrap();
+        !history.host.is_empty()
+            && history
+                .containers
+                .iter()
+                .any(|c| c.id == svc.id && c.instance.as_ref().is_some_and(|i| container.ends_with(i)))
+    })
+    .await;
 
     // (8) scale 1 → 3 → 1.
     h.engine.scale(&svc.id, 3).await.unwrap();

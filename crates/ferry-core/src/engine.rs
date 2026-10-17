@@ -12,7 +12,7 @@
 use async_trait::async_trait;
 
 use crate::Result;
-use crate::dto::{RuntimeStatus, ServerMetrics};
+use crate::dto::{MetricsHistory, MetricsRange, RuntimeStatus, ServerMetrics};
 use crate::logs::LogStream;
 use crate::models::{Deploy, DeploySource, DeployTrigger, Domain, JobRun, JobTrigger};
 
@@ -155,5 +155,13 @@ pub trait Engine: Send + Sync + 'static {
     /// never delays the answer by more than a few seconds.
     async fn server_metrics(&self) -> Result<ServerMetrics> {
         Err(crate::Error::invalid("server metrics are not supported by this engine"))
+    }
+
+    /// The server's metrics over the last `range`, averaged into 360 steps
+    /// at most (`GET /api/v1/server/metrics/history`, §22): the engine reads
+    /// the server every 10 s while it runs and keeps the last 24 hours.
+    async fn metrics_history(&self, range: MetricsRange) -> Result<MetricsHistory> {
+        let _ = range;
+        Err(crate::Error::invalid("the metrics history is not supported by this engine"))
     }
 }

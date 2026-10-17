@@ -24,6 +24,7 @@ const ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/v1/events"),
     // how the server is doing
     ("GET", "/api/v1/server/metrics"),
+    ("GET", "/api/v1/server/metrics/history"),
     // the account, its sessions and API tokens, `ferry login`
     ("GET", "/api/v1/auth/status"),
     ("POST", "/api/v1/auth/setup"),

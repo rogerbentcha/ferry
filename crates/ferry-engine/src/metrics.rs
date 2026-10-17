@@ -47,17 +47,19 @@ const SECTOR_BYTES: u64 = 512;
 
 /// `Engine::server_metrics`.
 pub(crate) async fn server_metrics(inner: &Inner) -> Result<ServerMetrics> {
-    let host = async {
-        let mut paths = vec![inner.config.data_dir.clone()];
-        if let Ok(Some(root)) =
-            tokio::time::timeout(DOCKER_ROOT_TIMEOUT, async { local_docker_root(inner.host_info().await) }).await
-        {
-            paths.push(root);
-        }
-        inner.host_sampler.read(paths).await
-    };
-    let (host, containers) = tokio::join!(host, containers(inner));
+    let (host, containers) = tokio::join!(host(inner, &inner.host_sampler), containers(inner, true));
     Ok(ServerMetrics { at: Utc::now(), host, containers: containers? })
+}
+
+/// The host's values, with the rates since the last reading of `sampler`.
+pub(crate) async fn host(inner: &Inner, sampler: &HostSampler) -> HostMetrics {
+    let mut paths = vec![inner.config.data_dir.clone()];
+    if let Ok(Some(root)) =
+        tokio::time::timeout(DOCKER_ROOT_TIMEOUT, async { local_docker_root(inner.host_info().await) }).await
+    {
+        paths.push(root);
+    }
+    sampler.read(paths).await
 }
 
 // ---------------------------------------------------------------------------
@@ -67,8 +69,9 @@ pub(crate) async fn server_metrics(inner: &Inner) -> Result<ServerMetrics> {
 type Owner = (ContainerKind, String, String);
 
 /// The running containers of services and datastores, the busiest first.
-/// `None` when Docker does not answer.
-async fn containers(inner: &Inner) -> Result<Option<Vec<ContainerMetrics>>> {
+/// `None` when Docker does not answer. Without `with_limits`, the
+/// containers are not inspected and their limits are `None`.
+pub(crate) async fn containers(inner: &Inner, with_limits: bool) -> Result<Option<Vec<ContainerMetrics>>> {
     let prefix = inner.naming.prefix();
     let listed = with_timeout(
         "listing containers",
@@ -90,7 +93,7 @@ async fn containers(inner: &Inner) -> Result<Option<Vec<ContainerMetrics>>> {
     let mut rows = join_all(
         list.iter()
             .filter_map(|c| owner(c, &services, &datastores).map(|o| (c, o)))
-            .map(|(c, owner)| container_metrics(inner, c, owner)),
+            .map(|(c, owner)| container_metrics(inner, c, owner, with_limits)),
     )
     .await;
     sort_busiest_first(&mut rows);
@@ -109,17 +112,25 @@ fn owner(c: &ContainerInfo, services: &HashMap<String, String>, datastores: &Has
     Some((kind, id.clone(), names.get(id)?.clone()))
 }
 
-async fn container_metrics(inner: &Inner, c: &ContainerInfo, (kind, id, name): Owner) -> ContainerMetrics {
+async fn container_metrics(
+    inner: &Inner,
+    c: &ContainerInfo,
+    (kind, id, name): Owner,
+    with_limits: bool,
+) -> ContainerMetrics {
     // The list API has no limits: inspect (bounded) while Docker samples the
     // CPU (about a second).
-    let (info, stats) = tokio::join!(
-        tokio::time::timeout(INSPECT_TIMEOUT, inner.docker.inspect_container(&c.id)),
-        tokio::time::timeout(STATS_TIMEOUT, inner.docker.stats(&c.id)),
-    );
-    let info = match info {
-        Ok(Ok(Some(info))) => info,
-        _ => c.clone(),
+    let inspected = async {
+        if !with_limits {
+            return None;
+        }
+        match tokio::time::timeout(INSPECT_TIMEOUT, inner.docker.inspect_container(&c.id)).await {
+            Ok(Ok(info)) => info,
+            _ => None,
+        }
     };
+    let (inspected, stats) = tokio::join!(inspected, tokio::time::timeout(STATS_TIMEOUT, inner.docker.stats(&c.id)));
+    let info = inspected.as_ref().unwrap_or(c);
     let stats = match stats {
         Ok(Ok(s)) => Some(s),
         _ => None,
@@ -131,8 +142,8 @@ async fn container_metrics(inner: &Inner, c: &ContainerInfo, (kind, id, name): O
         instance: (kind == ContainerKind::Service).then(|| instance_id(&c.name)),
         cpu_percent: stats.map(|s| s.cpu_percent),
         memory_bytes: stats.map(|s| s.memory_bytes),
-        memory_limit_bytes: memory_limit(&info),
-        cpu_limit: cpu_limit(&info),
+        memory_limit_bytes: memory_limit(info),
+        cpu_limit: cpu_limit(info),
     }
 }
 
