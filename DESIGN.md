@@ -72,8 +72,8 @@ auth, secret files, IP allow lists, teams/RBAC.
 | `ferry-scm` | lib | core | git providers (§18): GitHub / GitLab REST clients, authorizing an account in the browser (GitHub App manifest + installation, GitLab OAuth), the tokens of a connection (minted or renewed on demand), which connection reads a repository |
 | `ferry-proxy` | lib | core | `RouteTable`, HTTP/HTTPS reverse proxy, websockets, error pages, request counts (`RequestStats`, §22) |
 | `ferry-tls` | lib | core | ACME certificates, SNI resolver, `TlsHooks` impl, the state of each certificate (`Certificates`) |
-| `ferry-engine` | lib | core, docker, build, proxy, scm | `FerryEngine: Engine` — deploys, reconciler, cron, jobs, datastores, logs, verifying domains (§21), server metrics, the proxy's requests and their 24-hour history (§22) |
-| `ferry-api` | lib | core, build, scm | axum router: REST, SSE (logs, the server's own log + `/api/v1/events`), webhooks, blueprints, OpenAPI + Swagger UI, git connections (§18; `build` only for the branches of a remote), serves the embedded web client (`web/dist`) |
+| `ferry-engine` | lib | core, docker, build, proxy, scm | `FerryEngine: Engine` — deploys, reconciler, cron, jobs, datastores, logs, verifying domains (§21), server metrics, the proxy's requests and their 24-hour history, what `/metrics` publishes (§22) |
+| `ferry-api` | lib | core, build, scm | axum router: REST, SSE (logs, the server's own log + `/api/v1/events`), webhooks, blueprints, OpenAPI + Swagger UI, git connections (§18; `build` only for the branches of a remote), the Prometheus text format of `/metrics` (§22), serves the embedded web client (`web/dist`) |
 | `ferry-cli` | bin `ferry` | core | CLI client |
 | `ferryd` | bin | all | wiring (already written) |
 
@@ -376,7 +376,8 @@ log (runtime logs are Docker's container logs).
 ## 10. HTTP API (`ferry-api`)
 
 Auth (§20): every `/api/*` request — except the OpenAPI document, Swagger
-UI and the public `/api/v1/auth` calls below — carries an API token as
+UI and the public `/api/v1/auth` calls below — and `GET /metrics` (§22)
+carry an API token as
 `Authorization: Bearer <token>` (GET requests may use `?access_token=<token>`
 instead: EventSource can't set headers) or the dashboard's session cookie.
 The account's own operations (`/api/v1/auth/...`) only take the session.
@@ -388,8 +389,8 @@ every `/api` path).
 params, bodies, responses with `ApiErrorBody` errors); `openapi::ApiDoc`
 (`#[derive(OpenApi)]`, OpenAPI **3.1**) gathers them with every DTO schema,
 two security schemes — `bearer` (an API token) and `session` (the
-session cookie) — either of which every `/api/v1` operation
-requires, except the account's (`session` only) and the public ones (none,
+session cookie) — either of which every `/api/v1` operation and
+`GET /metrics` requires, except the account's (`session` only) and the public ones (none,
 like `/healthz`, the webhooks and the document), and one tag per resource. It is
 served at `GET /api/openapi.json`, and Swagger UI (`utoipa-swagger-ui`, assets
 vendored into the binary: works offline, no validator call) at `/api/docs`;
@@ -421,6 +422,7 @@ routes and checks that the document, the router and `lib.rs` agree.
 | `GET /api/v1/server/metrics` | `ServerMetrics` `{at, host, containers, requests}` (§22): how busy the machine is right now — `HostMetrics` `{cpu_percent, cpu_count, memory_used_bytes, memory_total_bytes, disks, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`, each `DiskMetrics` `{mount_point, used_bytes, total_bytes, read_bytes_per_sec, write_bytes_per_sec}` — and every running service instance and datastore, `ContainerMetrics` `{kind, id, name, instance, cpu_percent, memory_bytes, memory_limit_bytes, cpu_limit}`, the busiest first — and what the proxy answered in its last reading (10 s), `RequestMetrics` `{target, name, requests_per_sec, status_2xx, status_3xx, status_4xx, status_5xx, p50_ms, p95_ms}` per target that had requests: the services busiest first, then `dashboard` and `unrouted` (`engine.server_metrics`). A value that can't be read is `null`; `containers` is `null` when Docker does not answer. Takes about a second |
 | `GET /api/v1/server/metrics/history?range=1h\|6h\|24h` | `MetricsHistory` `{range, step_seconds, from, to, host, containers, requests, request_targets}` (§22): the readings ferryd keeps (one every 10 s, 24 hours), averaged into steps of 10 / 60 / 240 s — 360 at most — oldest first, a step without a reading left out. `HostPoint` `{at, cpu_percent, memory_used_bytes, memory_total_bytes, disk_read_bytes_per_sec, disk_write_bytes_per_sec, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`; the 5 containers whose CPU peaked highest, `ContainerSeries` `{kind, id, name, instance, points: [ContainerPoint {at, cpu_percent, memory_bytes}]}`; the services' requests together, `RequestPoint` `{at, seconds, requests_per_sec, status_2xx, status_3xx, status_4xx, status_5xx, p50_ms, p95_ms}` for every step ferryd ran in and stored requests for (zeros without a request; `seconds` less than the step for the last one, still filling), and each target over the range, `RequestMetrics` (`engine.metrics_history`). `range` defaults to `1h`; any other value is a 400 |
 | `GET /api/v1/server/logs?tail=&follow=&level=` | SSE (§22): the server's own log, the last 2,000 lines it keeps in memory (`tail`: the last N at the level asked, all by default), then with `follow` each new one. `event: log` + `ServerLogLine` `{ts, level, target, message, fields}`; `level` (`error` / `warn` / `info` / `debug`, the default) keeps that level and above, any other value is a 400; `event: skipped` + `{"count": N}` where a follower more than 1,024 lines behind missed N lines; without `follow`, `event: end` after the recent lines |
+| `GET /metrics` | the server's numbers in the Prometheus text format 0.0.4 (`text/plain; version=0.0.4; charset=utf-8`, §22), for a Prometheus scrape job: the host and the containers of ferryd's last reading (10 s; left out after 30 s) and the proxy's request counters since ferryd started (`engine.metrics_snapshot()`: never a new reading, never Docker). At the root, where Prometheus looks by default, behind the same authentication as `/api/v1` (401 without) |
 | `GET /api/v1/events` | SSE change feed: `event: ready` (`data: {}`) once the feed watches the store (refetch after it), then `event: change` with `ChangeEvent` `{kind, id, service_id, action}` — `kind` ∈ `service`/`deploy`/`datastore`/`env_group`/`job`/`git_connection`/`domain`, `action` ∈ `created`/`updated`/`deleted`, `service_id` set for services (own id), deploys and jobs; a lagging subscriber gets `{kind:"all", id:"*", service_id:null, action:"resync"}` (refetch everything). The store is polled every second while someone listens and nudged after every API/webhook write |
 | `GET /api/v1/services` | `[ServiceView]` |
 | `POST /api/v1/services` | `CreateService` → 201 `ServiceView` (queues a `create` deploy when it has a repo/image, unless `deploy:false`) |
@@ -825,6 +827,7 @@ Rust build never runs Node.
   everything else (`index.html` first) `no-cache` + ETag; any other `GET`
   outside `/api`, `/hooks` and `/healthz` that isn't a file gets
   `index.html` (SPA fallback), a missing `/assets/` file stays a 404.
+  `GET /metrics` is a route of its own (§22): the client has no page there.
 * **Development:** `FERRY_UI_DIR=<dir>` makes `ferryd` serve a built client
   from disk instead of the embedded one (rebuild the client without
   recompiling the server); or `npm run dev` in `web/` (Vite with HMR) proxies
@@ -1749,7 +1752,9 @@ datastore uses it, and how the services answer their requests; Server →
 Server logs answers "what is Ferry doing?" — why a deploy failed, why a
 certificate was not issued — with ferryd's own log. Nothing to install:
 ferryd reads the numbers itself and keeps 24 hours of them in its own
-database (Prometheus, Grafana and log shipping are not bundled).
+database (Prometheus, Grafana and log shipping are not bundled). For a
+Prometheus that already runs elsewhere, `GET /metrics` publishes the same
+numbers in its text format (below).
 
 `GET /api/v1/server/metrics` (§10) → `engine.server_metrics()`
 (`ferry-engine/src/metrics.rs`), which reads the host and the containers
@@ -1911,3 +1916,60 @@ Logging never waits for a reader: each follower has a bounded queue of
 for that follower, and the next line it gets carries the count, sent
 first as `event: skipped`. A closed follower is dropped at the next line.
 The stream ends on shutdown like every SSE stream (§9).
+
+**Prometheus** (`ferry-api/src/prometheus.rs`, `metrics::snapshot`).
+`GET /metrics` (§10), behind the same `require_auth` as `/api/v1` (an API
+token — what a scrape job sends with `authorization: credentials_file` —
+or the session; 401 without), publishes the numbers in the Prometheus
+text format 0.0.4, written by hand: no crate, a `# HELP` and a `# TYPE`
+line per family, label values escaped (`\\`, `\"`, `\n`). It reads
+nothing: `engine.metrics_snapshot()` returns what ferryd already has,
+in a few milliseconds, and nothing runs while nobody scrapes.
+
+* The host and the containers of the history's last reading
+  (`metrics::LastReading`, kept by `history::read` every 10 s): the
+  host's counters as `/proc` gives them (the `HostSampler` keeps its
+  whole last reading, not only the counters of its rates) and the
+  containers of the live view. A part read more than 30 s ago is left
+  out, so a stuck reading never shows as a flat line.
+* The proxy's counters (`RequestStats::snapshot`), never reset: a
+  ferryd restart is a counter reset, which Prometheus handles. Next to
+  each target's histogram the proxy adds up the time of its timed
+  requests (`RequestStats::latency_sum`, microseconds in an atomic): the
+  histogram's `_sum`. The services' names come from the store.
+
+| Family | Type | Labels | Value |
+|---|---|---|---|
+| `ferry_build_info` | gauge | `version` | 1 |
+| `ferry_host_cpu_count` | gauge | | the CPUs |
+| `ferry_host_cpu_seconds_total` | counter | `mode` | the `cpu` line of `/proc/stat` (`user` … `steal`) over `USER_HZ` (100) |
+| `ferry_host_memory_total_bytes`, `ferry_host_memory_available_bytes` | gauge | | `MemTotal`, and the total minus the used memory |
+| `ferry_host_disk_total_bytes`, `ferry_host_disk_used_bytes` | gauge | `mount_point` | the disks of the live view |
+| `ferry_host_disk_read_bytes_total`, `ferry_host_disk_written_bytes_total` | counter | `mount_point` | their sectors of `/proc/diskstats` × 512 |
+| `ferry_host_network_receive_bytes_total`, `ferry_host_network_transmit_bytes_total` | counter | `device` | each interface the live view adds up, on its own: a sum would go down when an interface goes away (a VPN restarting), which Prometheus reads as a reset and turns into a spike |
+| `ferry_container_cpu_percent`, `ferry_container_memory_bytes` | gauge | `kind`, `id`, `name`, `instance_id` | per running service instance (`instance_id`) and datastore |
+| `ferry_http_requests_total` | counter | `target`, `name`, `status_class` | every class, `2xx` to `5xx`, zeros included |
+| `ferry_http_request_duration_seconds` | histogram | `target`, `name` | `LATENCY_BOUNDS_MS` in seconds, then `+Inf`; WebSockets left out of it |
+
+The host's counters count from the machine's boot (an interface's from
+its own start): `rate()` over them gives the live view's rates, and the
+Monitoring page's CPU % is
+`100 × (1 − rate(idle + iowait) / rate(all modes))`. `target` is the service id,
+`dashboard` or `unrouted` (a service may be named either), `name` its
+name. The label of an instance is `instance_id`, not `instance`:
+Prometheus gives every series it collects an `instance` label (the
+target's address) and would rename ours `exported_instance`. Limits are
+not published: the 10 s reading does not inspect the containers. A value
+ferryd can't read (macOS, Docker not answering, a container it did not
+measure) is left out, never 0 or NaN, and so is a family without a
+sample. When the store can't give the services' names, their ids stand
+for them rather than failing the scrape. From another machine, Prometheus
+scrapes `https://<dashboard host>/metrics` through the proxy, where those
+requests count as `dashboard`.
+
+Added for it, nothing changed: `Engine::metrics_snapshot` (default: an
+error), `dto::{MetricsSnapshot, HostCounters, DiskCounters,
+NetworkCounters}` and `requests::TargetRequestTotals` in `ferry-core`,
+`RequestStats::latency_sum` in `ferry-proxy`,
+`ferry_api::prometheus::{render, CONTENT_TYPE}` and
+`openapi::METRICS_PATH`.

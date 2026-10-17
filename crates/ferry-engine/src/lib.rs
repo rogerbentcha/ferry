@@ -48,7 +48,7 @@ use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use ferry_build::Builder;
-use ferry_core::dto::{MetricsHistory, MetricsRange, RuntimeStatus, ServerMetrics};
+use ferry_core::dto::{MetricsHistory, MetricsRange, MetricsSnapshot, RuntimeStatus, ServerMetrics};
 use ferry_core::{
     CancellationToken, Config, Deploy, DeployRequest, DeployTrigger, Domain, Engine, Error, JobRun, JobTrigger,
     LogOptions, LogStream, Result, Store,
@@ -287,5 +287,9 @@ impl Engine for FerryEngine {
 
     async fn metrics_history(&self, range: MetricsRange) -> Result<MetricsHistory> {
         history::metrics_history(&self.inner, range).await
+    }
+
+    async fn metrics_snapshot(&self) -> Result<MetricsSnapshot> {
+        metrics::snapshot(&self.inner).await
     }
 }

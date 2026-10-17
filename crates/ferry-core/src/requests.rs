@@ -201,6 +201,20 @@ pub struct TargetRequests {
     pub counts: RequestCounts,
 }
 
+/// The requests of one target since ferryd started, as `GET /metrics`
+/// publishes them (DESIGN.md §22): the proxy's counters, which only go up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetRequestTotals {
+    /// A service id, [`DASHBOARD`] or [`UNROUTED`].
+    pub target: String,
+    /// The service's name (the target itself for the others, and the id of
+    /// a service deleted since).
+    pub name: String,
+    pub counts: RequestCounts,
+    /// The time the requests of `counts.latency` took, all together.
+    pub latency_sum: Duration,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

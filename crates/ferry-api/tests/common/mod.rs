@@ -10,9 +10,11 @@ use axum::Router;
 use axum::body::Body;
 use ferry_api::{AppState, router};
 use ferry_core::dto::{
-    ContainerKind, ContainerMetrics, ContainerPoint, ContainerSeries, DiskMetrics, HostMetrics, HostPoint,
-    InstanceStatus, MetricsHistory, MetricsRange, RequestMetrics, RequestPoint, RuntimeStatus, ServerMetrics,
+    ContainerKind, ContainerMetrics, ContainerPoint, ContainerSeries, DiskCounters, DiskMetrics, HostCounters,
+    HostMetrics, HostPoint, InstanceStatus, MetricsHistory, MetricsRange, MetricsSnapshot, NetworkCounters,
+    RequestMetrics, RequestPoint, RuntimeStatus, ServerMetrics,
 };
+use ferry_core::requests::{RequestCounts, TargetRequestTotals};
 use ferry_core::server_logs::ServerLogs;
 use ferry_core::tls::{CertificateStatus, Certificates};
 use ferry_core::{
@@ -423,6 +425,70 @@ impl Engine for MockEngine {
                 },
             ],
             request_targets: vec![request_metrics("srv-1", "web", 0.01, Some(180.0))],
+        })
+    }
+
+    /// A host with every value, a service instance, a datastore Docker did
+    /// not measure, and the requests of a service and unrouted ones.
+    async fn metrics_snapshot(&self) -> Result<MetricsSnapshot> {
+        self.record("metrics_snapshot".into());
+        let mut web = RequestCounts { status_2xx: 90, status_5xx: 10, ..RequestCounts::default() };
+        web.latency.record(std::time::Duration::from_millis(40));
+        Ok(MetricsSnapshot {
+            host: Some(HostCounters {
+                cpu_count: 4,
+                cpu_seconds: vec![("user".into(), 1_300.0), ("idle".into(), 8_550.0)],
+                memory_total_bytes: Some(8 << 30),
+                memory_available_bytes: Some(5 << 30),
+                disks: vec![DiskCounters {
+                    mount_point: "/".into(),
+                    used_bytes: 40 << 30,
+                    total_bytes: 100 << 30,
+                    read_bytes: Some(1 << 30),
+                    written_bytes: Some(2 << 30),
+                }],
+                network: vec![NetworkCounters {
+                    device: "eth0".into(),
+                    receive_bytes: 3_100_000,
+                    transmit_bytes: 1_040_000,
+                }],
+            }),
+            containers: Some(vec![
+                ContainerMetrics {
+                    kind: ContainerKind::Service,
+                    id: "srv-1".into(),
+                    name: "web".into(),
+                    instance: Some("9f8e7d".into()),
+                    cpu_percent: Some(120.0),
+                    memory_bytes: Some(300 << 20),
+                    memory_limit_bytes: None,
+                    cpu_limit: None,
+                },
+                ContainerMetrics {
+                    kind: ContainerKind::Datastore,
+                    id: "ds-1".into(),
+                    name: "db".into(),
+                    instance: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    memory_limit_bytes: None,
+                    cpu_limit: None,
+                },
+            ]),
+            requests: vec![
+                TargetRequestTotals {
+                    target: "srv-1".into(),
+                    name: "web".into(),
+                    counts: web,
+                    latency_sum: std::time::Duration::from_millis(40),
+                },
+                TargetRequestTotals {
+                    target: "unrouted".into(),
+                    name: "unrouted".into(),
+                    counts: RequestCounts::default(),
+                    latency_sum: std::time::Duration::ZERO,
+                },
+            ],
         })
     }
 }

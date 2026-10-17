@@ -4,7 +4,7 @@
 //! what each target got since its previous reading, and keeps that reading
 //! for the live metrics; one last reading is stored at shutdown. The history
 //! reads them back by step, with their percentiles, up to the last slot
-//! stored.
+//! stored. `GET /metrics` publishes the counters themselves ([`totals`]).
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use ferry_core::dto::{HostPoint, RequestMetrics, RequestPoint};
-use ferry_core::requests::{DASHBOARD, RequestCounts, TargetRequests, UNROUTED};
+use ferry_core::requests::{DASHBOARD, RequestCounts, TargetRequestTotals, TargetRequests, UNROUTED};
 use ferry_core::{Result, Store};
 use ferry_proxy::{RequestStats, RequestTarget, RequestTotals};
 use tracing::warn;
@@ -171,6 +171,51 @@ pub(crate) async fn sample(
     })
 }
 
+/// Every target's requests since ferryd started, for `GET /metrics`: the
+/// proxy's counters as they are, with the time the requests took. The
+/// services (by name), then the dashboard, then the unrouted requests. When
+/// the store can't give the services' names, their ids stand for them.
+pub(crate) async fn totals(store: &Store, stats: &RequestStats) -> Vec<TargetRequestTotals> {
+    let snapshot = stats.snapshot();
+    let services = snapshot.iter().any(|t| matches!(&t.target, RequestTarget::Service(id) if id != DASHBOARD_ROUTE));
+    let names: HashMap<String, String> = match services.then(|| store.list_services()) {
+        None => HashMap::new(),
+        Some(listed) => match listed.await {
+            Ok(services) => services.into_iter().map(|s| (s.id, s.name)).collect(),
+            Err(e) => {
+                warn!("GET /metrics: the services' names can't be read, their ids stand for them: {e}");
+                HashMap::new()
+            }
+        },
+    };
+    let mut totals: Vec<TargetRequestTotals> = snapshot
+        .into_iter()
+        .map(|t| {
+            let target = target_id(&t.target);
+            TargetRequestTotals {
+                target: target.to_string(),
+                // A service deleted since: its id stands for its name.
+                name: names.get(target).cloned().unwrap_or_else(|| target.to_string()),
+                counts: t.counts,
+                latency_sum: stats.latency_sum(&t.target),
+            }
+        })
+        .collect();
+    totals.sort_by(|a, b| {
+        rank(&a.target).cmp(&rank(&b.target)).then_with(|| a.name.cmp(&b.name)).then_with(|| a.target.cmp(&b.target))
+    });
+    totals
+}
+
+/// The services first, then the dashboard, then the unrouted requests.
+fn rank(target: &str) -> u8 {
+    match target {
+        DASHBOARD => 1,
+        UNROUTED => 2,
+        _ => 0,
+    }
+}
+
 /// The target of the store and the API: the service id, `dashboard` or
 /// `unrouted`.
 fn target_id(target: &RequestTarget) -> &str {
@@ -204,14 +249,9 @@ fn request_metrics(r: &TargetRequests, seconds: f64) -> RequestMetrics {
 /// The services, the busiest first (then by name), then the dashboard,
 /// then the unrouted requests.
 fn busiest_first(mut targets: Vec<RequestMetrics>) -> Vec<RequestMetrics> {
-    let rank = |t: &RequestMetrics| match t.target.as_str() {
-        DASHBOARD => 1,
-        UNROUTED => 2,
-        _ => 0,
-    };
     targets.sort_by(|a, b| {
-        rank(a)
-            .cmp(&rank(b))
+        rank(&a.target)
+            .cmp(&rank(&b.target))
             .then_with(|| b.requests_per_sec.total_cmp(&a.requests_per_sec))
             .then_with(|| a.name.cmp(&b.name))
     });
@@ -372,6 +412,49 @@ mod tests {
         assert_eq!((counts.status_2xx, counts.status_5xx), (4, 1), "nothing counted twice");
         assert_eq!(counts.latency.count(), 4, "the WebSocket is not in the latency");
         assert_eq!(stored[UNROUTED].1.status_4xx, 1);
+    }
+
+    #[tokio::test]
+    async fn get_metrics_publishes_the_counters_since_the_start() {
+        let store = Store::open_in_memory().await.unwrap();
+        let web = Service::new("web", ServiceType::WebService);
+        store.create_service(&web).await.unwrap();
+        let stats = RequestStats::new();
+        let targets = |totals: &[TargetRequestTotals]| totals.iter().map(|t| t.target.clone()).collect::<Vec<_>>();
+        assert_eq!(targets(&totals(&store, &stats).await), [UNROUTED], "unrouted is always there");
+
+        let web_target = RequestTarget::Service(web.id.clone());
+        stats.record(&web_target, 200, ms(5));
+        stats.record(&web_target, 503, ms(15));
+        stats.record(&web_target, 101, ms(1_000));
+        stats.record(&RequestTarget::Service(DASHBOARD_ROUTE.into()), 200, ms(2));
+        stats.record(&RequestTarget::Service("srv-gone".into()), 404, ms(1));
+        // A reading of the history resets nothing.
+        sample(&store, &stats, &mut RequestSampler::new(), Utc::now()).await.unwrap();
+        stats.record(&web_target, 200, ms(30));
+
+        let all = totals(&store, &stats).await;
+        let summary: Vec<_> = all.iter().map(|t| (t.target.as_str(), t.name.as_str(), t.counts.total())).collect();
+        assert_eq!(
+            summary,
+            [
+                ("srv-gone", "srv-gone", 1),
+                (web.id.as_str(), "web", 4),
+                (DASHBOARD, DASHBOARD, 1),
+                (UNROUTED, UNROUTED, 0)
+            ],
+            "the services by name (a deleted one by its id), then the dashboard and unrouted"
+        );
+        let web_totals = &all[1];
+        assert_eq!((web_totals.counts.status_2xx, web_totals.counts.status_5xx), (3, 1));
+        assert_eq!(web_totals.counts.latency.count(), 3, "the WebSocket is not in the latency");
+        assert_eq!(web_totals.latency_sum, ms(50));
+
+        // A store that can't answer: the ids stand for the names, and the counts are all there.
+        store.pool().close().await;
+        let fallback = totals(&store, &stats).await;
+        assert!(fallback.iter().all(|t| t.name == t.target), "{fallback:?}");
+        assert_eq!(fallback.iter().map(|t| t.counts.total()).sum::<u64>(), 6);
     }
 
     #[tokio::test]

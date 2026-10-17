@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Ferry API",
-    "description": "The HTTP API of [Ferry](https://github.com/Carter2307/ferry), a self-hosted Render alternative. The `ferry` CLI and the web dashboard use exactly this API.\n\n**Authentication.** Every `/api/v1` route needs an API token as `Authorization: Bearer <token>`: one created in the dashboard (Server → Account) or by `ferry login`, or the server token stored in `<data-dir>/api_token`. Use the **Authorize** button to set it here. `GET` requests may pass it as `?access_token=<token>` instead, because browsers' `EventSource` can't set headers (prefer the header: query strings end up in logs). The dashboard itself signs in to the server's account (`POST /api/v1/auth/login`) and is then authenticated by its session cookie; the operations on the account, its sessions and its tokens (`/api/v1/auth/...`) only accept that session. Webhooks (`/hooks/...`) authenticate with their own secrets, and `/healthz`, this document, Swagger UI and the calls made before signing in (the `auth` tag says which) need no token.\n\n**Conventions.** JSON bodies with snake_case fields; request bodies reject unknown fields and an empty body counts as `{}`. `{id}` path segments accept a resource id **or** its name. Errors are `ApiErrorBody` documents (`{\"error\": {\"code\", \"message\"}}`) with the matching HTTP status; unknown `/api` routes are JSON 404s. Boolean query flags accept `true/false`, `1/0`, `yes/no`, `on/off`, and an empty value means `true` (`?follow`).\n\n**Streams.** Logs and the change feed are Server-Sent Events (`text/event-stream`): see the `logs` operations and `GET /api/v1/events`. Idle streams get a `: keep-alive` comment every 15 s, and every stream ends when the server shuts down.",
+    "description": "The HTTP API of [Ferry](https://github.com/Carter2307/ferry), a self-hosted Render alternative. The `ferry` CLI and the web dashboard use exactly this API.\n\n**Authentication.** Every `/api/v1` route needs an API token as `Authorization: Bearer <token>`: one created in the dashboard (Server → Account) or by `ferry login`, or the server token stored in `<data-dir>/api_token`. Use the **Authorize** button to set it here. `GET` requests may pass it as `?access_token=<token>` instead, because browsers' `EventSource` can't set headers (prefer the header: query strings end up in logs). The dashboard itself signs in to the server's account (`POST /api/v1/auth/login`) and is then authenticated by its session cookie; the operations on the account, its sessions and its tokens (`/api/v1/auth/...`) only accept that session. `GET /metrics`, the metrics in the Prometheus format, takes an API token too. Webhooks (`/hooks/...`) authenticate with their own secrets, and `/healthz`, this document, Swagger UI and the calls made before signing in (the `auth` tag says which) need no token.\n\n**Conventions.** JSON bodies with snake_case fields; request bodies reject unknown fields and an empty body counts as `{}`. `{id}` path segments accept a resource id **or** its name. Errors are `ApiErrorBody` documents (`{\"error\": {\"code\", \"message\"}}`) with the matching HTTP status; unknown `/api` routes are JSON 404s. Boolean query flags accept `true/false`, `1/0`, `yes/no`, `on/off`, and an empty value means `true` (`?follow`).\n\n**Streams.** Logs and the change feed are Server-Sent Events (`text/event-stream`): see the `logs` operations and `GET /api/v1/events`. Idle streams get a `: keep-alive` comment every 15 s, and every stream ends when the server shuts down.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -6533,6 +6533,56 @@
           }
         }
       }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "server"
+        ],
+        "summary": "Metrics in the Prometheus format",
+        "description": "The server's numbers in the Prometheus text format (version 0.0.4), for a Prometheus that already runs somewhere: point a scrape job at this path with an API token as its bearer credentials. It needs an API token like the rest of the API, and answers at once from what ferryd already has: the host and the containers of its last reading (it reads them every 10 s; nothing when that reading is more than 30 s old) and the proxy's request counters. It never waits for Docker. `ferry_build_info{version}` is always 1. The host: `ferry_host_cpu_count`, `ferry_host_cpu_seconds_total{mode}` (the modes of /proc/stat), `ferry_host_memory_total_bytes`, `ferry_host_memory_available_bytes`, `ferry_host_disk_total_bytes`, `ferry_host_disk_used_bytes`, `ferry_host_disk_read_bytes_total` and `ferry_host_disk_written_bytes_total` (by `mount_point`), `ferry_host_network_receive_bytes_total` and `ferry_host_network_transmit_bytes_total` (by `device`: each interface but the loopback and Docker's own) — the CPU seconds and the disks' bytes count from the start of the machine, an interface's bytes from its own start. The containers, every running service instance and datastore by `kind`, `id`, `name` and `instance_id` (services only; not `instance`, which Prometheus gives the target): `ferry_container_cpu_percent` (100 = one core) and `ferry_container_memory_bytes`. The requests, by `target` (a service id, `dashboard` or `unrouted`) and `name`: `ferry_http_requests_total{status_class}` (`2xx` to `5xx`) and the histogram `ferry_http_request_duration_seconds` (until the response headers, WebSockets left out), counted from the start of ferryd. A value the server can't read (on macOS, most host values) is left out, never published as 0.",
+        "operationId": "getPrometheusMetrics",
+        "responses": {
+          "200": {
+            "description": "The metrics, in the Prometheus text format 0.0.4.",
+            "content": {
+              "text/plain; version=0.0.4": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API token, or no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server error (`docker_error` as 502, `database_error`, `internal_error`...).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -10042,7 +10092,7 @@
     },
     {
       "name": "server",
-      "description": "How the server is doing: how busy the machine is, now and over the last 24 hours, which service or datastore uses it, and what the server logs."
+      "description": "How the server is doing: how busy the machine is, now and over the last 24 hours, which service or datastore uses it, what the server logs, and the same numbers in the Prometheus format."
     },
     {
       "name": "auth",

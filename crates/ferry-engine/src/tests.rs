@@ -150,6 +150,8 @@ async fn server_metrics_report_the_host_when_docker_does_not_answer() {
 #[tokio::test]
 async fn a_reading_for_the_history_keeps_the_host_when_docker_does_not_answer() {
     let f = fixture(2).await;
+    let before = f.engine.metrics_snapshot().await.unwrap();
+    assert!(before.host.is_none() && before.containers.is_none(), "GET /metrics before the first reading");
     let sampler = crate::metrics::HostSampler::new();
     let (host, containers) = crate::history::read(&f.engine.inner, &sampler).await.unwrap();
     assert!(containers.is_empty(), "Docker is unreachable");
@@ -160,6 +162,21 @@ async fn a_reading_for_the_history_keeps_the_host_when_docker_does_not_answer() 
     f.store.insert_metrics(&host, &containers).await.unwrap();
     let history = f.engine.metrics_history(MetricsRange::Hour).await.unwrap();
     assert_eq!(history.host.len(), 1, "{history:?}");
+
+    // GET /metrics publishes that reading, without reading again.
+    let snapshot = f.engine.metrics_snapshot().await.unwrap();
+    assert!(snapshot.containers.is_none(), "Docker did not answer: no containers rather than zeros");
+    let counters = snapshot.host.unwrap();
+    assert!(counters.cpu_count > 0);
+    assert_eq!(counters.disks.len(), 1, "{counters:?}");
+    if cfg!(target_os = "linux") {
+        assert!(counters.cpu_seconds.iter().any(|(mode, s)| mode == "idle" && *s > 0.0), "{counters:?}");
+        assert!(counters.memory_available_bytes.is_some(), "{counters:?}");
+        // Each counted interface on its own (this machine may have none but Docker's).
+        assert!(counters.network.iter().all(|n| n.device != "lo" && !n.device.starts_with("docker")), "{counters:?}");
+    } else {
+        assert!(counters.cpu_seconds.is_empty() && counters.memory_total_bytes.is_none(), "no /proc here");
+    }
 }
 
 #[tokio::test]
@@ -221,6 +238,12 @@ async fn the_live_metrics_and_the_history_have_the_proxys_requests() {
     assert_eq!(points, [(3, 1)], "the services' requests, without the unrouted ones");
     let targets: Vec<_> = history.request_targets.iter().map(|t| (t.target.as_str(), t.name.as_str())).collect();
     assert_eq!(targets, [(web.id.as_str(), "web"), ("unrouted", "unrouted")]);
+
+    // GET /metrics: the counters since the start, which the readings did not reset.
+    stats.record(&web_target, 200, Duration::from_millis(10));
+    let totals = f.engine.metrics_snapshot().await.unwrap().requests;
+    let totals: Vec<_> = totals.iter().map(|t| (t.name.as_str(), t.counts.status_2xx, t.counts.status_5xx)).collect();
+    assert_eq!(totals, [("web", 4, 1), ("unrouted", 0, 0)]);
 }
 
 #[tokio::test]

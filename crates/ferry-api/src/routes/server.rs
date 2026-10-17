@@ -1,17 +1,19 @@
 //! How the server is doing: the machine, its containers and the requests of
-//! the proxy, now and over the last 24 hours, and the server's own log
-//! (DESIGN.md §22).
+//! the proxy, now and over the last 24 hours, the server's own log, and the
+//! same numbers in the Prometheus format (DESIGN.md §22).
 
 use axum::Json;
 use axum::extract::State;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use ferry_core::dto::{ApiErrorBody, MetricsHistory, MetricsRange, ServerMetrics};
 use ferry_core::server_logs::{ServerLogLevel, ServerLogQuery};
+use http::{HeaderValue, header};
 use serde::Deserialize;
 
 use crate::AppState;
 use crate::error::ApiResult;
 use crate::extract::{ApiQuery, de_flag};
+use crate::prometheus;
 use crate::sse;
 
 /// `GET /api/v1/server/metrics`
@@ -90,4 +92,25 @@ pub struct ServerLogsQuery {
 pub async fn logs(State(st): State<AppState>, ApiQuery(q): ApiQuery<ServerLogsQuery>) -> Response {
     let stream = st.server_logs.stream(ServerLogQuery { tail: q.tail, follow: q.follow, level: q.level });
     sse::server_log_response(stream, !q.follow, &st.shutdown)
+}
+
+/// `GET /metrics`
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    tag = "server",
+    operation_id = "getPrometheusMetrics",
+    summary = "Metrics in the Prometheus format",
+    description = "The server's numbers in the Prometheus text format (version 0.0.4), for a Prometheus that already runs somewhere: point a scrape job at this path with an API token as its bearer credentials. It needs an API token like the rest of the API, and answers at once from what ferryd already has: the host and the containers of its last reading (it reads them every 10 s; nothing when that reading is more than 30 s old) and the proxy's request counters. It never waits for Docker. `ferry_build_info{version}` is always 1. The host: `ferry_host_cpu_count`, `ferry_host_cpu_seconds_total{mode}` (the modes of /proc/stat), `ferry_host_memory_total_bytes`, `ferry_host_memory_available_bytes`, `ferry_host_disk_total_bytes`, `ferry_host_disk_used_bytes`, `ferry_host_disk_read_bytes_total` and `ferry_host_disk_written_bytes_total` (by `mount_point`), `ferry_host_network_receive_bytes_total` and `ferry_host_network_transmit_bytes_total` (by `device`: each interface but the loopback and Docker's own) — the CPU seconds and the disks' bytes count from the start of the machine, an interface's bytes from its own start. The containers, every running service instance and datastore by `kind`, `id`, `name` and `instance_id` (services only; not `instance`, which Prometheus gives the target): `ferry_container_cpu_percent` (100 = one core) and `ferry_container_memory_bytes`. The requests, by `target` (a service id, `dashboard` or `unrouted`) and `name`: `ferry_http_requests_total{status_class}` (`2xx` to `5xx`) and the histogram `ferry_http_request_duration_seconds` (until the response headers, WebSockets left out), counted from the start of ferryd. A value the server can't read (on macOS, most host values) is left out, never published as 0.",
+    responses((
+        status = 200,
+        description = "The metrics, in the Prometheus text format 0.0.4.",
+        body = String,
+        content_type = "text/plain; version=0.0.4",
+    )),
+)]
+pub async fn prometheus(State(st): State<AppState>) -> ApiResult<Response> {
+    let snapshot = st.engine.metrics_snapshot().await?;
+    let body = prometheus::render(&snapshot, ferry_core::VERSION);
+    Ok(([(header::CONTENT_TYPE, HeaderValue::from_static(prometheus::CONTENT_TYPE))], body).into_response())
 }

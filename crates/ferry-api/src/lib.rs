@@ -9,6 +9,8 @@
 //!   [`ServerLogs`] ferryd keeps;
 //! * `/api/openapi.json` and `/api/docs` — the OpenAPI document and Swagger
 //!   UI (no auth, see [`openapi`]);
+//! * `/metrics` — the server's numbers in the Prometheus text format (an API
+//!   token, like the API; see [`prometheus`]);
 //! * `/healthz` — liveness (no auth);
 //! * `/` — the web client (a single-page app built from `web/` and embedded
 //!   at compile time, see [`web`]), with a SPA fallback for its routes.
@@ -36,6 +38,7 @@ mod extract;
 mod locks;
 pub mod openapi;
 mod ops;
+pub mod prometheus;
 mod routes;
 mod runtime;
 pub mod setup;
@@ -165,6 +168,11 @@ pub fn router(state: AppState) -> axum::Router {
         .method_not_allowed_fallback(info::method_not_allowed);
     let api = api.merge(public_api).layer(axum::Extension(auth_runtime));
 
+    // Where Prometheus looks by default, with an API token like the API.
+    let metrics = Router::new()
+        .route("/metrics", get(server::prometheus))
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::require_auth));
+
     let hooks = Router::new()
         .route("/hooks/deploy/{service_id}", get(hooks::deploy_hook_get).post(hooks::deploy_hook))
         .route("/hooks/github", post(hooks::github).layer(DefaultBodyLimit::max(WEBHOOK_LIMIT)))
@@ -181,6 +189,7 @@ pub fn router(state: AppState) -> axum::Router {
 
     Router::new()
         .route("/healthz", get(info::healthz))
+        .merge(metrics)
         .merge(hooks)
         .nest("/api", api)
         .merge(openapi::router())

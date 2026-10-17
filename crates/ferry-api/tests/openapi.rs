@@ -26,6 +26,7 @@ const ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/v1/server/metrics"),
     ("GET", "/api/v1/server/metrics/history"),
     ("GET", "/api/v1/server/logs"),
+    ("GET", "/metrics"),
     // the account, its sessions and API tokens, `ferry login`
     ("GET", "/api/v1/auth/status"),
     ("POST", "/api/v1/auth/setup"),
@@ -296,9 +297,10 @@ async fn every_route_is_documented_and_nothing_else() {
             }
         }
 
-        // The API needs an API token or the dashboard's session (and says 401
-        // without); the account itself only takes the session; the rest needs none.
-        if path.starts_with("/api/v1/") && !PUBLIC.contains(&path.as_str()) {
+        // The API — and the Prometheus metrics — need an API token or the
+        // dashboard's session (and say 401 without); the account itself only
+        // takes the session; the rest needs none.
+        if (path.starts_with("/api/v1/") && !PUBLIC.contains(&path.as_str())) || path == "/metrics" {
             let expected = if path.starts_with("/api/v1/auth/") {
                 json!([{"session": []}])
             } else {
@@ -368,6 +370,12 @@ async fn streams_and_special_bodies_are_documented() {
     let names: BTreeSet<&str> =
         server_logs["parameters"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
     assert_eq!(names, BTreeSet::from(["tail", "follow", "level"]));
+
+    // The Prometheus text format, not JSON.
+    let metrics = op("GET", "/metrics");
+    let text = &metrics["responses"]["200"]["content"]["text/plain; version=0.0.4"]["schema"];
+    assert_eq!(text["type"], "string", "{metrics}");
+    assert!(metrics["description"].as_str().unwrap().contains("ferry_http_requests_total"));
 
     let hook = op("POST", "/hooks/github");
     assert_eq!(

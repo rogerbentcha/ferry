@@ -1,7 +1,8 @@
 //! The last 24 hours of the server's metrics (`Engine::metrics_history`,
 //! DESIGN.md §22): a reading of the host and the containers every 10 s,
 //! kept in the store, deleted once 24 hours old (the requests of `requests`
-//! too), and read back averaged into 360 steps at most.
+//! too), and read back averaged into 360 steps at most. The last reading
+//! is also what `GET /metrics` publishes (`metrics::LastReading`).
 
 use std::future::Future;
 use std::sync::Arc;
@@ -79,12 +80,14 @@ where
     }
 }
 
-/// One reading of the server. The containers are left out when Docker does
-/// not answer.
+/// One reading of the server, also kept for `GET /metrics`. The containers
+/// are left out when Docker does not answer.
 pub(crate) async fn read(inner: &Inner, sampler: &HostSampler) -> Result<Reading> {
     let at = Utc::now();
     let (host, containers) = tokio::join!(metrics::host(inner, sampler), metrics::containers(inner, false));
-    Ok((host_point(at, &host), containers?.unwrap_or_default()))
+    let containers = containers?;
+    inner.last_reading.keep(sampler, containers.as_deref());
+    Ok((host_point(at, &host), containers.unwrap_or_default()))
 }
 
 /// The host's values to keep: the disks' speeds are added together.

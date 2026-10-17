@@ -12,7 +12,7 @@
 use async_trait::async_trait;
 
 use crate::Result;
-use crate::dto::{MetricsHistory, MetricsRange, RuntimeStatus, ServerMetrics};
+use crate::dto::{MetricsHistory, MetricsRange, MetricsSnapshot, RuntimeStatus, ServerMetrics};
 use crate::logs::LogStream;
 use crate::models::{Deploy, DeploySource, DeployTrigger, Domain, JobRun, JobTrigger};
 
@@ -163,5 +163,13 @@ pub trait Engine: Send + Sync + 'static {
     async fn metrics_history(&self, range: MetricsRange) -> Result<MetricsHistory> {
         let _ = range;
         Err(crate::Error::invalid("the metrics history is not supported by this engine"))
+    }
+
+    /// What `GET /metrics` publishes (§22): the host and the containers of
+    /// the last reading (about every 10 s), and the requests the proxy
+    /// counted since ferryd started. Reads neither the machine nor Docker:
+    /// it answers at once.
+    async fn metrics_snapshot(&self) -> Result<MetricsSnapshot> {
+        Err(crate::Error::invalid("the Prometheus metrics are not supported by this engine"))
     }
 }

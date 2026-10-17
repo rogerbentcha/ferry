@@ -355,6 +355,70 @@ pub struct ContainerMetrics {
     pub cpu_limit: Option<f64>,
 }
 
+/// What `GET /metrics` publishes in the Prometheus text format (DESIGN.md
+/// §22). Not JSON: `ferry-api` writes it out. The host and the containers
+/// come from ferryd's last reading (one every 10 s), the requests from the
+/// proxy's counters.
+#[derive(Debug, Clone, Default)]
+pub struct MetricsSnapshot {
+    /// `None` before the first reading, or when the last one is too old.
+    pub host: Option<HostCounters>,
+    /// The running service instances and datastores of the last reading
+    /// (their limits are not read). `None` when Docker did not answer it,
+    /// or when it is too old.
+    pub containers: Option<Vec<ContainerMetrics>>,
+    /// Every target the proxy counted since ferryd started: the services,
+    /// then `dashboard` and `unrouted`.
+    pub requests: Vec<crate::requests::TargetRequestTotals>,
+}
+
+/// The machine at the last reading, as counters for `GET /metrics`: the CPU
+/// seconds and the bytes read and written count from the start of the
+/// machine, the bytes received and sent from the start of each interface. A
+/// value ferryd can't read is `None` (or left out).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HostCounters {
+    /// CPUs of the machine.
+    pub cpu_count: u32,
+    /// The seconds all the CPUs spent in each mode of `/proc/stat`, in its
+    /// order: `user`, `nice`, `system`, `idle`, `iowait`, `irq`, `softirq`,
+    /// `steal`. Empty when it can't be read.
+    pub cpu_seconds: Vec<(String, f64)>,
+    pub memory_total_bytes: Option<u64>,
+    /// The total minus `HostMetrics.memory_used_bytes` (`MemAvailable`).
+    pub memory_available_bytes: Option<u64>,
+    /// The filesystems of `HostMetrics.disks`.
+    pub disks: Vec<DiskCounters>,
+    /// Each interface `HostMetrics` counts (not added up: a sum would go
+    /// down when an interface goes away). Empty when it can't be read.
+    pub network: Vec<NetworkCounters>,
+}
+
+/// One network interface of `HostCounters.network`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkCounters {
+    /// Its name, e.g. `eth0`.
+    pub device: String,
+    /// Received since the interface came up.
+    pub receive_bytes: u64,
+    /// Sent since the interface came up.
+    pub transmit_bytes: u64,
+}
+
+/// One filesystem of `HostCounters.disks`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskCounters {
+    /// Where the filesystem is mounted, e.g. `/`.
+    pub mount_point: String,
+    pub used_bytes: u64,
+    pub total_bytes: u64,
+    /// Read from its device since the machine started. `None` when the
+    /// kernel does not count it for this filesystem.
+    pub read_bytes: Option<u64>,
+    /// Written to its device since the machine started.
+    pub written_bytes: Option<u64>,
+}
+
 /// How far back `GET /api/v1/server/metrics/history` looks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum MetricsRange {

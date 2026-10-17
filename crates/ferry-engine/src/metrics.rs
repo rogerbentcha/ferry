@@ -9,6 +9,9 @@
 //! of it measures since then; any other call reads twice, one second apart
 //! (meanwhile Docker samples the containers, which takes as long). Where
 //! `/proc` is missing (macOS) those values are `None` and nothing waits.
+//!
+//! `GET /metrics` (`Engine::metrics_snapshot`) reads nothing: it publishes
+//! the counters of the history's last reading ([`LastReading`]) as they are.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -17,13 +20,17 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use ferry_core::Result;
-use ferry_core::dto::{ContainerKind, ContainerMetrics, DiskMetrics, HostMetrics, ServerMetrics};
+use ferry_core::dto::{
+    ContainerKind, ContainerMetrics, DiskCounters, DiskMetrics, HostCounters, HostMetrics, MetricsSnapshot,
+    NetworkCounters, ServerMetrics,
+};
 use ferry_core::naming::{LABEL_DATASTORE, LABEL_INSTANCE, LABEL_ROLE, LABEL_SERVICE, ROLE_DATASTORE, ROLE_SERVICE};
 use ferry_docker::ContainerInfo;
 use futures::future::join_all;
 use tracing::debug;
 
 use crate::limits::{DiskSpace, disk_space, local_docker_root};
+use crate::requests;
 use crate::state::Inner;
 use crate::status::{INSPECT_TIMEOUT, STATS_TIMEOUT, cpu_limit, memory_limit};
 use crate::util::{instance_id, lock, with_timeout};
@@ -45,11 +52,59 @@ const DOCKER_ROOT_TIMEOUT: Duration = Duration::from_secs(2);
 const LIST_TIMEOUT: Duration = Duration::from_secs(3);
 /// `/proc/diskstats` counts sectors of 512 bytes, whatever the device's own.
 const SECTOR_BYTES: u64 = 512;
+/// `/proc/stat` counts the CPU time in ticks of `USER_HZ`, which Linux keeps
+/// at 100 per second for programs on every architecture Docker runs on.
+const TICKS_PER_SEC: f64 = 100.0;
+/// The modes of the `cpu` line of `/proc/stat`, in its order (guest time is
+/// counted in user and nice already).
+const CPU_MODES: [&str; 8] = ["user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal"];
+/// The oldest reading `GET /metrics` publishes: the history reads every
+/// 10 s and skips a reading that takes more than 9 s.
+const SNAPSHOT_MAX_AGE: Duration = Duration::from_secs(30);
 
 /// `Engine::server_metrics`.
 pub(crate) async fn server_metrics(inner: &Inner) -> Result<ServerMetrics> {
     let (host, containers) = tokio::join!(host(inner, &inner.host_sampler), containers(inner, true));
     Ok(ServerMetrics { at: Utc::now(), host, containers: containers?, requests: inner.requests.last() })
+}
+
+/// `Engine::metrics_snapshot`: the host and the containers of the history's
+/// last reading, when it is recent, and the proxy's counters. Reads neither
+/// the machine nor Docker.
+pub(crate) async fn snapshot(inner: &Inner) -> Result<MetricsSnapshot> {
+    let (host, containers) = inner.last_reading.recent(SNAPSHOT_MAX_AGE);
+    let requests = requests::totals(&inner.store, inner.routes.request_stats()).await;
+    Ok(MetricsSnapshot { host, containers, requests })
+}
+
+/// The host and the containers of the history's last reading (every 10 s),
+/// kept for `GET /metrics`, each with the time it was read.
+#[derive(Default)]
+pub(crate) struct LastReading(StdMutex<Kept>);
+
+#[derive(Default)]
+struct Kept {
+    host: Option<(Instant, HostCounters)>,
+    containers: Option<(Instant, Vec<ContainerMetrics>)>,
+}
+
+impl LastReading {
+    /// Keep the last reading of `sampler`, and the `containers` read just
+    /// now (`None`: Docker did not answer).
+    pub(crate) fn keep(&self, sampler: &HostSampler, containers: Option<&[ContainerMetrics]>) {
+        let host = lock(&sampler.last).as_ref().map(|r| (r.at, r.totals()));
+        *lock(&self.0) = Kept { host, containers: containers.map(|c| (Instant::now(), c.to_vec())) };
+    }
+
+    /// The host and the containers, each when read within `max_age`.
+    pub(crate) fn recent(&self, max_age: Duration) -> (Option<HostCounters>, Option<Vec<ContainerMetrics>>) {
+        let kept = lock(&self.0);
+        let recent = |at: &Instant| at.elapsed() <= max_age;
+        (
+            kept.host.as_ref().filter(|(at, _)| recent(at)).map(|(_, h)| h.clone()),
+            kept.containers.as_ref().filter(|(at, _)| recent(at)).map(|(_, c)| c.clone()),
+        )
+    }
 }
 
 /// The host's values, with the rates since the last reading of `sampler`.
@@ -163,7 +218,7 @@ fn sort_busiest_first(rows: &mut [ContainerMetrics]) {
 /// Reads the host, and keeps the last reading for the rates of the next one.
 pub(crate) struct HostSampler {
     proc_dir: PathBuf,
-    last: StdMutex<Option<(Instant, Counters)>>,
+    last: StdMutex<Option<Reading>>,
 }
 
 impl HostSampler {
@@ -178,7 +233,8 @@ impl HostSampler {
     /// The host's values; `paths` are the directories whose filesystems to
     /// report (the first one first; one filesystem once).
     pub async fn read(&self, paths: Vec<PathBuf>) -> HostMetrics {
-        let previous = lock(&self.last).clone().filter(|(at, _)| at.elapsed() <= MAX_AGE);
+        let previous =
+            lock(&self.last).as_ref().filter(|r| r.at.elapsed() <= MAX_AGE).map(|r| (r.at, r.counters.clone()));
         let (since, before) = match previous {
             Some(previous) => previous,
             None => match self.read_now(paths.clone()).await {
@@ -195,8 +251,8 @@ impl HostSampler {
         };
         {
             let mut last = lock(&self.last);
-            if last.as_ref().is_none_or(|(at, _)| *at < now.at) {
-                *last = Some((now.at, now.counters.clone()));
+            if last.as_ref().is_none_or(|r| r.at < now.at) {
+                *last = Some(now.clone());
             }
         }
         now.metrics(&before, now.at.saturating_duration_since(since))
@@ -225,7 +281,11 @@ struct Counters {
     cpu: Option<CpuTimes>,
     /// Bytes read and written per block device, by `(major, minor)`.
     disks: HashMap<(u32, u32), DiskIo>,
+    /// Bytes received and sent over the counted interfaces, all together.
     net: Option<NetIo>,
+    /// The same, per interface (`GET /metrics`: a sum would go down when
+    /// an interface goes away, and Prometheus would read a reset).
+    interfaces: Vec<(String, NetIo)>,
 }
 
 impl Counters {
@@ -234,11 +294,33 @@ impl Counters {
     }
 }
 
-/// Time (in ticks) all the CPUs spent, and spent idle.
+/// Time (in ticks) all the CPUs spent in each mode of [`CPU_MODES`]: the
+/// first `modes` of them, the ones the kernel counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CpuTimes {
-    total: u64,
-    idle: u64,
+    ticks: [u64; CPU_MODES.len()],
+    modes: usize,
+}
+
+impl CpuTimes {
+    fn total(&self) -> u64 {
+        self.ticks.iter().sum()
+    }
+
+    /// Waiting for I/O counts as idle.
+    fn idle(&self) -> u64 {
+        self.ticks[3] + self.ticks[4]
+    }
+
+    /// The seconds of each mode the kernel counts.
+    fn seconds(&self) -> Vec<(String, f64)> {
+        CPU_MODES
+            .iter()
+            .zip(self.ticks)
+            .take(self.modes)
+            .map(|(m, t)| (m.to_string(), t as f64 / TICKS_PER_SEC))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -304,6 +386,41 @@ impl Reading {
             network_tx_bytes_per_sec: net.and_then(|(b, a)| rate(b.tx, a.tx, secs)),
         }
     }
+
+    /// The values, with the kernel's counters as they are (`GET /metrics`).
+    fn totals(&self) -> HostCounters {
+        let now = &self.counters;
+        let disks = self
+            .disks
+            .iter()
+            .map(|d| {
+                let io = now.disks.get(&d.device);
+                DiskCounters {
+                    mount_point: d.mount_point.display().to_string(),
+                    used_bytes: d.space.used_bytes(),
+                    total_bytes: d.space.total_bytes,
+                    read_bytes: io.map(|io| io.read),
+                    written_bytes: io.map(|io| io.written),
+                }
+            })
+            .collect();
+        HostCounters {
+            cpu_count: self.cpu_count.unwrap_or_else(available_cpus),
+            cpu_seconds: now.cpu.map(|c| c.seconds()).unwrap_or_default(),
+            memory_total_bytes: self.memory_total,
+            memory_available_bytes: self.memory_total.zip(self.memory_used).map(|(t, u)| t.saturating_sub(u)),
+            disks,
+            network: now
+                .interfaces
+                .iter()
+                .map(|(device, io)| NetworkCounters {
+                    device: device.clone(),
+                    receive_bytes: io.rx,
+                    transmit_bytes: io.tx,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Read the host's counters and sizes (blocking). What can't be read is
@@ -313,12 +430,14 @@ fn read_host(proc_dir: &Path, paths: &[PathBuf]) -> Reading {
     let at = Instant::now();
     let stat = read("stat");
     let (memory_used, memory_total) = read("meminfo").map(|m| parse_meminfo(&m)).unwrap_or_default();
+    let interfaces = read("net/dev").as_deref().and_then(parse_net_devices);
     Reading {
         at,
         counters: Counters {
             cpu: stat.as_deref().and_then(parse_cpu_times),
             disks: read("diskstats").map(|d| parse_diskstats(&d)).unwrap_or_default(),
-            net: read("net/dev").as_deref().and_then(parse_net_dev),
+            net: interfaces.as_deref().map(sum_net),
+            interfaces: interfaces.unwrap_or_default(),
         },
         cpu_count: stat.as_deref().and_then(parse_cpu_count),
         memory_used,
@@ -384,18 +503,18 @@ fn available_cpus() -> u32 {
     std::thread::available_parallelism().map_or(1, |n| u32::try_from(n.get()).unwrap_or(u32::MAX))
 }
 
-/// The `cpu` line of `/proc/stat`: user nice system idle iowait irq softirq
-/// steal (guest time is counted in user and nice already). Waiting for I/O
-/// counts as idle.
+/// The `cpu` line of `/proc/stat`: the ticks of [`CPU_MODES`], at least
+/// user nice system idle (an old kernel has no more).
 fn parse_cpu_times(stat: &str) -> Option<CpuTimes> {
     let line = stat.lines().find(|l| l.starts_with("cpu "))?;
     let fields: Vec<u64> = line.split_whitespace().skip(1).map(|f| f.parse().ok()).collect::<Option<_>>()?;
     if fields.len() < 4 {
         return None;
     }
-    let total = fields.iter().take(8).sum();
-    let idle = fields[3] + fields.get(4).copied().unwrap_or(0);
-    Some(CpuTimes { total, idle })
+    let mut ticks = [0; CPU_MODES.len()];
+    let modes = fields.len().min(ticks.len());
+    ticks[..modes].copy_from_slice(&fields[..modes]);
+    Some(CpuTimes { ticks, modes })
 }
 
 /// Number of `cpuN` lines of `/proc/stat` (the CPUs online).
@@ -409,8 +528,8 @@ fn parse_cpu_count(stat: &str) -> Option<u32> {
 
 /// Busy time between two readings, in percent of all the CPUs.
 fn cpu_percent(before: CpuTimes, after: CpuTimes) -> Option<f64> {
-    let total = after.total.checked_sub(before.total)?;
-    let idle = after.idle.checked_sub(before.idle)?;
+    let total = after.total().checked_sub(before.total())?;
+    let idle = after.idle().checked_sub(before.idle())?;
     if total == 0 {
         return None;
     }
@@ -453,9 +572,10 @@ fn counted_interface(name: &str) -> bool {
     !(name == "lo" || name.starts_with("docker") || name.starts_with("br-") || name.starts_with("veth"))
 }
 
-/// Bytes received and sent over the counted interfaces of `/proc/net/dev`.
-fn parse_net_dev(net_dev: &str) -> Option<NetIo> {
-    let mut total = NetIo::default();
+/// Bytes received and sent by each counted interface of `/proc/net/dev`,
+/// in its order. `None` when it has no interface at all.
+fn parse_net_devices(net_dev: &str) -> Option<Vec<(String, NetIo)>> {
+    let mut interfaces = Vec::new();
     let mut found = false;
     for line in net_dev.lines() {
         let Some((name, rest)) = line.split_once(':') else { continue };
@@ -466,12 +586,26 @@ fn parse_net_dev(net_dev: &str) -> Option<NetIo> {
             continue;
         }
         found = true;
-        if counted_interface(name.trim()) {
-            total.rx = total.rx.saturating_add(fields[0]);
-            total.tx = total.tx.saturating_add(fields[8]);
+        let name = name.trim();
+        if counted_interface(name) {
+            interfaces.push((name.to_string(), NetIo { rx: fields[0], tx: fields[8] }));
         }
     }
-    found.then_some(total)
+    found.then_some(interfaces)
+}
+
+/// The bytes of all the interfaces together.
+fn sum_net(interfaces: &[(String, NetIo)]) -> NetIo {
+    interfaces.iter().fold(NetIo::default(), |total, (_, io)| NetIo {
+        rx: total.rx.saturating_add(io.rx),
+        tx: total.tx.saturating_add(io.tx),
+    })
+}
+
+/// Bytes received and sent over the counted interfaces of `/proc/net/dev`.
+#[cfg(test)]
+fn parse_net_dev(net_dev: &str) -> Option<NetIo> {
+    parse_net_devices(net_dev).as_deref().map(sum_net)
 }
 
 /// Bytes read and written per device, from `/proc/diskstats`: major minor
@@ -579,18 +713,40 @@ veth12ab34c: 95000000  300    0    0    0     0          0         0 95000000   
         let before = parse_cpu_times(STAT_1).unwrap();
         let after = parse_cpu_times(STAT_2).unwrap();
         // user nice system idle iowait irq softirq steal; iowait is idle.
-        assert_eq!(before, CpuTimes { total: 1000 + 50 + 500 + 8000 + 200 + 10 + 20 + 30, idle: 8200 });
+        assert_eq!((before.total(), before.idle()), (1000 + 50 + 500 + 8000 + 200 + 10 + 20 + 30, 8200));
         assert_eq!(cpu_percent(before, after), Some(40.0));
         assert_eq!(parse_cpu_count(STAT_1), Some(4));
         // No time passed, or a counter went back (a new boot): no value.
         assert_eq!(cpu_percent(before, before), None);
         assert_eq!(cpu_percent(after, before), None);
         // An old kernel with only 4 columns; garbage.
-        assert_eq!(parse_cpu_times("cpu 1 2 3 4\n"), Some(CpuTimes { total: 10, idle: 4 }));
+        let old = parse_cpu_times("cpu 1 2 3 4\n").unwrap();
+        assert_eq!((old.total(), old.idle()), (10, 4));
         assert_eq!(parse_cpu_times("cpu 1 2\n"), None);
         assert_eq!(parse_cpu_times("cpu a b c d\n"), None);
         assert_eq!(parse_cpu_times(""), None);
         assert_eq!(parse_cpu_count("cpu 1 2 3 4\n"), None);
+    }
+
+    #[test]
+    fn cpu_seconds_by_mode() {
+        // 100 ticks a second; the 9th and 10th columns (guest) are in user and nice already.
+        let seconds = parse_cpu_times(STAT_1).unwrap().seconds();
+        let expected = [
+            ("user", 10.0),
+            ("nice", 0.5),
+            ("system", 5.0),
+            ("idle", 80.0),
+            ("iowait", 2.0),
+            ("irq", 0.1),
+            ("softirq", 0.2),
+            ("steal", 0.3),
+        ];
+        assert_eq!(seconds, expected.map(|(m, s)| (m.to_string(), s)));
+        // An old kernel: only the modes it counts.
+        let modes: Vec<String> =
+            parse_cpu_times("cpu 1 2 3 4\n").unwrap().seconds().into_iter().map(|(m, _)| m).collect();
+        assert_eq!(modes, ["user", "nice", "system", "idle"]);
     }
 
     #[test]
@@ -616,6 +772,15 @@ veth12ab34c: 95000000  300    0    0    0     0          0         0 95000000   
             assert!(counted_interface(name), "{name}");
         }
         assert_eq!(parse_net_dev(""), None);
+        let interfaces = parse_net_devices(NET_DEV_2).unwrap();
+        assert_eq!(
+            interfaces,
+            [
+                ("eth0".to_string(), NetIo { rx: 3_000_000, tx: 1_000_000 }),
+                ("wlan0".to_string(), NetIo { rx: 100_000, tx: 40_000 })
+            ],
+            "each counted interface, for GET /metrics"
+        );
     }
 
     #[test]
@@ -676,6 +841,22 @@ veth12ab34c: 95000000  300    0    0    0     0          0         0 95000000   
         assert!(data.path().canonicalize().unwrap().starts_with(&mount));
         assert!(disk.total_bytes > 0 && disk.used_bytes <= disk.total_bytes, "{disk:?}");
         assert_eq!((disk.read_bytes_per_sec, disk.write_bytes_per_sec), (Some(1 << 20), Some(512 << 10)));
+
+        // The counters as they are, for `GET /metrics`.
+        let t = after.totals();
+        assert_eq!(t.cpu_count, 4);
+        assert_eq!(t.cpu_seconds.iter().find(|(m, _)| m == "user").map(|(_, s)| *s), Some(13.0));
+        assert_eq!((t.memory_total_bytes, t.memory_available_bytes), (Some(8_000_000 * 1024), Some(5_000_000 * 1024)));
+        let network: Vec<_> =
+            t.network.iter().map(|n| (n.device.as_str(), n.receive_bytes, n.transmit_bytes)).collect();
+        assert_eq!(network, [("eth0", 3_000_000, 1_000_000), ("wlan0", 100_000, 40_000)], "per interface, never a sum");
+        assert_eq!(t.disks.len(), 1);
+        let disk = &t.disks[0];
+        assert_eq!(
+            (disk.mount_point.as_str(), disk.total_bytes),
+            (m.disks[0].mount_point.as_str(), m.disks[0].total_bytes)
+        );
+        assert_eq!((disk.read_bytes, disk.written_bytes), (Some((1000 + 4096) * 512), Some((2000 + 2048) * 512)));
     }
 
     #[test]
@@ -695,6 +876,13 @@ veth12ab34c: 95000000  300    0    0    0     0          0         0 95000000   
         // One filesystem once; a missing directory is left out.
         assert_eq!(m.disks.len(), 1, "{:?}", m.disks);
         assert_eq!((m.disks[0].read_bytes_per_sec, m.disks[0].write_bytes_per_sec), (None, None));
+        // Nothing to publish but the CPU count and the disks' space.
+        let t = reading.totals();
+        assert!(t.cpu_seconds.is_empty());
+        assert_eq!((t.memory_total_bytes, t.memory_available_bytes), (None, None));
+        assert!(t.network.is_empty());
+        assert_eq!(t.disks.len(), 1);
+        assert_eq!((t.disks[0].read_bytes, t.disks[0].written_bytes), (None, None));
     }
 
     #[tokio::test]
@@ -704,8 +892,14 @@ veth12ab34c: 95000000  300    0    0    0     0          0         0 95000000   
         let sampler = HostSampler::with_proc_dir(proc.path());
         let before = parse_cpu_times(STAT_1).unwrap();
         let two_secs_ago = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
-        *lock(&sampler.last) =
-            Some((two_secs_ago, Counters { cpu: Some(before), net: parse_net_dev(NET_DEV_1), ..Counters::default() }));
+        *lock(&sampler.last) = Some(Reading {
+            at: two_secs_ago,
+            counters: Counters { cpu: Some(before), net: parse_net_dev(NET_DEV_1), ..Counters::default() },
+            cpu_count: None,
+            memory_used: None,
+            memory_total: None,
+            disks: Vec::new(),
+        });
         let started = Instant::now();
         let m = sampler.read(vec![data.path().to_path_buf()]).await;
         assert!(started.elapsed() < MIN_GAP, "no second reading to wait for");
@@ -713,9 +907,44 @@ veth12ab34c: 95000000  300    0    0    0     0          0         0 95000000   
         let rx = m.network_rx_bytes_per_sec.unwrap();
         assert!((1_000_000..=1_025_000).contains(&rx), "about 2 MB in 2 s: {rx}");
         // The new reading is kept for the next call.
-        let (at, kept) = lock(&sampler.last).clone().unwrap();
-        assert!(at > two_secs_ago);
-        assert_eq!(kept.cpu, parse_cpu_times(STAT_2));
+        let kept = lock(&sampler.last).clone().unwrap();
+        assert!(kept.at > two_secs_ago);
+        assert_eq!(kept.counters.cpu, parse_cpu_times(STAT_2));
+    }
+
+    #[tokio::test]
+    async fn get_metrics_publishes_the_last_reading_only_while_it_is_recent() {
+        let data = tempfile::tempdir().unwrap();
+        let proc = proc_dir(STAT_2, MEMINFO, NET_DEV_2, "");
+        let sampler = HostSampler::with_proc_dir(proc.path());
+        let last = LastReading::default();
+        assert_eq!(last.recent(SNAPSHOT_MAX_AGE).0, None, "before the first reading");
+
+        sampler.read(vec![data.path().to_path_buf()]).await;
+        let web = ContainerMetrics {
+            kind: ContainerKind::Service,
+            id: "srv-1".into(),
+            name: "web".into(),
+            instance: Some("9f8e7d".into()),
+            cpu_percent: Some(12.5),
+            memory_bytes: Some(100 << 20),
+            memory_limit_bytes: None,
+            cpu_limit: None,
+        };
+        last.keep(&sampler, Some(std::slice::from_ref(&web)));
+        let (host, containers) = last.recent(SNAPSHOT_MAX_AGE);
+        let host = host.unwrap();
+        assert_eq!((host.cpu_count, host.network.len()), (4, 2));
+        assert_eq!(containers.unwrap()[0].cpu_percent, Some(12.5));
+
+        // Docker did not answer this time: no containers rather than old ones.
+        last.keep(&sampler, None);
+        assert!(last.recent(SNAPSHOT_MAX_AGE).1.is_none());
+        // A reading older than the bound is not published.
+        last.keep(&sampler, Some(std::slice::from_ref(&web)));
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let (host, containers) = last.recent(Duration::from_millis(1));
+        assert!(host.is_none() && containers.is_none());
     }
 
     #[tokio::test]

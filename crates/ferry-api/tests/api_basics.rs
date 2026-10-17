@@ -355,6 +355,73 @@ async fn the_metrics_history_takes_a_range_and_needs_auth() {
 }
 
 #[tokio::test]
+async fn prometheus_collects_the_metrics_with_an_api_token() {
+    let app = TestApp::new().await;
+    let get_metrics = |authorization: Option<String>| {
+        let mut r = req(Method::GET, "/metrics");
+        if let Some(value) = authorization {
+            r = r.header(http::header::AUTHORIZATION, value);
+        }
+        app.send(r.body(Body::empty()).unwrap())
+    };
+    // Without a token, or with a wrong one: 401, and nothing is read.
+    for authorization in [None, Some("Bearer nope".to_string())] {
+        let r = get_metrics(authorization.clone()).await;
+        assert_eq!((r.status, r.code().as_str()), (StatusCode::UNAUTHORIZED, "unauthorized"), "{authorization:?}");
+    }
+    assert!(app.engine.calls_with("metrics_snapshot").is_empty(), "nothing is read without a token");
+
+    // A named API token, sent the way Prometheus sends its credentials.
+    let token = ferry_core::auth::new_api_token();
+    app.store.create_api_token(&ferry_core::ApiToken::new("prometheus", &token, None)).await.unwrap();
+    let r = get_metrics(Some(format!("Bearer {token}"))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.headers["content-type"], "text/plain; version=0.0.4; charset=utf-8");
+    assert_eq!(app.engine.calls_with("metrics_snapshot"), ["metrics_snapshot"]);
+    let text = r.text();
+    let families: Vec<&str> =
+        text.lines().filter_map(|l| l.strip_prefix("# TYPE ")).filter_map(|l| l.split(' ').next()).collect();
+    assert_eq!(
+        families,
+        [
+            "ferry_build_info",
+            "ferry_host_cpu_count",
+            "ferry_host_cpu_seconds_total",
+            "ferry_host_memory_total_bytes",
+            "ferry_host_memory_available_bytes",
+            "ferry_host_disk_total_bytes",
+            "ferry_host_disk_used_bytes",
+            "ferry_host_disk_read_bytes_total",
+            "ferry_host_disk_written_bytes_total",
+            "ferry_host_network_receive_bytes_total",
+            "ferry_host_network_transmit_bytes_total",
+            "ferry_container_cpu_percent",
+            "ferry_container_memory_bytes",
+            "ferry_http_requests_total",
+            "ferry_http_request_duration_seconds",
+        ]
+    );
+    for line in [
+        format!("ferry_build_info{{version=\"{}\"}} 1", ferry_core::VERSION),
+        "ferry_host_cpu_seconds_total{mode=\"idle\"} 8550".into(),
+        "ferry_host_network_receive_bytes_total{device=\"eth0\"} 3100000".into(),
+        "ferry_container_cpu_percent{kind=\"service\",id=\"srv-1\",name=\"web\",instance_id=\"9f8e7d\"} 120".into(),
+        "ferry_http_requests_total{target=\"srv-1\",name=\"web\",status_class=\"5xx\"} 10".into(),
+        "ferry_http_request_duration_seconds_bucket{target=\"srv-1\",name=\"web\",le=\"0.05\"} 1".into(),
+        "ferry_http_request_duration_seconds_sum{target=\"srv-1\",name=\"web\"} 0.04".into(),
+        "ferry_http_request_duration_seconds_count{target=\"unrouted\",name=\"unrouted\"} 0".into(),
+    ] {
+        assert!(text.lines().any(|l| l == line), "{line} in:\n{text}");
+    }
+    assert!(!text.contains("name=\"db\""), "the datastore Docker did not measure is left out: {text}");
+
+    // The server token works too; only GET reads.
+    assert_eq!(app.get("/metrics").await.status, StatusCode::OK);
+    let r = app.call(Method::POST, "/metrics", None).await;
+    assert_eq!((r.status, r.code().as_str()), (StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed"));
+}
+
+#[tokio::test]
 async fn every_error_outside_the_api_is_json_too() {
     let app = TestApp::new().await;
     for (method, path) in [

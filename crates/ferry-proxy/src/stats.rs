@@ -1,7 +1,8 @@
 //! Request counts (DESIGN.md §22). Every request the handler answers is
 //! counted for the service its host routes to — or as unrouted — by status
-//! class and latency, in atomic counters that only go up. A route holds its
-//! service's counters, so counting takes no lock and touches no disk.
+//! class and latency (with the time they took in all), in atomic counters
+//! that only go up. A route holds its service's counters, so counting takes
+//! no lock and touches no disk.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,6 +36,9 @@ pub(crate) struct Counters {
     status: [AtomicU64; 4],
     /// By [`latency_bucket`].
     latency: [AtomicU64; LATENCY_BUCKETS],
+    /// The time the requests of `latency` took, all together, in
+    /// microseconds (the `_sum` of a Prometheus histogram).
+    latency_micros: AtomicU64,
 }
 
 impl Counters {
@@ -44,6 +48,8 @@ impl Counters {
         self.status[StatusClass::of(status).index()].fetch_add(1, Ordering::Relaxed);
         if status != 101 {
             self.latency[latency_bucket(elapsed)].fetch_add(1, Ordering::Relaxed);
+            let micros = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
+            self.latency_micros.fetch_add(micros, Ordering::Relaxed);
         }
     }
 
@@ -125,6 +131,21 @@ impl RequestStats {
         totals.push(RequestTotals { target: RequestTarget::Unrouted, counts: self.inner.unrouted.read() });
         totals
     }
+
+    /// The time the requests of `target` took since the proxy started, all
+    /// together, until their response headers (WebSockets left out): what
+    /// goes with the latency of [`snapshot`](Self::snapshot) as the `_sum`
+    /// of a Prometheus histogram. Zero for a target never counted.
+    pub fn latency_sum(&self, target: &RequestTarget) -> Duration {
+        let micros = match target {
+            RequestTarget::Service(id) => {
+                let services = self.inner.services.read().unwrap_or_else(PoisonError::into_inner);
+                services.get(id).map_or(0, |c| c.latency_micros.load(Ordering::Relaxed))
+            }
+            RequestTarget::Unrouted => self.inner.unrouted.latency_micros.load(Ordering::Relaxed),
+        };
+        Duration::from_micros(micros)
+    }
 }
 
 #[cfg(test)]
@@ -154,6 +175,9 @@ mod tests {
         assert_eq!(web_counts.latency.0[latency_bucket(Duration::from_millis(3))], 7);
         let unrouted = counts_of(&stats, &RequestTarget::Unrouted);
         assert_eq!((unrouted.status_4xx, unrouted.latency.0[0]), (1, 1));
+        assert_eq!(stats.latency_sum(&web), Duration::from_millis(21), "7 timed requests of 3 ms");
+        assert_eq!(stats.latency_sum(&RequestTarget::Unrouted), Duration::from_micros(200));
+        assert_eq!(stats.latency_sum(&RequestTarget::Service("srv-never".into())), Duration::ZERO);
 
         // Clones count into the same counters; a route's counters are the service's.
         stats.clone().record_into(Some(&stats.counters("srv-web")), 200, Duration::ZERO);
