@@ -8,6 +8,11 @@ Write like a product owner talking to the team, not like a spec.
   before my users do" comes before "a CPU chart".
 - **Plain words, short sentences.** Explain a technical term the first time,
   or move it to the developer notes.
+- **Caveman-compressed.** Follow rules 1–6 of the `caveman` skill
+  ([../caveman/SKILL.md](../caveman/SKILL.md)) on every line: no ceremony,
+  no hedging, articles optional, one idea per sentence. Names, numbers,
+  types, routes and commands stay exact. Never drop not, never, no or only.
+  The story line and the Given/when/then examples keep their full shape.
 - **Give the reason for every limit.** "24 hours: enough to look into last
   night's problem, small enough to keep Ferry light."
 - **Leave the how open** in Why, Examples and the stakeholder's acceptance
