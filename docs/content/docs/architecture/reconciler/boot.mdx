@@ -5,15 +5,22 @@ description: At boot, the engine first closes what a previous process did not co
 
 <Flow
   steps={[
+    { icon: 'skull', title: 'Build processes', text: 'The engine stops the builds that a killed server did not stop.', tone: 'danger' },
+    { icon: 'trash', title: 'Build folders', text: 'The engine deletes the scratch directories of builds that remain.' },
     { icon: 'error', title: 'Deploys', text: 'Deploys that were not complete fail.', tone: 'danger' },
     { icon: 'calendar', title: 'Job runs', text: 'Job runs that were not complete fail with the same error.', tone: 'danger' },
-    { icon: 'trash', title: 'Build folders', text: 'The engine deletes the scratch directories of builds that remain.' },
     { icon: 'route', title: 'Routes', text: 'The boot pass installs the routes of each live deploy.' },
     { icon: 'play', title: 'Instances', text: 'The boot pass starts the instances that are not there, for example after a reboot of the machine.', tone: 'success' },
   ]}
 />
 
-The first three steps come before the first <Term id="reconciler-pass" />.
+The first four steps come before the first <Term id="reconciler-pass" />.
+
+## Builds that a killed server left running
+
+A server that stops normally stops its builds. A server that gets <Term id="sigkill" /> cannot stop them. On macOS, a `docker build` then continues without the server.
+
+While a build runs, Ferry records each `git` and `docker` process of the build in the scratch directory of the build. At the next start, the engine stops these processes. Then it deletes the scratch directories. If a different program now has the process number of a record, the engine does not stop it.
 
 ## Deploys that were not complete
 

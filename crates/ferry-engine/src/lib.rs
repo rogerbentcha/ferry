@@ -68,15 +68,20 @@ impl FerryEngine {
 
     /// Boot sequence, then return (background tasks keep running until
     /// `shutdown` is cancelled; [`FerryEngine::stopped`] waits for them):
-    /// 1. ensure the Docker network and data directories exist;
-    /// 2. mark deploys/jobs interrupted by a previous crash as failed;
-    /// 3. read the domains services are served under (the base domain and
+    /// 1. ensure the data directories exist;
+    /// 2. kill the build processes a previous server killed with SIGKILL
+    ///    left running ([`Builder::reap_orphans`]), then delete the scratch
+    ///    directories it left in `builds/` (they hold the records the
+    ///    reaping needs);
+    /// 3. ensure the Docker network exists;
+    /// 4. mark deploys/jobs interrupted by a previous crash as failed;
+    /// 5. read the domains services are served under (the base domain and
     ///    the connected ones, DESIGN.md §21);
-    /// 4. install the routes of every service synchronously (so they are live
+    /// 6. install the routes of every service synchronously (so they are live
     ///    before the proxy starts serving); the rest of the boot convergence
     ///    (stopping stale instances, starting missing ones) continues in the
     ///    background;
-    /// 5. spawn deploy workers, the reconcile loop, the route and OOM
+    /// 7. spawn deploy workers, the reconcile loop, the route and OOM
     ///    watchers, the cron scheduler, the domain verifier and datastore
     ///    provisioning for rows still `creating`.
     ///
@@ -107,10 +112,21 @@ impl FerryEngine {
                 .await
                 .map_err(|e| Error::internal(format!("creating directory {}: {e}", dir.display())))?;
         }
-        inner.docker.ensure_network(&inner.naming.network(), &inner.naming.base_labels("network")).await?;
 
-        // No build runs yet: scratch directories are leftovers of a crash.
+        // No build runs yet: scratch directories are leftovers of a previous
+        // server. One killed with SIGKILL may have left its build processes
+        // running (on macOS nothing stops them): kill them first, their
+        // records are in those directories. Neither step needs Docker.
+        let reaper = inner.clone();
+        // Blocking: reads the scratch directories and runs `ps`.
+        match tokio::task::spawn_blocking(move || reaper.builder.reap_orphans()).await {
+            Ok(0) => {}
+            Ok(killed) => info!(killed, "killed the build processes a previous server left running"),
+            Err(e) => tracing::warn!("cannot look for build processes a previous server left running: {e}"),
+        }
         remove_stale_build_dirs(&config.builds_dir()).await;
+
+        inner.docker.ensure_network(&inner.naming.network(), &inner.naming.base_labels("network")).await?;
         deploy::recover_interrupted(inner).await?;
         // Before any route: a service's hostnames come from the domains.
         ferry_core::domains::init(&inner.store, config).await?;
