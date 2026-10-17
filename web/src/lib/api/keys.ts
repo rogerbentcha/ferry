@@ -5,6 +5,8 @@
  */
 export const keys = {
   info: () => ['info'] as const,
+  /** How busy the machine and its containers are (never invalidated: polled). */
+  serverMetrics: () => ['server', 'metrics'] as const,
 
   /** The account: its sessions, its API tokens, pending `ferry login` requests. */
   auth: () => ['auth'] as const,

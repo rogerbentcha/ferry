@@ -366,6 +366,57 @@ export interface RuntimeStatus {
   instances: InstanceStatus[]
 }
 
+/** `GET /api/v1/server/metrics` — how busy the machine and its containers are right now. */
+export interface ServerMetrics {
+  /** When the values were read. */
+  at: string
+  host: HostMetrics
+  /** Running service instances and datastores, the busiest (CPU) first; `null` when Docker did not answer. */
+  containers: ContainerMetrics[] | null
+}
+
+/** The machine ferryd runs on. A value ferryd can't read is `null` (on macOS, most of them). */
+export interface HostMetrics {
+  /** CPU use of the whole machine, 0–100 %. */
+  cpu_percent: number | null
+  cpu_count: number
+  /** Memory in use, without the page cache (like `free`). */
+  memory_used_bytes: number | null
+  memory_total_bytes: number | null
+  /** The disk of the data directory, then Docker's when it is another one. */
+  disks: DiskMetrics[]
+  /** Without the loopback and Docker's own interfaces. */
+  network_rx_bytes_per_sec: number | null
+  network_tx_bytes_per_sec: number | null
+}
+
+export interface DiskMetrics {
+  mount_point: string
+  used_bytes: number
+  total_bytes: number
+  read_bytes_per_sec: number | null
+  write_bytes_per_sec: number | null
+}
+
+export type ContainerKind = 'service' | 'datastore'
+
+/** CPU and memory of one running container. */
+export interface ContainerMetrics {
+  kind: ContainerKind
+  /** Id of the service or datastore. */
+  id: string
+  name: string
+  /** Instance id as in the logs; `null` for a datastore. */
+  instance: string | null
+  /** Percent of one core (100 = one full core); `null` when Docker did not answer in time. */
+  cpu_percent: number | null
+  memory_bytes: number | null
+  /** The container's memory limit; `null` when unlimited. */
+  memory_limit_bytes: number | null
+  /** The container's CPU limit (CPUs); `null` when unlimited. */
+  cpu_limit: number | null
+}
+
 /** `POST /api/v1/datastores` */
 export interface CreateDatastore {
   name: string
