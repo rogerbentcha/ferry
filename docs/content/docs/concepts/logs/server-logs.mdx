@@ -5,7 +5,7 @@ description: The server log is what ferryd writes about its own work.
 
 ```bash title="Terminal"
 journalctl -u ferryd      # read the log, with systemd
-RUST_LOG=debug ferryd     # also log every proxied request
+RUST_LOG=debug ferryd     # also log each request, one line each
 ```
 
 ```text title="journalctl -u ferryd" noCopy
@@ -30,6 +30,12 @@ The server log does not have the lines that your app prints. They stay in the de
 ```bash title="Terminal"
 ferry logs --deploy ID
 ```
+
+## The requests
+
+The server log does not count the requests. To see how many requests each service gets, how many fail and how long they take, open **Server**, then **Monitoring**. See [Server: Requests](/docs/getting-started/dashboard/server-requests).
+
+With `RUST_LOG=debug`, the log also has one line for each request: its hostname, its path, its status code and its time in milliseconds.
 
 <Accordions>
   <Accordion title="The warning of a failed deploy">

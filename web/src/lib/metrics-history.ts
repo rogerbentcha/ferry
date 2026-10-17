@@ -2,7 +2,14 @@
  * The rows the history charts of Server → Monitoring draw, from `GET /api/v1/server/metrics/history`:
  * one row per step, with a break where ferryd read nothing (it was stopped), and the values' units.
  */
-import type { ContainerSeries, HostPoint, MetricsHistory, MetricsRange } from '@/lib/api/types'
+import type {
+  ContainerSeries,
+  HostPoint,
+  MetricsHistory,
+  MetricsRange,
+  RequestMetrics,
+  RequestPoint,
+} from '@/lib/api/types'
 import { bytes, percent } from '@/lib/format'
 
 /** The ranges of the picker, the default first. */
@@ -20,9 +27,34 @@ export const METRICS_RANGES: { value: MetricsRange; label: string }[] = [
 export const GAP_STEPS = 2
 
 /** How a chart's values read. */
-export type MetricUnit = 'percent' | 'bytes' | 'bytes_per_sec'
+export type MetricUnit = 'percent' | 'bytes' | 'bytes_per_sec' | 'requests_per_sec' | 'milliseconds'
 
-/** `37.5%`, `1.5 GiB`, `2.0 MiB/s`; `—` when unknown. */
+const EM_DASH = '—'
+
+/** `12.5 req/s`, `0.25 req/s`, `<0.01 req/s` (a few requests in an hour); `—` when unknown. */
+export function formatRate(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value) || value < 0) return EM_DASH
+  const n =
+    value === 0
+      ? '0'
+      : value < 0.01
+        ? '<0.01'
+        : value < 10
+          ? value.toFixed(2)
+          : value < 100
+            ? value.toFixed(1)
+            : String(Math.round(value))
+  return `${n} req/s`
+}
+
+/** How long a request took: `4.2 ms`, `180 ms`, `1.8 s`; `—` when unknown. */
+export function formatLatency(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return EM_DASH
+  if (ms >= 1000) return `${(ms / 1000).toFixed(ms >= 10_000 ? 0 : 1)} s`
+  return `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`
+}
+
+/** `37.5%`, `1.5 GiB`, `2.0 MiB/s`, `12.5 req/s`, `180 ms`; `—` when unknown. */
 export function formatMetric(value: number | null | undefined, unit: MetricUnit): string {
   switch (unit) {
     case 'percent':
@@ -31,12 +63,28 @@ export function formatMetric(value: number | null | undefined, unit: MetricUnit)
       return bytes(value)
     case 'bytes_per_sec':
       return value === null || value === undefined ? bytes(value) : `${bytes(value)}/s`
+    case 'requests_per_sec':
+      return formatRate(value)
+    case 'milliseconds':
+      return formatLatency(value)
   }
 }
 
-/** An axis tick: `37%`, `1.5 GiB`, `2 MiB/s`. */
+/** A round number without trailing zeros: `0.25`, `2`, `1.5`. */
+const short = (v: number) => String(Number(v.toFixed(2)))
+
+/** An axis tick: `37%`, `1.5 GiB`, `2 MiB/s`, `0.5/s`, `250 ms`, `2 s`. */
 export function formatTick(value: number, unit: MetricUnit): string {
-  return unit === 'percent' ? percent(value, 0) : formatMetric(value, unit).replace(/\.0 /, ' ')
+  switch (unit) {
+    case 'percent':
+      return percent(value, 0)
+    case 'requests_per_sec':
+      return `${short(value)}/s`
+    case 'milliseconds':
+      return value >= 1000 ? `${short(value / 1000)} s` : `${short(value)} ms`
+    default:
+      return formatMetric(value, unit).replace(/\.0 /, ' ')
+  }
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -67,18 +115,24 @@ export function quarterTicks(max: number): number[] {
   return [0, max / 4, max / 2, (max * 3) / 4, max]
 }
 
+/** 0.01, 0.02, 0.05, 0.1 … 5 000 000: the steps of an axis of requests or milliseconds. */
+const DECIMAL_STEPS = Array.from({ length: 27 }, (_, k) => [1, 2, 5][k % 3]! * 10 ** (Math.floor(k / 3) - 2))
+
 /**
- * The ticks of a value axis from 0 to at least `max`, 4 steps at most: round percents (25%, 50%…)
- * or powers of two of bytes (128 MiB, 256 MiB…). `undefined` when there is no value above 0.
+ * The ticks of a value axis from 0 to at least `max`, 4 steps at most: round percents (25%, 50%…),
+ * powers of two of bytes (128 MiB, 256 MiB…) or 1-2-5 steps of requests and milliseconds (0.5/s,
+ * 250 ms…). `undefined` when there is no value above 0.
  */
 export function niceTicks(max: number, unit: MetricUnit): number[] | undefined {
   if (!(max > 0) || !Number.isFinite(max)) return undefined
   const steps =
     unit === 'percent'
       ? [1, 2, 5, 10, 25, 50, 100, 200, 400, 800, 1600, 3200]
-      : Array.from({ length: 51 }, (_, k) => 2 ** k)
+      : unit === 'requests_per_sec' || unit === 'milliseconds'
+        ? DECIMAL_STEPS
+        : Array.from({ length: 51 }, (_, k) => 2 ** k)
   const step = steps.find((s) => Math.ceil(max / s) <= 4) ?? max / 4
-  return Array.from({ length: Math.ceil(max / step) + 1 }, (_, i) => i * step)
+  return Array.from({ length: Math.ceil(max / step) + 1 }, (_, i) => Number((i * step).toPrecision(12)))
 }
 
 /** The highest value of `keys` in the rows (0 when none). */
@@ -89,6 +143,20 @@ export function maxValue(rows: ChartRow[], keys: readonly string[]): number {
       const v = row[key]
       if (typeof v === 'number' && v > max) max = v
     }
+  }
+  return max
+}
+
+/** The highest total of `keys` in a row: the top of a stacked chart (0 when none). */
+export function maxStacked(rows: ChartRow[], keys: readonly string[]): number {
+  let max = 0
+  for (const row of rows) {
+    let total = 0
+    for (const key of keys) {
+      const v = row[key]
+      if (typeof v === 'number') total += v
+    }
+    if (total > max) max = total
   }
   return max
 }
@@ -184,4 +252,52 @@ export function containerRows(history: MetricsHistory, metric: 'cpu' | 'memory')
 /** Whether a value of `keys` is known in any row (a chart of nothing says "Not available"). */
 export function hasValues(rows: ChartRow[], keys: readonly string[]): boolean {
   return rows.some((row) => keys.some((key) => row[key] !== null && row[key] !== undefined))
+}
+
+/** The lines of the requests chart: requests per second of each status class, stacked. */
+export const STATUS_KEYS = ['s2xx', 's3xx', 's4xx', 's5xx'] as const
+
+/** The lines of the latency chart, in milliseconds. */
+export const LATENCY_KEYS = ['p50', 'p95'] as const
+
+function requestRow(p: RequestPoint): ChartRow {
+  const perSec = (n: number) => (p.seconds > 0 ? n / p.seconds : 0)
+  return {
+    t: Date.parse(p.at),
+    s2xx: perSec(p.status_2xx),
+    s3xx: perSec(p.status_3xx),
+    s4xx: perSec(p.status_4xx),
+    s5xx: perSec(p.status_5xx),
+    p50: p.p50_ms,
+    p95: p.p95_ms,
+  }
+}
+
+/**
+ * The rows of the requests and latency charts: the requests per second of each status class over
+ * the seconds each step covers (less than a step for the last one, still filling), its p50 and p95
+ * (`null` in a step without a request to time), with the breaks.
+ */
+export function requestRows(history: MetricsHistory): ChartRow[] {
+  return withGaps(
+    history.requests.map(requestRow),
+    [...STATUS_KEYS, ...LATENCY_KEYS],
+    history.step_seconds,
+  )
+}
+
+/** All the requests of a target or a step, whatever their status. */
+export function totalRequests(m: RequestMetrics | RequestPoint): number {
+  return m.status_2xx + m.status_3xx + m.status_4xx + m.status_5xx
+}
+
+/** The share of the requests answered with a 5xx, in percent; `null` without a request. */
+export function errorRate(m: RequestMetrics | RequestPoint): number | null {
+  const total = totalRequests(m)
+  return total > 0 ? (m.status_5xx / total) * 100 : null
+}
+
+/** `Dashboard`, `Unrouted`, or the service's name. */
+export function targetLabel(m: RequestMetrics): string {
+  return m.target === 'dashboard' ? 'Dashboard' : m.target === 'unrouted' ? 'Unrouted' : m.name
 }

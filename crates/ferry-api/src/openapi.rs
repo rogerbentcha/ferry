@@ -232,6 +232,8 @@ down.";
         ferry_core::dto::HostPoint,
         ferry_core::dto::ContainerSeries,
         ferry_core::dto::ContainerPoint,
+        ferry_core::dto::RequestMetrics,
+        ferry_core::dto::RequestPoint,
         ferry_core::dto::CreateDatastore,
         ferry_core::dto::UpdateDatastore,
         ferry_core::dto::DatastoreView,

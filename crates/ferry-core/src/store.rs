@@ -13,6 +13,7 @@ use crate::config::Config;
 use crate::dto::{ContainerKind, ContainerMetrics, ContainerPoint, ContainerSeries, HostPoint};
 use crate::env::{self, ServiceRef};
 use crate::models::*;
+use crate::requests::{LATENCY_BOUNDS_MS, RequestCounts, TargetRequests};
 use crate::{Error, Result};
 
 const MIGRATIONS: &[&str] = &[
@@ -23,6 +24,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0005_accounts.sql"),
     include_str!("../migrations/0006_domains.sql"),
     include_str!("../migrations/0007_metrics.sql"),
+    include_str!("../migrations/0008_requests.sql"),
 ];
 
 /// Handle to the Ferry database.
@@ -299,6 +301,52 @@ fn row_to_api_token(r: &SqliteRow) -> Result<ApiToken> {
 
 fn sql_u64(v: Option<u64>) -> Option<i64> {
     v.and_then(|v| i64::try_from(v).ok())
+}
+
+/// A count of `request_samples` (or a `SUM` of them).
+fn sql_count(n: u64) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
+}
+
+/// The count columns of `request_samples`: the status classes, then the
+/// latency histogram in the order of its buckets (`ms_<bound>`, `ms_more`).
+fn request_columns() -> Vec<String> {
+    ["status_2xx", "status_3xx", "status_4xx", "status_5xx"]
+        .into_iter()
+        .map(String::from)
+        .chain(LATENCY_BOUNDS_MS.iter().map(|ms| format!("ms_{ms}")))
+        .chain(std::iter::once("ms_more".to_string()))
+        .collect()
+}
+
+/// `SUM(c) AS c` for each count column.
+fn request_sums() -> String {
+    request_columns().iter().map(|c| format!("SUM({c}) AS {c}")).collect::<Vec<_>>().join(", ")
+}
+
+/// The counts of a row read with the `columns` of [`request_columns`].
+fn row_to_request_counts(r: &SqliteRow, columns: &[String]) -> Result<RequestCounts> {
+    let mut values = Vec::with_capacity(columns.len());
+    for c in columns {
+        values.push(u64::try_from(r.try_get::<i64, _>(c.as_str())?).unwrap_or_default());
+    }
+    let mut counts = RequestCounts {
+        status_2xx: values[0],
+        status_3xx: values[1],
+        status_4xx: values[2],
+        status_5xx: values[3],
+        ..RequestCounts::default()
+    };
+    counts.latency.0.copy_from_slice(&values[4..]);
+    Ok(counts)
+}
+
+/// The values of [`request_columns`] for `counts`.
+fn request_values(counts: &RequestCounts) -> impl Iterator<Item = i64> + '_ {
+    [counts.status_2xx, counts.status_3xx, counts.status_4xx, counts.status_5xx]
+        .into_iter()
+        .chain(counts.latency.0)
+        .map(sql_count)
 }
 
 impl Store {
@@ -1779,15 +1827,85 @@ impl Store {
         Ok((host, containers))
     }
 
-    /// Delete the readings taken before `before`; returns how many rows went.
+    /// Delete the readings taken before `before`, the requests' too;
+    /// returns how many rows went.
     pub async fn prune_metrics(&self, before: DateTime<Utc>) -> Result<u64> {
         let before = before.timestamp();
         let mut tx = self.pool.begin().await?;
-        let host = sqlx::query("DELETE FROM host_samples WHERE at < ?").bind(before).execute(&mut *tx).await?;
-        let containers =
-            sqlx::query("DELETE FROM container_samples WHERE at < ?").bind(before).execute(&mut *tx).await?;
+        let mut rows = 0;
+        for table in ["host_samples", "container_samples", "request_samples"] {
+            let sql = format!("DELETE FROM {table} WHERE at < ?");
+            rows += sqlx::query(&sql).bind(before).execute(&mut *tx).await?.rows_affected();
+        }
         tx.commit().await?;
-        Ok(host.rows_affected() + containers.rows_affected())
+        Ok(rows)
+    }
+
+    /// Record, in one transaction, the requests each target got since the
+    /// previous reading, at `at` (to the second; a second reading in the
+    /// same second adds to the first). A target without a request is left
+    /// out.
+    pub async fn insert_requests(&self, at: DateTime<Utc>, requests: &[TargetRequests]) -> Result<()> {
+        let columns = request_columns();
+        let sql = format!(
+            "INSERT INTO request_samples (at, target, name, {}) VALUES (?, ?, ?{})
+             ON CONFLICT (at, target) DO UPDATE SET name = excluded.name, {}",
+            columns.join(", "),
+            ", ?".repeat(columns.len()),
+            columns.iter().map(|c| format!("{c} = {c} + excluded.{c}")).collect::<Vec<_>>().join(", "),
+        );
+        let mut tx = self.pool.begin().await?;
+        for r in requests.iter().filter(|r| !r.counts.is_empty()) {
+            let mut query = sqlx::query(&sql).bind(at.timestamp()).bind(&r.target).bind(&r.name);
+            for value in request_values(&r.counts) {
+                query = query.bind(value);
+            }
+            query.execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// The requests counted from `from` to `to` (both included), each
+    /// target's added up in steps of `step` seconds counted from the Unix
+    /// epoch: one entry per step and target with requests, at the start of
+    /// the step, oldest first (then by target), named as in the step's
+    /// newest row.
+    pub async fn request_history(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        step: u32,
+    ) -> Result<Vec<(DateTime<Utc>, TargetRequests)>> {
+        let step = i64::from(step.max(1));
+        let columns = request_columns();
+        // With a single `MAX`, SQLite takes the bare `name` from the row
+        // that has it: the newest of the step.
+        let sql = format!(
+            "SELECT (at / ?) * ? AS step_at, target, name, MAX(at) AS last_at, {} FROM request_samples
+             WHERE at BETWEEN ? AND ?
+             GROUP BY step_at, target ORDER BY step_at, target",
+            request_sums()
+        );
+        let rows = sqlx::query(&sql)
+            .bind(step)
+            .bind(step)
+            .bind(from.timestamp())
+            .bind(to.timestamp())
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter()
+            .map(|r| {
+                Ok((
+                    get_unix_time(r, "step_at")?,
+                    TargetRequests {
+                        target: r.try_get("target")?,
+                        name: r.try_get("name")?,
+                        counts: row_to_request_counts(r, &columns)?,
+                    },
+                ))
+            })
+            .collect()
     }
 
     // -----------------------------------------------------------------------
@@ -2517,5 +2635,123 @@ mod tests {
         assert_eq!(at, vec![t - day, t], "exactly 24 hours old is kept");
         assert_eq!(containers[0].points.len(), 2);
         assert_eq!(store.prune_metrics(t - day).await.unwrap(), 0);
+    }
+
+    fn requests(target: &str, name: &str, ok: u64, errors: u64, ms: u64) -> TargetRequests {
+        let mut counts = RequestCounts::default();
+        for _ in 0..ok {
+            counts.record(200, Some(Duration::from_millis(ms)));
+        }
+        for _ in 0..errors {
+            counts.record(502, Some(Duration::from_millis(ms)));
+        }
+        TargetRequests { target: target.into(), name: name.into(), counts }
+    }
+
+    /// A database written before the requests (schema v7) gets their
+    /// table, empty, and keeps the other metrics.
+    #[tokio::test]
+    async fn upgrades_a_database_without_the_requests() {
+        use sqlx::Connection;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ferry.db");
+        let t = midnight();
+        {
+            let opts = SqliteConnectOptions::new().filename(&path).create_if_missing(true).foreign_keys(true);
+            let mut conn = sqlx::SqliteConnection::connect_with(&opts).await.unwrap();
+            for sql in &MIGRATIONS[..7] {
+                sqlx::raw_sql(sql).execute(&mut conn).await.unwrap();
+            }
+            sqlx::raw_sql(&format!(
+                "PRAGMA user_version = 7; INSERT INTO host_samples (at, cpu_percent) VALUES ({}, 5.0);",
+                t.timestamp()
+            ))
+            .execute(&mut conn)
+            .await
+            .unwrap();
+            conn.close().await.unwrap();
+        }
+        let store = Store::open(&path).await.unwrap();
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(store.pool()).await.unwrap();
+        assert_eq!(version, 8);
+        assert_eq!(store.metrics_history(t, t, 10).await.unwrap().0.len(), 1, "the host's readings are kept");
+        assert_eq!(store.request_history(t, t, 10).await.unwrap(), vec![]);
+        store.insert_requests(t, &[requests("srv-1", "web", 3, 0, 5)]).await.unwrap();
+        assert_eq!(store.request_history(t, t, 10).await.unwrap().len(), 1);
+    }
+
+    /// `(step, target, name, 2xx, 5xx, timed)` of each entry.
+    fn request_summary(entries: &[(DateTime<Utc>, TargetRequests)]) -> Vec<(i64, &str, &str, u64, u64, u64)> {
+        entries
+            .iter()
+            .map(|(at, r)| {
+                let c = &r.counts;
+                (at.timestamp(), r.target.as_str(), r.name.as_str(), c.status_2xx, c.status_5xx, c.latency.count())
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn request_history_adds_up_each_target_by_step() {
+        let store = Store::open_in_memory().await.unwrap();
+        let t = midnight();
+        let secs = |s: i64| t + chrono::Duration::seconds(s);
+        let (srv1, srv2) = ("srv-1", "srv-2");
+        // Step [0, 60): two readings, a third in the same second as the
+        // second (it adds to it).
+        store
+            .insert_requests(
+                secs(0),
+                &[
+                    requests(srv1, "web", 10, 0, 5),
+                    requests(srv2, "api", 1, 1, 400),
+                    requests("dashboard", "dashboard", 7, 0, 1),
+                ],
+            )
+            .await
+            .unwrap();
+        store.insert_requests(secs(10), &[requests(srv1, "web", 0, 2, 5)]).await.unwrap();
+        store.insert_requests(secs(10), &[requests(srv1, "web", 1, 0, 5)]).await.unwrap();
+        // Nothing is stored for a target without a request.
+        store.insert_requests(secs(20), &[requests("unrouted", "unrouted", 0, 0, 1)]).await.unwrap();
+        // Step [120, 180): the service was renamed in the step.
+        store.insert_requests(secs(130), &[requests(srv1, "site", 4, 0, 5)]).await.unwrap();
+        store.insert_requests(secs(120), &[requests(srv1, "web", 1, 0, 5)]).await.unwrap();
+        // Outside the range.
+        store.insert_requests(secs(-1), &[requests(srv1, "web", 99, 99, 5)]).await.unwrap();
+        store.insert_requests(secs(181), &[requests(srv1, "web", 99, 99, 5)]).await.unwrap();
+
+        let entries = store.request_history(secs(0), secs(180), 60).await.unwrap();
+        let t0 = t.timestamp();
+        assert_eq!(
+            request_summary(&entries),
+            vec![
+                (t0, "dashboard", "dashboard", 7, 0, 7),
+                (t0, srv1, "web", 11, 2, 13),
+                (t0, srv2, "api", 1, 1, 2),
+                (t0 + 120, srv1, "site", 5, 0, 5),
+            ],
+        );
+        let want = requests(srv1, "web", 11, 2, 5).counts.latency;
+        assert_eq!(entries[1].1.counts.latency, want, "the histograms are added bucket by bucket");
+        assert_eq!(entries[2].1.counts.latency, requests(srv2, "api", 1, 1, 400).counts.latency);
+
+        // Steps of 10 s: one entry per reading.
+        let entries = store.request_history(secs(0), secs(180), 10).await.unwrap();
+        let steps: Vec<_> = entries.iter().map(|(at, r)| (at.timestamp() - t0, r.target.as_str())).collect();
+        assert_eq!(steps, [(0, "dashboard"), (0, srv1), (0, srv2), (10, srv1), (120, srv1), (130, srv1)]);
+    }
+
+    #[tokio::test]
+    async fn pruning_deletes_the_older_requests_too() {
+        let store = Store::open_in_memory().await.unwrap();
+        let t = midnight();
+        let day = chrono::Duration::days(1);
+        for at in [t - day - chrono::Duration::seconds(10), t - day, t] {
+            store.insert_requests(at, &[requests("srv-1", "web", 1, 0, 5)]).await.unwrap();
+        }
+        assert_eq!(store.prune_metrics(t - day).await.unwrap(), 1);
+        let entries = store.request_history(t - day * 2, t, 10).await.unwrap();
+        assert_eq!(entries.iter().map(|(at, _)| *at).collect::<Vec<_>>(), vec![t - day, t]);
     }
 }

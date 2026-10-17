@@ -1,20 +1,27 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ContainerSeries, HostPoint, MetricsHistory } from '@/lib/api/types'
+import type { ContainerSeries, HostPoint, MetricsHistory, RequestMetrics, RequestPoint } from '@/lib/api/types'
 
 import {
   GAP_STEPS,
   containerLabel,
   containerRows,
+  errorRate,
+  formatLatency,
   formatMetric,
+  formatRate,
   formatStep,
   formatTick,
   hasValues,
   hostRows,
+  maxStacked,
   maxValue,
   niceTicks,
   quarterTicks,
+  requestRows,
+  targetLabel,
   timeTicks,
+  totalRequests,
   withGaps,
 } from './metrics-history'
 
@@ -44,8 +51,36 @@ function series(name: string, instance: string | null, points: [number, number |
   }
 }
 
-function history(hostPoints: HostPoint[], containers: ContainerSeries[] = [], step = 10): MetricsHistory {
-  return { range: '1h', step_seconds: step, from: at(0), to: at(3600), host: hostPoints, containers }
+function history(
+  hostPoints: HostPoint[],
+  containers: ContainerSeries[] = [],
+  step = 10,
+  requests: RequestPoint[] = [],
+): MetricsHistory {
+  return {
+    range: '1h',
+    step_seconds: step,
+    from: at(0),
+    to: at(3600),
+    host: hostPoints,
+    containers,
+    requests,
+    request_targets: [],
+  }
+}
+
+function requests(seconds: number, ok: number, errors: number, p95: number | null, covered = 10): RequestPoint {
+  return {
+    at: at(seconds),
+    seconds: covered,
+    requests_per_sec: (ok + errors) / covered,
+    status_2xx: ok,
+    status_3xx: 0,
+    status_4xx: 0,
+    status_5xx: errors,
+    p50_ms: p95 === null ? null : p95 / 2,
+    p95_ms: p95,
+  }
 }
 
 describe('withGaps', () => {
@@ -200,5 +235,86 @@ describe('axes', () => {
   it('splits a bounded value axis in quarters', () => {
     expect(quarterTicks(100)).toEqual([0, 25, 50, 75, 100])
     expect(quarterTicks(8 * 1024 ** 3).map((v) => formatTick(v, 'bytes'))).toEqual(['0 B', '2 GiB', '4 GiB', '6 GiB', '8 GiB'])
+  })
+})
+
+describe('requestRows', () => {
+  it('has the requests per second of each status class and the percentiles of each step, with the breaks', () => {
+    // ferryd stopped for 20 minutes after 10 s.
+    const points = [requests(0, 40, 10, 180), requests(10, 0, 0, null), requests(1210, 5, 0, 12)]
+    const rows = requestRows(history([], [], 10, points))
+    expect(rows.map((r) => [(r.t - T0) / 1000, r.s2xx, r.s5xx, r.p50, r.p95])).toEqual([
+      [0, 4, 1, 90, 180],
+      [10, 0, 0, null, null],
+      [20, null, null, null, null],
+      [1210, 0.5, 0, 6, 12],
+    ])
+    expect(rows[0]?.s3xx).toBe(0)
+  })
+
+  it('counts per second over the seconds a step covers', () => {
+    // 24 h: steps of 4 minutes; the last one, still filling, covers 30 s so far.
+    const rows = requestRows(history([], [], 240, [requests(0, 480, 0, 50, 240), requests(240, 60, 0, 50, 30)]))
+    expect(rows.map((r) => r.s2xx)).toEqual([2, 2])
+  })
+
+  it('tops a stacked chart with the highest total of a row', () => {
+    const rows = requestRows(history([], [], 10, [requests(0, 40, 10, 180), requests(10, 30, 30, 50)]))
+    expect(maxStacked(rows, ['s2xx', 's3xx', 's4xx', 's5xx'])).toBe(6)
+    expect(maxValue(rows, ['s2xx', 's3xx', 's4xx', 's5xx'])).toBe(4)
+    expect(maxStacked([], ['s2xx'])).toBe(0)
+  })
+})
+
+describe('request numbers', () => {
+  const target = (over: Partial<RequestMetrics>): RequestMetrics => ({
+    target: 'srv-1',
+    name: 'web',
+    requests_per_sec: 1,
+    status_2xx: 0,
+    status_3xx: 0,
+    status_4xx: 0,
+    status_5xx: 0,
+    p50_ms: null,
+    p95_ms: null,
+    ...over,
+  })
+
+  it('formats rates and latencies', () => {
+    expect([0, 0.004, 0.25, 2.5, 12.34, 345.6].map(formatRate)).toEqual([
+      '0 req/s',
+      '<0.01 req/s',
+      '0.25 req/s',
+      '2.50 req/s',
+      '12.3 req/s',
+      '346 req/s',
+    ])
+    expect(formatRate(null)).toBe('—')
+    expect([4.24, 180.4, 1840, 12_500].map(formatLatency)).toEqual(['4.2 ms', '180 ms', '1.8 s', '13 s'])
+    expect(formatLatency(null)).toBe('—')
+    expect(formatMetric(2.5, 'requests_per_sec')).toBe('2.50 req/s')
+    expect(formatMetric(1840, 'milliseconds')).toBe('1.8 s')
+    expect([formatTick(0.5, 'requests_per_sec'), formatTick(250, 'milliseconds'), formatTick(2000, 'milliseconds')]).toEqual(
+      ['0.5/s', '250 ms', '2 s'],
+    )
+  })
+
+  it('has 1-2-5 steps on the axes of requests and milliseconds', () => {
+    expect(niceTicks(0.3, 'requests_per_sec')).toEqual([0, 0.1, 0.2, 0.3])
+    expect(niceTicks(7, 'requests_per_sec')).toEqual([0, 2, 4, 6, 8])
+    expect(niceTicks(1900, 'milliseconds')).toEqual([0, 500, 1000, 1500, 2000])
+  })
+
+  it('counts the error rate as the share of 5xx', () => {
+    const web = target({ status_2xx: 90, status_4xx: 5, status_5xx: 5 })
+    expect(totalRequests(web)).toBe(100)
+    expect(errorRate(web)).toBe(5)
+    expect(errorRate(target({}))).toBeNull()
+  })
+
+  it('names the dashboard and the unrouted requests', () => {
+    expect(targetLabel(target({}))).toBe('web')
+    expect(targetLabel(target({ target: 'dashboard', name: 'dashboard' }))).toBe('Dashboard')
+    expect(targetLabel(target({ target: 'unrouted', name: 'unrouted' }))).toBe('Unrouted')
   })
 })

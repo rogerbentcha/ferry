@@ -277,7 +277,7 @@ export function MonitoringSection() {
     <>
       <PageHeader
         title="Monitoring"
-        description="How busy this server is right now and over the last 24 hours, and which service or datastore uses it."
+        description="How busy this server is right now and over the last 24 hours, which service or datastore uses it, and how your services answer their requests."
       />
       {isLoading ? (
         <MonitoringSkeleton />

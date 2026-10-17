@@ -1,7 +1,7 @@
 //! The last 24 hours of the server's metrics (`Engine::metrics_history`,
 //! DESIGN.md §22): a reading of the host and the containers every 10 s,
-//! kept in the store, deleted once 24 hours old, and read back averaged into
-//! 360 steps at most.
+//! kept in the store, deleted once 24 hours old (the requests of `requests`
+//! too), and read back averaged into 360 steps at most.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use tokio::time::MissedTickBehavior;
 use tracing::{debug, warn};
 
 use crate::metrics::{self, HostSampler};
+use crate::requests;
 use crate::state::Inner;
 
 /// Time between two readings.
@@ -109,7 +110,18 @@ pub(crate) async fn metrics_history(inner: &Inner, range: MetricsRange) -> Resul
     let from = first_step(to, range);
     let step = range.step_seconds();
     let (host, containers) = inner.store.metrics_history(from, to, step).await?;
-    Ok(MetricsHistory { range, step_seconds: step, from, to, host, containers: busiest(containers, TOP_CONTAINERS) })
+    let stored_until = inner.requests.stored_until(to);
+    let (requests, request_targets) = requests::history(&inner.store, from, to, step, &host, stored_until).await?;
+    Ok(MetricsHistory {
+        range,
+        step_seconds: step,
+        from,
+        to,
+        host,
+        containers: busiest(containers, TOP_CONTAINERS),
+        requests,
+        request_targets,
+    })
 }
 
 /// The start of the first step of `range` when it ends at `to`: the step

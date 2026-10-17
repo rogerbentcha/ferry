@@ -373,6 +373,32 @@ export interface ServerMetrics {
   host: HostMetrics
   /** Running service instances and datastores, the busiest (CPU) first; `null` when Docker did not answer. */
   containers: ContainerMetrics[] | null
+  /**
+   * The requests the proxy answered in its last reading (the last 10 s), one entry per target that had
+   * any: the services, the busiest first, then `dashboard` and `unrouted`. Empty before the first reading.
+   */
+  requests: RequestMetrics[]
+}
+
+/** The requests the proxy answered for one target over a time. */
+export interface RequestMetrics {
+  /** A service id; `dashboard` for the dashboard's host; `unrouted` for a host no service has. */
+  target: string
+  /** The service's name; the target itself for `dashboard` and `unrouted`. */
+  name: string
+  /** On average over the time. */
+  requests_per_sec: number
+  /** With the WebSockets that opened. */
+  status_2xx: number
+  status_3xx: number
+  /** With the requests whose client went away before the answer (counted as 499). */
+  status_4xx: number
+  /** With the proxy's own 502 and 503 pages. */
+  status_5xx: number
+  /** Half the requests got their response headers within this many ms; `null` without a request to time. */
+  p50_ms: number | null
+  /** 95 % of the requests got their response headers within this many ms. */
+  p95_ms: number | null
 }
 
 /** The machine ferryd runs on. A value ferryd can't read is `null` (on macOS, most of them). */
@@ -436,6 +462,31 @@ export interface MetricsHistory {
   host: HostPoint[]
   /** The 5 service instances and datastores whose CPU peaked highest in the range, the busiest first. */
   containers: ContainerSeries[]
+  /**
+   * The requests to the services (neither the dashboard's nor the unrouted ones), oldest first: a point
+   * for every step ferryd ran in and stored requests for, with zeros when no request came.
+   */
+  requests: RequestPoint[]
+  /** Each target that had requests, over the whole range: the services, the busiest first, then `dashboard` and `unrouted`. */
+  request_targets: RequestMetrics[]
+}
+
+/** The requests to the services over one step. */
+export interface RequestPoint {
+  /** The start of the step. */
+  at: string
+  /** The time the counts cover: `step_seconds`, or less for the last step, still filling. */
+  seconds: number
+  /** On average over `seconds`. */
+  requests_per_sec: number
+  /** The requests of the step, by status class. */
+  status_2xx: number
+  status_3xx: number
+  status_4xx: number
+  status_5xx: number
+  /** `null` without a request to time in the step. */
+  p50_ms: number | null
+  p95_ms: number | null
 }
 
 /** The machine over one step; `null` when a value could not be read in the whole step. */

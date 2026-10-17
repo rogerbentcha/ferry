@@ -147,6 +147,16 @@ export const terms = {
     term: 'metric',
     definition: 'A number that measures a container at one moment, for example its CPU use or its memory use.',
   },
+  latency: {
+    term: 'latency',
+    definition: 'The time that a service takes to answer a request. Ferry measures it until the headers of the answer go out.',
+    see: ['percentile'],
+  },
+  percentile: {
+    term: 'percentile',
+    definition: 'A time that a part of the requests did not go above. A p95 of 2 s: 95% of the requests took 2 s or less.',
+    see: ['latency'],
+  },
 
   // --- Self-healing --------------------------------------------------------
   'actual-state': {

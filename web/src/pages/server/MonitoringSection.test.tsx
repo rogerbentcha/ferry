@@ -143,7 +143,7 @@ describe('ContainersTable', () => {
 
 describe('MonitoringView', () => {
   it('shows the machine, then its containers', () => {
-    const metrics: ServerMetrics = { at: '2026-10-17T12:00:00Z', host: LINUX, containers: [WEB] }
+    const metrics: ServerMetrics = { at: '2026-10-17T12:00:00Z', host: LINUX, containers: [WEB], requests: [] }
     const out = text(<MonitoringView metrics={metrics} />)
     expect(out.indexOf('This server')).toBeLessThan(out.indexOf('Services and datastores'))
     expect(out).toContain('web 9f8e7d')

@@ -38,7 +38,7 @@ code).
 | Suspend / resume, restart | ✅ |
 | One-off jobs | ✅ `ferry run` |
 | Blueprints (`render.yaml`) | ✅ `ferry blueprint apply` (same schema, subset) |
-| Logs (build + runtime, live tail), basic metrics | ✅ SSE streams, CPU/mem in status, live host and container metrics and their last 24 hours (§22) |
+| Logs (build + runtime, live tail), basic metrics | ✅ SSE streams, CPU/mem in status, live host and container metrics, the requests and latency of each service, and their last 24 hours (§22) |
 | Dashboard, CLI, REST API | ✅ |
 | `ferry up` (deploy a local directory without git) | ➕ Ferry extra |
 
@@ -70,9 +70,9 @@ auth, secret files, IP allow lists, teams/RBAC.
 | `ferry-docker` | lib | core | typed Docker wrapper (containers, images, volumes, networks, logs, stats, exec) |
 | `ferry-build` | lib | core | git fetch / archive extract, the branches of a remote (`git ls-remote`), runtime detection, Dockerfile generation, `docker build` |
 | `ferry-scm` | lib | core | git providers (§18): GitHub / GitLab REST clients, authorizing an account in the browser (GitHub App manifest + installation, GitLab OAuth), the tokens of a connection (minted or renewed on demand), which connection reads a repository |
-| `ferry-proxy` | lib | core | `RouteTable`, HTTP/HTTPS reverse proxy, websockets, error pages |
+| `ferry-proxy` | lib | core | `RouteTable`, HTTP/HTTPS reverse proxy, websockets, error pages, request counts (`RequestStats`, §22) |
 | `ferry-tls` | lib | core | ACME certificates, SNI resolver, `TlsHooks` impl, the state of each certificate (`Certificates`) |
-| `ferry-engine` | lib | core, docker, build, proxy, scm | `FerryEngine: Engine` — deploys, reconciler, cron, jobs, datastores, logs, verifying domains (§21), server metrics and their 24-hour history (§22) |
+| `ferry-engine` | lib | core, docker, build, proxy, scm | `FerryEngine: Engine` — deploys, reconciler, cron, jobs, datastores, logs, verifying domains (§21), server metrics, the proxy's requests and their 24-hour history (§22) |
 | `ferry-api` | lib | core, build, scm | axum router: REST, SSE (logs + `/api/v1/events`), webhooks, blueprints, OpenAPI + Swagger UI, git connections (§18; `build` only for the branches of a remote), serves the embedded web client (`web/dist`) |
 | `ferry-cli` | bin `ferry` | core | CLI client |
 | `ferryd` | bin | all | wiring (already written) |
@@ -416,8 +416,8 @@ routes and checks that the document, the router and `lib.rs` agree.
 | `POST /api/v1/auth/cli/{id}/approve` · `/deny` | `CliLoginView`; approving creates the API token the terminal collects |
 | `POST /api/v1/auth/cli/{id}/token` | `CliLoginPoll` `{secret}` → `CliLoginResult` `{status, token?}` (no auth): `pending`, `denied`, or `approved` with the token, once. 401 for another secret, 404 once expired or collected |
 | `GET /api/v1/info` | `ServerInfo` (including `base_domain`, the `default_domain` service URLs are shown with (§21), the default limits `default_memory_limit_mb` / `default_cpu_limit`, 0 = unlimited, the Docker host's `docker_cpus` / `docker_memory_bytes`, `null` when unknown, `github_webhook_enabled` — `/hooks/github` takes deliveries: a connected GitHub account's app has a webhook (§18), or the server has a webhook secret — and `github_webhook_secret_set`, the second case alone) |
-| `GET /api/v1/server/metrics` | `ServerMetrics` `{at, host, containers}` (§22): how busy the machine is right now — `HostMetrics` `{cpu_percent, cpu_count, memory_used_bytes, memory_total_bytes, disks, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`, each `DiskMetrics` `{mount_point, used_bytes, total_bytes, read_bytes_per_sec, write_bytes_per_sec}` — and every running service instance and datastore, `ContainerMetrics` `{kind, id, name, instance, cpu_percent, memory_bytes, memory_limit_bytes, cpu_limit}`, the busiest first (`engine.server_metrics`). A value that can't be read is `null`; `containers` is `null` when Docker does not answer. Takes about a second |
-| `GET /api/v1/server/metrics/history?range=1h\|6h\|24h` | `MetricsHistory` `{range, step_seconds, from, to, host, containers}` (§22): the readings ferryd keeps (one every 10 s, 24 hours), averaged into steps of 10 / 60 / 240 s — 360 at most — oldest first, a step without a reading left out. `HostPoint` `{at, cpu_percent, memory_used_bytes, memory_total_bytes, disk_read_bytes_per_sec, disk_write_bytes_per_sec, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`; the 5 containers whose CPU peaked highest, `ContainerSeries` `{kind, id, name, instance, points: [ContainerPoint {at, cpu_percent, memory_bytes}]}` (`engine.metrics_history`). `range` defaults to `1h`; any other value is a 400 |
+| `GET /api/v1/server/metrics` | `ServerMetrics` `{at, host, containers, requests}` (§22): how busy the machine is right now — `HostMetrics` `{cpu_percent, cpu_count, memory_used_bytes, memory_total_bytes, disks, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`, each `DiskMetrics` `{mount_point, used_bytes, total_bytes, read_bytes_per_sec, write_bytes_per_sec}` — and every running service instance and datastore, `ContainerMetrics` `{kind, id, name, instance, cpu_percent, memory_bytes, memory_limit_bytes, cpu_limit}`, the busiest first — and what the proxy answered in its last reading (10 s), `RequestMetrics` `{target, name, requests_per_sec, status_2xx, status_3xx, status_4xx, status_5xx, p50_ms, p95_ms}` per target that had requests: the services busiest first, then `dashboard` and `unrouted` (`engine.server_metrics`). A value that can't be read is `null`; `containers` is `null` when Docker does not answer. Takes about a second |
+| `GET /api/v1/server/metrics/history?range=1h\|6h\|24h` | `MetricsHistory` `{range, step_seconds, from, to, host, containers, requests, request_targets}` (§22): the readings ferryd keeps (one every 10 s, 24 hours), averaged into steps of 10 / 60 / 240 s — 360 at most — oldest first, a step without a reading left out. `HostPoint` `{at, cpu_percent, memory_used_bytes, memory_total_bytes, disk_read_bytes_per_sec, disk_write_bytes_per_sec, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`; the 5 containers whose CPU peaked highest, `ContainerSeries` `{kind, id, name, instance, points: [ContainerPoint {at, cpu_percent, memory_bytes}]}`; the services' requests together, `RequestPoint` `{at, seconds, requests_per_sec, status_2xx, status_3xx, status_4xx, status_5xx, p50_ms, p95_ms}` for every step ferryd ran in and stored requests for (zeros without a request; `seconds` less than the step for the last one, still filling), and each target over the range, `RequestMetrics` (`engine.metrics_history`). `range` defaults to `1h`; any other value is a 400 |
 | `GET /api/v1/events` | SSE change feed: `event: ready` (`data: {}`) once the feed watches the store (refetch after it), then `event: change` with `ChangeEvent` `{kind, id, service_id, action}` — `kind` ∈ `service`/`deploy`/`datastore`/`env_group`/`job`/`git_connection`/`domain`, `action` ∈ `created`/`updated`/`deleted`, `service_id` set for services (own id), deploys and jobs; a lagging subscriber gets `{kind:"all", id:"*", service_id:null, action:"resync"}` (refetch everything). The store is polled every second while someone listens and nudged after every API/webhook write |
 | `GET /api/v1/services` | `[ServiceView]` |
 | `POST /api/v1/services` | `CreateService` → 201 `ServiceView` (queues a `create` deploy when it has a repo/image, unless `deploy:false`) |
@@ -765,7 +765,15 @@ Rust build never runs Node.
   apart (ferryd was stopped), so the lines break there; the tooltip says
   the time, the step it averages and each value with its unit. No point
   yet says "Collecting data… first points in about 10 s"; a value never
-  read in the range, "Not available".
+  read in the range, "Not available". Between the host and the
+  containers, **Requests**: the services' requests per second stacked by
+  status class (2xx `--chart-1`, 3xx `--chart-4`, 4xx `--chart-2`, 5xx
+  `--chart-3`), their p50 / p95 latency, and a table of
+  `request_targets` in the API's order — each service linked to its
+  page, then "Dashboard" and "Unrouted" — with requests per second (and
+  how many), the error rate (the share of 5xx) and p95. Nothing counted
+  in the range says "No requests yet"; only the dashboard or unrouted
+  requests, "No request to your services in this range" in the charts.
 * **Resource limits in the UI** (§14): "Memory limit" / "CPU limit" selects
   (`Server default (512 MiB)` from `/api/v1/info`, presets, Custom…) in the
   service's Settings → Resources ("Changes apply on the next deploy or
@@ -1715,10 +1723,11 @@ domain); internationalized names (use the punycode form).
 ## 22. Monitoring
 
 Server → Monitoring answers "why is it slow?" without SSH: how busy the
-machine is right now and over the last 24 hours, and which service or
-datastore uses it. Nothing to install: ferryd reads the numbers itself
-and keeps 24 hours of them in its own database (requests and ferryd's own
-logs come later; Prometheus and Grafana are not bundled).
+machine is right now and over the last 24 hours, which service or
+datastore uses it, and how the services answer their requests. Nothing to
+install: ferryd reads the numbers itself and keeps 24 hours of them in its
+own database (ferryd's own logs come later; Prometheus and Grafana are not
+bundled).
 
 `GET /api/v1/server/metrics` (§10) → `engine.server_metrics()`
 (`ferry-engine/src/metrics.rs`), which reads the host and the containers
@@ -1791,3 +1800,63 @@ the 5 containers whose CPU peaked highest in the range (an app busy for
 ten minutes at night shows; an average would hide it), the busiest
 first. A step with no reading has no point: the dashboard breaks its
 lines where points are more than 2 steps apart.
+
+**Requests** (`ferry-proxy/src/stats.rs`, `ferry-engine/src/requests.rs`).
+The proxy counts every request its handler answers, on both listeners,
+once, when the response headers are ready to go out: for the service its
+host routes to — the 308 to HTTPS and the suspended / no-upstreams pages
+too — else as unrouted (a host no route has, a request without a valid
+host, the ACME challenges and domain checks the proxy answers itself,
+`CONNECT`). The dashboard's host is the `__dashboard` route, reported as
+the target `dashboard`. Each request counts in its status class — 2xx,
+3xx, 4xx, 5xx (the proxy's own 502 and 503 pages included; a websocket that
+opened, `101`, is a 2xx) — and in a latency histogram of fixed buckets
+(`ferry_core::requests::LATENCY_BOUNDS_MS`: 1 ms to 30 s, and longer)
+measured until the response headers; websockets stay out of it. A request
+that ends before its answer (hyper drops the handler when the client goes
+away) counts as a `499`, a 4xx, after the time it waited: a service that
+hangs shows as slow, not idle. A request hyper rejects before the handler
+(a malformed head, a header timeout) is not counted. Nothing is reset, so
+the counters only go up (what a Prometheus export needs).
+
+The counters are atomics in memory, per service, kept by the
+`RouteTable` (`RouteTable::request_stats`): each route holds its service's
+counters, so counting a request takes no lock, no lookup and no disk
+access; a new deploy, a suspension or a deleted route keeps them (until
+ferryd stops). The engine reads them through the route table it already
+shares with the proxy: no signature changed.
+
+From `start` to shutdown, a task of the engine reads the counters on the
+wall clock's multiples of 10 s and stores, in one transaction, what each
+target got since its previous reading (`Store::insert_requests`), in the
+slot of 10 s that just ended (`at` = the start of the slot, so a step of
+60 or 240 s holds exactly 6 or 24 slots); a target without a request
+has no row. When storing fails, the previous reading is kept and the
+next one counts these requests too: nothing is counted twice or lost.
+At shutdown, one last reading adds what came since to the nearest slot,
+so a stop loses only the requests answered while the proxy drains (at
+most the last 10 s in any case). The live view
+(`ServerMetrics.requests`) is that last reading, in requests per second.
+
+Migration 8 adds `request_samples` (`WITHOUT ROWID`, keyed by
+`(at, target)`: the service id, `dashboard` or `unrouted`; with the
+service's `name`, `status_2xx`…`status_5xx` and one column per latency
+bucket, `ms_1`…`ms_30000`, `ms_more`). `Store::prune_metrics` deletes its
+rows older than 24 hours with the others. With 20 services, the dashboard
+and unrouted traffic all busy every 10 s, 24 hours take about 18 MB
+(measured with 190,080 rows), 33 MB with the host and container history.
+
+`Store::request_history` adds up each target's rows by step (`GROUP BY
+at / step, target`); the engine then adds the services together per step
+— a step the host was read in without a request is a point with zeros,
+so a quiet time is not a gap — and each target over the range, named as
+in its last step. It goes up to the end of the last slot stored
+(`requests::State::stored_until`; at start, the start of the current
+slot): a step with no slot stored yet has no point, and the step still
+filling counts over its stored `seconds`, so the end of the chart is
+neither a false zero nor a fraction of the rate. Percentiles come from
+the added-up histograms: exact to the bucket, interpolated linearly
+inside it (`LatencyHistogram::percentile`). Requests per second: a
+step's requests over its stored seconds; a target's over the range, up to
+the last slot stored. The targets come back the services first, the
+busiest first, then `dashboard` and `unrouted`.

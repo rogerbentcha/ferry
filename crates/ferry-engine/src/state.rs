@@ -64,6 +64,8 @@ pub(crate) struct Inner {
     host: OnceCell<HostInfo>,
     /// The last reading of the machine's counters (see `metrics`).
     pub host_sampler: crate::metrics::HostSampler,
+    /// The last reading of the proxy's requests (see `requests`).
+    pub requests: crate::requests::State,
 }
 
 /// In-memory bookkeeping (never held across an `.await`).
@@ -256,6 +258,7 @@ impl Inner {
             domains: crate::domains::State::default(),
             host: OnceCell::new(),
             host_sampler: crate::metrics::HostSampler::new(),
+            requests: crate::requests::State::default(),
         }
     }
 

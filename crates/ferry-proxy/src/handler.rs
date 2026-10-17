@@ -1,5 +1,5 @@
 //! Per-request logic: ACME challenges, host routing, HTTPS redirects,
-//! forwarding (with retry), upgrades and error pages.
+//! forwarding (with retry), upgrades, error pages and request counts.
 
 use std::convert::Infallible;
 use std::error::Error as StdError;
@@ -25,7 +25,8 @@ use crate::body::{self, BodyTimedOut, ProxyBody};
 use crate::headers::{self, Forwarded};
 use crate::limits::ConnSlot;
 use crate::pages::{self, ErrorKind};
-use crate::routes::{Resolution, RouteTable, normalize_host};
+use crate::routes::{Resolution, RouteTable, Routed, normalize_host};
+use crate::stats::{Counters, RequestStats};
 
 const ACME_PREFIX: &str = "/.well-known/acme-challenge/";
 /// Upstreams are containers on 127.0.0.1: anything slower than this to accept
@@ -104,23 +105,29 @@ impl Proxy {
     }
 
     /// hyper service entry point. Never fails: every problem becomes a response.
+    ///
+    /// Each request is counted once, for the service its host routes to (or
+    /// as unrouted): when its response headers are ready to go out, or as a
+    /// `499` when hyper drops it before (see [`Counted`]).
     pub(crate) async fn handle(
         self: Arc<Self>,
         conn: ConnInfo,
         req: Request<Incoming>,
     ) -> Result<Response<ProxyBody>, Infallible> {
-        let started = Instant::now();
         let method = req.method().clone();
         let path = req.uri().path().to_string();
-        let mut log = RequestLog::default();
-        let resp = self.dispatch(&conn, req, &mut log).await;
+        let mut counted = Counted::new(self.routes.request_stats());
+        let resp = self.dispatch(&conn, req, &mut counted.log).await;
+        let status = resp.status().as_u16();
+        let elapsed = counted.answered(status);
+        let log = &counted.log;
         tracing::debug!(
             method = %method,
             host = log.host.as_deref().unwrap_or("-"),
             path = %path,
-            status = resp.status().as_u16(),
+            status,
             upstream = %log.upstream.map_or_else(|| "-".to_string(), |a| a.to_string()),
-            ms = started.elapsed().as_millis() as u64,
+            ms = elapsed.as_millis() as u64,
             client = %conn.remote,
             "proxy request"
         );
@@ -168,6 +175,7 @@ impl Proxy {
             && let (Some(port), Some(hooks)) = (self.https_port, &self.tls_hooks)
             && hooks.has_certificate(&host)
         {
+            log.requests = self.routes.requests_of(&host);
             return match https_location(&host, port, req.uri()) {
                 Some(location) => pages::redirect(location, head),
                 None => pages::error_page(ErrorKind::BadRequest, "Bad request: invalid request target", head),
@@ -175,16 +183,18 @@ impl Proxy {
         }
 
         // 4. Route.
-        let (upstream, fallback) = match self.routes.resolve_with_fallback(&host) {
-            (Resolution::Upstream(upstream), fallback) => (upstream, fallback),
-            (Resolution::NotFound, _) => {
+        let Routed { resolution, fallback, requests } = self.routes.route(&host);
+        log.requests = requests;
+        let upstream = match resolution {
+            Resolution::Upstream(upstream) => upstream,
+            Resolution::NotFound => {
                 let message = format!("No service is configured for {host}");
                 return pages::error_page(ErrorKind::NotFound, &message, head);
             }
-            (Resolution::Suspended, _) => {
+            Resolution::Suspended => {
                 return pages::error_page(ErrorKind::Suspended, "This service is suspended", head);
             }
-            (Resolution::NoUpstreams, _) => {
+            Resolution::NoUpstreams => {
                 return pages::error_page(ErrorKind::NoUpstreams, NO_UPSTREAMS_MESSAGE, head);
             }
         };
@@ -373,10 +383,51 @@ impl Proxy {
     }
 }
 
+/// The status a request is counted with when it ends before its answer:
+/// nginx's "client closed request" (a 4xx).
+const CLIENT_CLOSED: u16 = 499;
+
+/// Counts a request exactly once: with its status when the handler answers,
+/// or, when hyper drops the handler before (the client went away, or a
+/// shutdown cut the connection), as a [`CLIENT_CLOSED`] after the time it
+/// waited, so a service that hangs shows as slow rather than idle.
+struct Counted<'a> {
+    stats: &'a RequestStats,
+    started: Instant,
+    log: RequestLog,
+    answered: bool,
+}
+
+impl<'a> Counted<'a> {
+    fn new(stats: &'a RequestStats) -> Self {
+        Counted { stats, started: Instant::now(), log: RequestLog::default(), answered: false }
+    }
+
+    /// Count the answer; returns the time it took.
+    fn answered(&mut self, status: u16) -> Duration {
+        let elapsed = self.started.elapsed();
+        self.answered = true;
+        self.stats.record_into(self.log.requests.as_deref(), status, elapsed);
+        elapsed
+    }
+}
+
+impl Drop for Counted<'_> {
+    fn drop(&mut self) {
+        if !self.answered {
+            self.stats.record_into(self.log.requests.as_deref(), CLIENT_CLOSED, self.started.elapsed());
+        }
+    }
+}
+
+/// What the handler learned about a request: for its log line, and whom it
+/// is counted for.
 #[derive(Debug, Default)]
 struct RequestLog {
     host: Option<String>,
     upstream: Option<SocketAddr>,
+    /// The counters of the service the host routes to (`None`: unrouted).
+    requests: Option<Arc<Counters>>,
 }
 
 #[derive(Debug)]

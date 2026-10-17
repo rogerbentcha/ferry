@@ -9,6 +9,8 @@ use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use tokio::sync::Notify;
 
+use crate::stats::{Counters, RequestStats};
+
 /// Result of looking up a host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
@@ -76,6 +78,8 @@ struct ServiceRoute {
     suspended: bool,
     /// Round-robin cursor (wrapping).
     next: AtomicUsize,
+    /// The service's request counters (they outlive the route).
+    requests: Arc<Counters>,
 }
 
 impl ServiceRoute {
@@ -170,12 +174,24 @@ fn normalize_all(hosts: &[String]) -> Vec<String> {
     out
 }
 
+/// What [`RouteTable::route`] finds for a host.
+pub(crate) struct Routed {
+    pub resolution: Resolution,
+    /// Another upstream of the same service, to retry on.
+    pub fallback: Option<SocketAddr>,
+    /// The request counters of the service the host routes to; `None` when
+    /// no service has the host.
+    pub requests: Option<Arc<Counters>>,
+}
+
 /// Shared, thread-safe host → upstreams table. Cheap to clone.
 #[derive(Debug, Clone, Default)]
 pub struct RouteTable {
     inner: Arc<RwLock<Table>>,
     /// Signalled when the hostnames of a service change.
     hosts_changed: Arc<Notify>,
+    /// What the proxy counts the requests into.
+    stats: RequestStats,
 }
 
 impl RouteTable {
@@ -198,6 +214,7 @@ impl RouteTable {
     /// routed to that service. An empty `upstreams` yields `NoUpstreams`.
     pub fn set_service_routes(&self, service_id: &str, hosts: &[String], upstreams: Vec<SocketAddr>) {
         let hosts = normalize_all(hosts);
+        let requests = self.stats.counters(service_id);
         let changed = {
             let mut table = self.write();
             let cursor = table.cursor_of(service_id);
@@ -208,6 +225,7 @@ impl RouteTable {
                     upstreams,
                     suspended: false,
                     next: AtomicUsize::new(cursor),
+                    requests,
                 },
             )
         };
@@ -217,6 +235,7 @@ impl RouteTable {
     /// Route `hosts` of `service_id` to the "suspended" page.
     pub fn set_service_suspended(&self, service_id: &str, hosts: &[String]) {
         let hosts = normalize_all(hosts);
+        let requests = self.stats.counters(service_id);
         let changed = self.write().install(
             hosts,
             ServiceRoute {
@@ -224,6 +243,7 @@ impl RouteTable {
                 upstreams: Vec::new(),
                 suspended: true,
                 next: AtomicUsize::new(0),
+                requests,
             },
         );
         self.signal(changed);
@@ -252,24 +272,38 @@ impl RouteTable {
 
     /// Look up a `Host` header value (may include `:port`; case-insensitive).
     pub fn resolve(&self, host: &str) -> Resolution {
-        self.resolve_with_fallback(host).0
+        self.route(host).resolution
     }
 
     /// Like [`resolve`](Self::resolve), plus another upstream of the same
-    /// service (if it has one) to retry on when connecting to the first fails.
-    pub(crate) fn resolve_with_fallback(&self, host: &str) -> (Resolution, Option<SocketAddr>) {
+    /// service (if it has one) to retry on when connecting to the first
+    /// fails, and the service's request counters.
+    pub(crate) fn route(&self, host: &str) -> Routed {
         let key = normalize(host);
         let table = self.read();
         let Some(route) = table.by_host.get(key.as_ref()) else {
-            return (Resolution::NotFound, None);
+            return Routed { resolution: Resolution::NotFound, fallback: None, requests: None };
         };
+        let requests = Some(route.requests.clone());
         if route.suspended {
-            return (Resolution::Suspended, None);
+            return Routed { resolution: Resolution::Suspended, fallback: None, requests };
         }
         match route.pick() {
-            Some((upstream, fallback)) => (Resolution::Upstream(upstream), fallback),
-            None => (Resolution::NoUpstreams, None),
+            Some((upstream, fallback)) => Routed { resolution: Resolution::Upstream(upstream), fallback, requests },
+            None => Routed { resolution: Resolution::NoUpstreams, fallback: None, requests },
         }
+    }
+
+    /// The request counters of the service `host` routes to, without
+    /// picking an upstream (for the requests answered before routing).
+    pub(crate) fn requests_of(&self, host: &str) -> Option<Arc<Counters>> {
+        self.read().by_host.get(normalize(host).as_ref()).map(|route| route.requests.clone())
+    }
+
+    /// The requests the proxy serving this table answered (DESIGN.md §22).
+    /// Every clone of the table shares them.
+    pub fn request_stats(&self) -> &RequestStats {
+        &self.stats
     }
 
     /// All routed hostnames (sorted) — used by the TLS manager.
@@ -385,16 +419,46 @@ mod tests {
         assert!(!signalled().await);
     }
 
+    fn resolve_with_fallback(t: &RouteTable, host: &str) -> (Resolution, Option<SocketAddr>) {
+        let routed = t.route(host);
+        (routed.resolution, routed.fallback)
+    }
+
     #[test]
     fn fallback_is_another_distinct_upstream() {
         let t = RouteTable::new();
         t.set_service_routes("one", &hosts(&["one.test"]), vec![addr(1)]);
-        assert_eq!(t.resolve_with_fallback("one.test"), (Resolution::Upstream(addr(1)), None));
+        assert_eq!(resolve_with_fallback(&t, "one.test"), (Resolution::Upstream(addr(1)), None));
         t.set_service_routes("dup", &hosts(&["dup.test"]), vec![addr(1), addr(1)]);
-        assert_eq!(t.resolve_with_fallback("dup.test"), (Resolution::Upstream(addr(1)), None));
+        assert_eq!(resolve_with_fallback(&t, "dup.test"), (Resolution::Upstream(addr(1)), None));
         t.set_service_routes("two", &hosts(&["two.test"]), vec![addr(1), addr(2)]);
-        assert_eq!(t.resolve_with_fallback("two.test"), (Resolution::Upstream(addr(1)), Some(addr(2))));
-        assert_eq!(t.resolve_with_fallback("two.test"), (Resolution::Upstream(addr(2)), Some(addr(1))));
+        assert_eq!(resolve_with_fallback(&t, "two.test"), (Resolution::Upstream(addr(1)), Some(addr(2))));
+        assert_eq!(resolve_with_fallback(&t, "two.test"), (Resolution::Upstream(addr(2)), Some(addr(1))));
+    }
+
+    #[test]
+    fn a_route_counts_into_its_services_counters() {
+        let t = RouteTable::new();
+        let counters_of = |host: &str| t.route(host).requests;
+        t.set_service_routes("srv-1", &hosts(&["a.test", "b.test"]), vec![addr(1)]);
+        let srv1 = t.request_stats().counters("srv-1");
+        assert!(Arc::ptr_eq(&counters_of("a.test").unwrap(), &srv1));
+        assert!(Arc::ptr_eq(&counters_of("b.test").unwrap(), &srv1), "every host of the service");
+        assert!(Arc::ptr_eq(&t.requests_of("A.test:8080").unwrap(), &srv1));
+        assert!(counters_of("other.test").is_none() && t.requests_of("other.test").is_none());
+
+        // A new deploy, a suspension: the same counters, so they keep going up.
+        t.set_service_routes("srv-1", &hosts(&["a.test"]), vec![addr(2)]);
+        assert!(Arc::ptr_eq(&counters_of("a.test").unwrap(), &srv1));
+        t.set_service_suspended("srv-1", &hosts(&["a.test"]));
+        assert!(Arc::ptr_eq(&counters_of("a.test").unwrap(), &srv1), "a suspended service's requests are its own");
+        // A host taken over by another service counts for that one.
+        t.set_service_routes("srv-2", &hosts(&["a.test"]), vec![addr(3)]);
+        assert!(Arc::ptr_eq(&counters_of("a.test").unwrap(), &t.request_stats().counters("srv-2")));
+        // Removing the routes keeps the counters.
+        t.remove_service("srv-2");
+        assert!(Arc::ptr_eq(&t.request_stats().counters("srv-1"), &srv1));
+        assert_eq!(t.clone().request_stats().snapshot().len(), 3, "srv-1, srv-2 and the unrouted requests");
     }
 
     #[test]
