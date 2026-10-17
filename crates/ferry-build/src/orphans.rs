@@ -258,9 +258,13 @@ mod tests {
             .spawn()
             .unwrap();
         let start = Instant::now();
+        // Wait for the record's line, not just its file: `write_record`
+        // creates the file first, and a server killed in between leaves an
+        // empty or partial record, which reaps nothing.
         let pid: i32 = loop {
             let found = fs::read_dir(&records).ok().and_then(|mut rd| rd.next()).and_then(|e| e.ok());
-            if let Some(pid) = found.and_then(|e| e.file_name().to_str().and_then(|n| n.parse().ok())) {
+            let record = found.and_then(|e| fs::read_to_string(e.path()).ok()).and_then(|s| parse_record(&s));
+            if let Some(pid) = record.and_then(|r| i32::try_from(r.pid).ok()) {
                 break pid;
             }
             assert!(start.elapsed() < Duration::from_secs(20), "the build child was never recorded");
