@@ -1,0 +1,62 @@
+---
+title: "Server: Charts"
+description: "The charts of Server: Monitoring show the last 24 hours of the server and of its busiest containers."
+---
+
+<Diagram
+  nodes={[
+    { id: 'page', at: [0, 0.5], icon: 'browser', label: 'Monitoring', note: '1 h, 6 h, 24 h' },
+    { id: 'ferryd', at: [1.25, 0.5], icon: 'server', label: 'ferryd', note: 'every 10 seconds' },
+    { id: 'db', at: [2.5, 0.5], icon: 'database', label: 'ferry.db', note: '24 hours' },
+  ]}
+  edges={[
+    { from: 'ferryd', to: 'db', label: 'a reading' },
+    { from: 'page', to: 'ferryd', label: 'every 10 s' },
+  ]}
+  steps={[
+    { caption: 'Every 10 seconds, ferryd reads the server and its containers.', flow: ['ferryd>db'], tones: { ferryd: 'primary' } },
+    { caption: 'ferryd keeps the readings in its database for 24 hours. Then it deletes them.', tones: { db: 'primary' } },
+    { caption: 'The page asks ferryd for the readings of the time range that you select.', flow: ['page>ferryd', 'ferryd>db'], tones: { page: 'primary' } },
+  ]}
+/>
+
+Under the cards of [Server: Monitoring](/docs/getting-started/dashboard/server-monitoring), the **Over time** section shows charts of the <Term id="metric">metrics</Term>. Use them to find what happened when you did not look, for example a slow site at 3 a.m.
+
+## Select a time range
+
+Click **1 h**, **6 h** or **24 h**. Each point is the average of the readings of a step.
+
+| Range | Step |
+|---|---|
+| **1 h** (default) | 10 seconds |
+| **6 h** | 1 minute |
+| **24 h** | 4 minutes |
+
+## Read the charts
+
+| Chart | Content |
+|---|---|
+| **CPU**, **Memory**, **Disk**, **Network** | The values of the cards. **Disk** adds the speeds of all the disks of the cards. |
+| **Busiest services and datastores** | The CPU and the memory of the 5 containers with the highest CPU use in the range. The legend gives the color of each. |
+
+Put the pointer on a chart to see the time of a point and its values.
+
+A gap in a line is a time when Ferry did not run. When Ferry starts again, the readings of the last 24 hours stay.
+
+<Accordions>
+  <Accordion title="Collecting data">
+    Ferry reads the server for the first time a few seconds after it starts. Until then, the section shows `Collecting data… first points in about 10 s`.
+  </Accordion>
+  <Accordion title="Not available">
+    If ferryd could not read a value in the range, its chart shows **Not available**. On a Mac, this is the case for most values of the server.
+  </Accordion>
+  <Accordion title="The size of the history">
+    The readings stay in the database of the <Term id="data-directory" />, `ferry.db`. With 20 containers, 24 hours of readings use about 15 MB. You cannot change the interval of 10 seconds or the time of 24 hours.
+  </Accordion>
+  <Accordion title="When the charts change">
+    The page asks for new readings every 10 seconds. If you go to a different tab, the page stops.
+  </Accordion>
+  <Accordion title="API">
+    The charts read `GET /api/v1/server/metrics/history?range=1h`. The range is `1h`, `6h` or `24h`. See [Server metrics](/docs/reference/api/server).
+  </Accordion>
+</Accordions>
