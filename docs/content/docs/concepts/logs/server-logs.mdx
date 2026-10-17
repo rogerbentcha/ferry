@@ -14,6 +14,12 @@ WARN deploy failed: instance 2e58a7 exited with code 0: its command `node ./dist
 
 `ferryd` writes its <Term id="server-log" /> to standard output, at the `info` level. The <Term id="env-var" /> `RUST_LOG` changes the level. With <Term id="systemd" />, read the log with `journalctl`.
 
+## Read it in the dashboard
+
+Click **Server** in the icon rail. Then click **Server logs**. The section shows the last 2,000 lines of the server log, then each new line live. See [Server: Logs](/docs/getting-started/dashboard/server-logs).
+
+`ferryd` keeps these 2,000 lines in memory, not in a file. Thus the section is the same with `ferryd start` and with `ferryd run` under systemd. After a restart, the section starts again with the new lines.
+
 ## What is in the server log
 
 | Lines | Example |
@@ -40,5 +46,8 @@ With `RUST_LOG=debug`, the log also has one line for each request: its hostname,
 <Accordions>
   <Accordion title="The warning of a failed deploy">
     The warning tells as much as the end of the deploy log. It has the name of the service, the error, and the hint if Ferry has one.
+  </Accordion>
+  <Accordion title="A very long line">
+    In the dashboard, Ferry cuts a line longer than 8 KiB: first the message, then its values. The output of `ferryd` keeps the full line.
   </Accordion>
 </Accordions>

@@ -1,0 +1,61 @@
+---
+title: "Server: Logs"
+description: The Server logs section shows what ferryd writes about its own work, live.
+---
+
+<Diagram
+  nodes={[
+    { id: 'ferryd', at: [0, 0.5], icon: 'server', label: 'ferryd', note: 'writes a line' },
+    { id: 'output', at: [1.5, 0], icon: 'terminal', label: 'Output', note: 'file or journal' },
+    { id: 'memory', at: [1.5, 1], icon: 'memory', label: 'Memory', note: 'last 2,000 lines' },
+    { id: 'page', at: [3, 1], icon: 'browser', label: 'Server logs', note: 'live' },
+  ]}
+  edges={[
+    { from: 'ferryd', to: 'output' },
+    { from: 'ferryd', to: 'memory' },
+    { from: 'memory', to: 'page', label: '/server/logs' },
+  ]}
+  steps={[
+    { caption: 'ferryd writes each line to its output, as before.', flow: ['ferryd>output'], tones: { output: 'primary' } },
+    { caption: 'ferryd also keeps the last 2,000 lines in memory.', flow: ['ferryd>memory'], tones: { memory: 'primary' } },
+    { caption: 'The section shows these lines, then each new line live.', flow: ['memory>page'], tones: { page: 'primary' } },
+  ]}
+/>
+
+Click **Server** in the icon rail. Then click **Server logs**. The section shows the <Term id="server-log" />: the last 2,000 lines, then each new line live. It is the same with `ferryd start` and with `ferryd run`.
+
+## The tools
+
+| Tool | Use |
+|---|---|
+| Level | Show the lines of one level and of the more important levels: **Error**, **Warn**, **Info** or **Debug**. **Warn** shows the warnings and the errors. |
+| Search | Show only the lines that contain the text. |
+| Copy | Copy one line. Move the pointer onto the line to see the button. |
+| Wrap | Wrap the long lines. |
+| Timestamps | Show or hide the time of each line. |
+| Reconnect, Clear | Open the stream again. Remove the lines from the page. |
+
+## The colors
+
+| Level | Color |
+|---|---|
+| `ERROR` | Red, with a red mark in the margin |
+| `WARN` | Orange, with an orange mark in the margin |
+| `INFO` | Blue |
+| `DEBUG` | Gray |
+
+## Read old lines
+
+Scroll up. The auto-scroll stops. Click **Jump to latest** to start it again.
+
+<Accordions>
+  <Accordion title="Lines skipped">
+    If the page is slower than the server, the server does not wait for it. The page loses lines, and a line such as `1,500 lines skipped` shows where. The output of ferryd keeps all the lines.
+  </Accordion>
+  <Accordion title="No debug lines">
+    By default, ferryd writes the `info` level and the levels above it. To see the `debug` lines, start ferryd with `RUST_LOG=debug`. The section shows the `debug` lines of Ferry. The `debug` lines of the libraries that Ferry uses stay in the output of ferryd.
+  </Accordion>
+  <Accordion title="API">
+    The section reads `GET /api/v1/server/logs`. See [Server metrics and logs](/docs/reference/api/server) and [Stream logs with the API](/docs/concepts/logs/api-streams).
+  </Accordion>
+</Accordions>
