@@ -1,18 +1,53 @@
 import * as React from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
-import type { ContainerSeries, HostPoint, MetricsHistory } from '@/lib/api/types'
+import { keys } from '@/lib/api/keys'
+import type {
+  ContainerSeries,
+  HostPoint,
+  MetricsHistory,
+  RequestMetrics,
+  RequestPoint,
+  ServiceView,
+} from '@/lib/api/types'
 
-import { COLLECTING, ContainerCharts, HostCharts, MetricsHistoryView } from './MetricsHistory'
+import {
+  COLLECTING,
+  ContainerCharts,
+  HostCharts,
+  MetricsHistoryView,
+  NO_REQUESTS,
+  NO_SERVICE_REQUESTS,
+  RequestsView,
+} from './MetricsHistory'
+
+/** The services the shell knows: `srv-1` was renamed `site` since its requests. */
+const SERVICES = [{ id: 'srv-1', name: 'site' }] as ServiceView[]
+
+/** The HTML of what `node` renders (inside a router and with the service list: the tables link to pages). */
+function html(node: React.ReactNode): string {
+  const queryClient = new QueryClient()
+  queryClient.setQueryData(keys.serviceList(), SERVICES)
+  return renderToStaticMarkup(
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <MemoryRouter>{node}</MemoryRouter>
+      </TooltipProvider>
+    </QueryClientProvider>,
+  )
+}
 
 /** Visible text of what `node` renders (tags stripped, whitespace collapsed). */
 function text(node: React.ReactNode): string {
-  return renderToStaticMarkup(<TooltipProvider>{node}</TooltipProvider>)
+  return html(node)
     .replace(/<style[^]*?<\/style>/g, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&#x27;/g, "'")
+    .replace(/&lt;/g, '<')
     .replace(/&amp;/g, '&')
     .replace(/\s+/g, ' ')
     .trim()
@@ -21,8 +56,13 @@ function text(node: React.ReactNode): string {
 const T0 = Date.parse('2026-10-17T03:00:00Z')
 const at = (seconds: number) => new Date(T0 + seconds * 1000).toISOString()
 
-function history(host: HostPoint[], containers: ContainerSeries[] = []): MetricsHistory {
-  return { range: '1h', step_seconds: 10, from: at(0), to: at(3600), host, containers }
+function history(
+  host: HostPoint[],
+  containers: ContainerSeries[] = [],
+  requests: RequestPoint[] = [],
+  request_targets: RequestMetrics[] = [],
+): MetricsHistory {
+  return { range: '1h', step_seconds: 10, from: at(0), to: at(3600), host, containers, requests, request_targets }
 }
 
 /** A Linux server: every value is known. */
@@ -105,5 +145,70 @@ describe('ContainerCharts', () => {
 
   it('says when nothing ran in the range', () => {
     expect(text(<ContainerCharts history={history([LINUX])} />)).toContain('Nothing ran in this range')
+  })
+})
+
+function point(seconds: number, ok: number, errors: number): RequestPoint {
+  return {
+    at: at(seconds),
+    seconds: 10,
+    requests_per_sec: (ok + errors) / 10,
+    status_2xx: ok,
+    status_3xx: 0,
+    status_4xx: 0,
+    status_5xx: errors,
+    p50_ms: ok + errors ? 40 : null,
+    p95_ms: ok + errors ? 180 : null,
+  }
+}
+
+function target(target: string, name: string, over: Partial<RequestMetrics> = {}): RequestMetrics {
+  return {
+    target,
+    name,
+    requests_per_sec: 2.5,
+    status_2xx: 8_100,
+    status_3xx: 0,
+    status_4xx: 0,
+    status_5xx: 900,
+    p50_ms: 40,
+    p95_ms: 180,
+    ...over,
+  }
+}
+
+describe('RequestsView', () => {
+  it('says "No requests yet" before the proxy answered any', () => {
+    const t = text(<RequestsView history={history([LINUX], [], [point(0, 0, 0)])} />)
+    expect(t).toContain(NO_REQUESTS)
+    expect(t).not.toContain('Latency')
+  })
+
+  it('draws the requests and their latency, then a row per service, the dashboard and unrouted', () => {
+    const targets = [
+      target('srv-1', 'web'),
+      target('srv-gone', 'old-api', { requests_per_sec: 0.5, status_2xx: 10, status_5xx: 0, p95_ms: 30 }),
+      target('dashboard', 'dashboard', { requests_per_sec: 0.2, status_5xx: 0, p95_ms: 4.2 }),
+      target('unrouted', 'unrouted', { requests_per_sec: 0.004, status_2xx: 0, status_4xx: 14, status_5xx: 0, p95_ms: null }),
+    ]
+    const view = <RequestsView history={history([LINUX], [], [point(0, 40, 10), point(10, 30, 0)], targets)} />
+    const t = text(view)
+    for (const title of ['Requests', 'Latency', '2xx', '3xx', '4xx', '5xx', 'p50', 'p95']) {
+      expect(t).toContain(title)
+    }
+    expect(t).not.toContain(NO_SERVICE_REQUESTS)
+    expect(t).toContain('site 2.50 req/s 9,000 requests 10.0% 900 5xx 180 ms')
+    expect(t).toContain('old-api 0.50 req/s 10 requests 0.0% 0 5xx 30 ms')
+    expect(t).toContain("Dashboard Ferry's own host 0.20 req/s 8,100 requests 0.0% 0 5xx 4.2 ms")
+    expect(t).toContain('Unrouted Hosts no service has <0.01 req/s 14 requests 0.0% 0 5xx —')
+    // The current name of a service that still exists; no link to a deleted one.
+    const links = html(view).match(/href="[^"]*"/g)
+    expect(links).toEqual(['href="/services/site"'])
+  })
+
+  it('says when only the dashboard or unrouted hosts got requests', () => {
+    const t = text(<RequestsView history={history([LINUX], [], [point(0, 0, 0)], [target('unrouted', 'unrouted')])} />)
+    expect(t.match(new RegExp(NO_SERVICE_REQUESTS, 'g'))).toHaveLength(2)
+    expect(t).toContain('Unrouted')
   })
 })

@@ -1,15 +1,18 @@
 import * as React from 'react'
-import { AlertTriangle, LineChart as LineChartIcon } from 'lucide-react'
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
+import { Link } from 'react-router'
+import { Activity, AlertTriangle, Boxes, Globe, LayoutDashboard, LineChart as LineChartIcon } from 'lucide-react'
+import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 
 import { Callout, EmptyState, ErrorState } from '@/components/patterns/EmptyState'
 import { MetricCard } from '@/components/patterns/MetricCard'
 import { PageSection } from '@/components/patterns/Page'
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { errorMessage } from '@/lib/api/client'
-import { useMetricsHistory } from '@/lib/api/queries'
-import type { MetricsHistory, MetricsRange } from '@/lib/api/types'
+import { useMetricsHistory, useServices } from '@/lib/api/queries'
+import type { MetricsHistory, MetricsRange, RequestMetrics } from '@/lib/api/types'
+import { percent } from '@/lib/format'
 import {
   type ChartRow,
   METRICS_RANGES,
@@ -17,23 +20,38 @@ import {
   containerKey,
   containerLabel,
   containerRows,
+  errorRate,
   formatClock,
+  formatLatency,
   formatMetric,
+  formatRate,
   formatStep,
   formatTick,
   hasValues,
   hostRows,
+  maxStacked,
   maxValue,
   niceTicks,
   quarterTicks,
+  requestRows,
+  targetLabel,
   timeTicks,
+  totalRequests,
 } from '@/lib/metrics-history'
+
+import { servicePath } from '../service/context'
 
 /** What a value ferryd can't read shows (the same words as the live cards). */
 const NOT_AVAILABLE = 'Not available'
 
 /** Shown before the first reading is stored. */
 export const COLLECTING = 'Collecting data… first points in about 10 s'
+
+/** The requests area before the proxy answered anything. */
+export const NO_REQUESTS = 'No requests yet'
+
+/** The requests and latency charts when only the dashboard or unrouted hosts got requests. */
+export const NO_SERVICE_REQUESTS = 'No request to your services in this range'
 
 /** The color of the `i`-th line of a chart (the busiest container first): `--chart-1` to `--chart-5`. */
 function color(i: number): string {
@@ -57,27 +75,33 @@ interface HistoryChartProps {
   max?: number
   /** A legend in the header (the lines of one card). */
   legend?: boolean
+  /** Areas stacked on each other (the requests by status class) instead of lines. */
+  stacked?: boolean
+  /** What the card says when no value is known (default: "Not available"). */
+  empty?: string
 }
 
-/** One line chart of the history, in a metric card. */
-function HistoryChart({ title, info, rows, lines, unit, history, max, legend = false }: HistoryChartProps) {
+/** One line chart of the history (or a chart of stacked areas), in a metric card. */
+function HistoryChart({
+  title,
+  info,
+  rows,
+  lines,
+  unit,
+  history,
+  max,
+  legend = false,
+  stacked = false,
+  empty = NOT_AVAILABLE,
+}: HistoryChartProps) {
   const config = Object.fromEntries(lines.map((l) => [l.key, { label: l.label, color: l.color }])) satisfies ChartConfig
-  const known = hasValues(
-    rows,
-    lines.map((l) => l.key),
-  )
+  const keys = lines.map((l) => l.key)
+  const known = hasValues(rows, keys)
   const [from, to] = [Date.parse(history.from), Date.parse(history.to)]
   const valueTicks =
-    max === undefined
-      ? niceTicks(
-          maxValue(
-            rows,
-            lines.map((l) => l.key),
-          ),
-          unit,
-        )
-      : quarterTicks(max)
+    max === undefined ? niceTicks((stacked ? maxStacked : maxValue)(rows, keys), unit) : quarterTicks(max)
   const top = valueTicks?.[valueTicks.length - 1]
+  const Chart = stacked ? AreaChart : LineChart
   return (
     <MetricCard
       label={title}
@@ -86,7 +110,7 @@ function HistoryChart({ title, info, rows, lines, unit, history, max, legend = f
     >
       {known ? (
         <ChartContainer config={config} className="aspect-auto h-44 w-full" aria-label={`${title} over time`}>
-          <LineChart data={rows} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+          <Chart data={rows} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
             <CartesianGrid vertical={false} />
             <XAxis
               dataKey="t"
@@ -128,24 +152,44 @@ function HistoryChart({ title, info, rows, lines, unit, history, max, legend = f
                 />
               }
             />
-            {lines.map((l) => (
-              <Line
-                key={l.key}
-                dataKey={l.key}
-                name={l.key}
-                type="linear"
-                stroke={`var(--color-${l.key})`}
-                strokeWidth={1.5}
-                dot={false}
-                activeDot={{ r: 3 }}
-                connectNulls={false}
-                isAnimationActive={false}
-              />
-            ))}
-          </LineChart>
+            {lines.map((l) =>
+              stacked ? (
+                <Area
+                  key={l.key}
+                  dataKey={l.key}
+                  name={l.key}
+                  type="linear"
+                  stackId="stack"
+                  stroke={`var(--color-${l.key})`}
+                  fill={`var(--color-${l.key})`}
+                  fillOpacity={0.35}
+                  strokeWidth={1.5}
+                  dot={false}
+                  activeDot={{ r: 3 }}
+                  connectNulls={false}
+                  isAnimationActive={false}
+                />
+              ) : (
+                <Line
+                  key={l.key}
+                  dataKey={l.key}
+                  name={l.key}
+                  type="linear"
+                  stroke={`var(--color-${l.key})`}
+                  strokeWidth={1.5}
+                  dot={false}
+                  activeDot={{ r: 3 }}
+                  connectNulls={false}
+                  isAnimationActive={false}
+                />
+              ),
+            )}
+          </Chart>
         </ChartContainer>
       ) : (
-        <p className="flex h-44 items-center justify-center text-[13px] text-foreground-lighter">{NOT_AVAILABLE}</p>
+        <p className="flex h-44 items-center justify-center px-4 text-center text-[13px] text-foreground-lighter">
+          {empty}
+        </p>
       )}
     </MetricCard>
   )
@@ -272,21 +316,175 @@ export function ContainerCharts({ history }: { history: MetricsHistory }) {
   )
 }
 
+/** The status classes of the requests chart: green for success, blue for redirects, then orange and red. */
+const STATUS_LINES: ChartLine[] = [
+  { key: 's2xx', label: '2xx', color: 'var(--chart-1)' },
+  { key: 's3xx', label: '3xx', color: 'var(--chart-4)' },
+  { key: 's4xx', label: '4xx', color: 'var(--chart-2)' },
+  { key: 's5xx', label: '5xx', color: 'var(--chart-3)' },
+]
+
+/** The small grey line under a value of the table. */
+function SubLine({ children }: { children: React.ReactNode }) {
+  return <span className="mb-1 text-[12px] text-foreground-lighter">{children}</span>
+}
+
+/**
+ * The name of a target: a link to its service's page under its current name (`current`; a deleted
+ * service has none), or what the dashboard and unrouted requests are.
+ */
+function TargetName({ target, current }: { target: RequestMetrics; current: string | undefined }) {
+  const [Icon, note] =
+    target.target === 'dashboard'
+      ? [LayoutDashboard, "Ferry's own host"]
+      : target.target === 'unrouted'
+        ? [Globe, 'Hosts no service has']
+        : [Boxes, null]
+  return (
+    <span className="flex min-w-0 items-start gap-2">
+      <Icon className="mt-0.5 size-4 shrink-0 text-foreground-lighter" aria-hidden="true" />
+      <span className="flex min-w-0 flex-col">
+        {note === null && current !== undefined ? (
+          <Link
+            to={servicePath(current)}
+            className="truncate rounded-sm font-medium text-foreground underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {current}
+          </Link>
+        ) : (
+          <>
+            <span className="truncate font-medium text-foreground">{targetLabel(target)}</span>
+            {note !== null && <SubLine>{note}</SubLine>}
+          </>
+        )}
+      </span>
+    </span>
+  )
+}
+
+/**
+ * One row per target, in the order of the API: the services, the busiest first, then the dashboard
+ * and unrouted. A service links to its page while it exists (the service list the shell keeps).
+ */
+export function RequestsTable({ targets }: { targets: RequestMetrics[] }) {
+  const { data: services } = useServices()
+  const names = new Map(services?.map((s) => [s.id, s.name]))
+  return (
+    <Table aria-label="Requests by service">
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead className="w-[40%]">Name</TableHead>
+          <TableHead>Requests</TableHead>
+          <TableHead>Error rate</TableHead>
+          <TableHead>p95</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {targets.map((t) => {
+          const total = totalRequests(t)
+          return (
+            <TableRow key={t.target} className="hover:bg-transparent">
+              <TableCell>
+                <TargetName target={t} current={names.get(t.target)} />
+              </TableCell>
+              <TableCell className="tabular">
+                <span className="flex flex-col">
+                  {formatRate(t.requests_per_sec)}
+                  <SubLine>{`${total.toLocaleString('en-US')} ${total === 1 ? 'request' : 'requests'}`}</SubLine>
+                </span>
+              </TableCell>
+              <TableCell className="tabular">
+                <span className="flex flex-col">
+                  {percent(errorRate(t))}
+                  <SubLine>{`${t.status_5xx.toLocaleString('en-US')} 5xx`}</SubLine>
+                </span>
+              </TableCell>
+              <TableCell className="tabular">{formatLatency(t.p95_ms)}</TableCell>
+            </TableRow>
+          )
+        })}
+      </TableBody>
+    </Table>
+  )
+}
+
+/** The requests the proxy answered in the range: by status class, their latency, and per service. */
+export function RequestsView({ history }: { history: MetricsHistory }) {
+  if (history.request_targets.length === 0) {
+    return (
+      <EmptyState
+        icon={<Activity />}
+        title={NO_REQUESTS}
+        description="Ferry counts the requests its proxy answers for your services and stores them every 10 seconds."
+        size="sm"
+      />
+    )
+  }
+  const rows = requestRows(history)
+  const anyRequest = history.requests.some((p) => totalRequests(p) > 0)
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <HistoryChart
+          title="Requests"
+          info="Requests to your services per second, by status: 2xx (with the WebSockets that opened), 3xx, 4xx, and 5xx (with the proxy's own 502 and 503 pages). Neither the dashboard's requests nor the unrouted ones."
+          rows={anyRequest ? rows : []}
+          lines={STATUS_LINES}
+          unit="requests_per_sec"
+          history={history}
+          stacked
+          legend
+          empty={NO_SERVICE_REQUESTS}
+        />
+        <HistoryChart
+          title="Latency"
+          info="How long your services took to send their response headers. p50: half the requests were faster. p95: 95% of them were faster. WebSockets are left out."
+          rows={rows}
+          lines={[
+            { key: 'p50', label: 'p50', color: color(0) },
+            { key: 'p95', label: 'p95', color: color(1) },
+          ]}
+          unit="milliseconds"
+          history={history}
+          legend
+          empty={NO_SERVICE_REQUESTS}
+        />
+      </div>
+      <RequestsTable targets={history.request_targets} />
+    </div>
+  )
+}
+
+/** A titled part of **Over time**. */
+function Subsection({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h3 className="text-base font-medium text-foreground">{title}</h3>
+        <p className="text-sm text-foreground-light">{description}</p>
+      </div>
+      {children}
+    </div>
+  )
+}
+
 /** Every chart for one answer of the API: "collecting data" until the first reading. */
 export function MetricsHistoryView({ history }: { history: MetricsHistory }) {
-  if (history.host.length === 0 && history.containers.length === 0) {
+  if (history.host.length === 0 && history.containers.length === 0 && history.request_targets.length === 0) {
     return <EmptyState icon={<LineChartIcon />} title={COLLECTING} description="Ferry reads this server every 10 seconds." />
   }
   return (
     <div className="flex flex-col gap-8">
       <HostCharts history={history} />
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <h3 className="text-base font-medium text-foreground">Busiest services and datastores</h3>
-          <p className="text-sm text-foreground-light">The 5 whose CPU use peaked highest in this range.</p>
-        </div>
+      <Subsection
+        title="Requests"
+        description="What the proxy answered, until the response headers went out. Error rate: the share of 5xx."
+      >
+        <RequestsView history={history} />
+      </Subsection>
+      <Subsection title="Busiest services and datastores" description="The 5 whose CPU use peaked highest in this range.">
         <ContainerCharts history={history} />
-      </div>
+      </Subsection>
     </div>
   )
 }
