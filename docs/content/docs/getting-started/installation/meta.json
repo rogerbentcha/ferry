@@ -5,6 +5,7 @@
     "requirements",
     "docker",
     "macos",
+    "download",
     "build",
     "start",
     "account",

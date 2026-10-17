@@ -1,0 +1,84 @@
+---
+title: Download a binary
+description: On a Linux x86_64 server, you download ferryd and ferry from a release. You need no build tools.
+---
+
+<Flow
+  steps={[
+    { icon: 'download', title: 'Download', text: 'Get the archive and its checksums from the latest release.' },
+    { icon: 'shield-check', title: 'Check', text: 'sha256sum compares the archive with SHA256SUMS.', tone: 'warning' },
+    { icon: 'folder', title: 'Install', text: 'tar puts ferryd and ferry in /usr/local/bin.' },
+    { icon: 'terminal', title: 'Run', text: 'ferry --version prints the version of the release.', tone: 'success' },
+  ]}
+/>
+
+Each merge into the branch `main` that has a feature or a fix publishes a new <Term id="github-release" /> on GitHub. A release has the two <Term id="binary">binaries</Term> for Linux x86_64. The dashboard is inside `ferryd`. With them, your server needs only Docker and git: no Rust, no Node.js and no C compiler.
+
+## Download and install
+
+<Steps>
+<Step>
+
+### Download the release
+
+```bash title="Terminal"
+curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/ferry-x86_64-unknown-linux-gnu.tar.gz
+curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/SHA256SUMS
+```
+
+</Step>
+<Step>
+
+### Check the archive
+
+```bash title="Terminal"
+sha256sum -c SHA256SUMS
+# ferry-x86_64-unknown-linux-gnu.tar.gz: OK
+```
+
+If the <Term id="checksum" /> is not correct, do not install the archive. Download it again.
+
+</Step>
+<Step>
+
+### Install the programs
+
+```bash title="Terminal"
+sudo tar -xzf ferry-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin ferryd ferry
+ferry --version
+```
+
+</Step>
+</Steps>
+
+You do not need the next page. Go to [Start the server](/docs/getting-started/installation/start).
+
+## What a release has
+
+| File | Content |
+|---|---|
+| `ferry-x86_64-unknown-linux-gnu.tar.gz` | `ferryd`, `ferry` and `LICENSE` |
+| `SHA256SUMS` | The <Term id="sha-256" /> checksum of the archive |
+
+The names stay the same from one release to the next. Thus the `latest/download` links always give the newest release.
+
+The programs need <Term id="glibc" /> 2.35 or newer: Ubuntu 22.04 or newer, Debian 12 or newer.
+
+<Accordions>
+  <Accordion title="How Ferry numbers a release">
+    The version comes from the commit messages after the last release.
+
+    | Commits | Next version |
+    |---|---|
+    | `fix` only | `0.2.0` → `0.2.1` |
+    | `feat` | `0.2.1` → `0.3.0` |
+    | A breaking change (`feat!`, `BREAKING CHANGE`) | `1.4.2` → `2.0.0`, and `0.3.0` → `0.4.0` before 1.0 |
+    | `docs`, `chore` and others only | No release |
+  </Accordion>
+  <Accordion title="A given version">
+    Replace `latest/download` with `download/<tag>`, for example `download/v0.2.0`.
+  </Accordion>
+  <Accordion title="Other systems">
+    There is no binary for macOS or for ARM64. On these systems, [build Ferry from source](/docs/getting-started/installation/build).
+  </Accordion>
+</Accordions>
