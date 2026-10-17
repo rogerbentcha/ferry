@@ -5,7 +5,7 @@ description: Ferry clones the repository, builds the docs on the server and depl
 
 ```bash title="Terminal"
 ferry create ferry-docs --type static \
-  --repo https://github.com/Carter2307/ferry --branch dev \
+  --repo https://github.com/rogerbentcha/ferry --branch dev \
   --build-cmd "cd docs && npm ci --include=dev && npm run build" \
   --publish-dir docs/out \
   -e DOCS_SITE_URL=https://docs.example.com \
