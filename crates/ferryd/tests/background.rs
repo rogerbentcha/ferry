@@ -1,14 +1,17 @@
-//! `ferryd start` / `status` / `logs` / `stop` against the real binary.
+//! `ferryd start` / `status` / `logs` / `stop` against the real binary, and
+//! the log the server keeps in memory for the dashboard, with `start` and
+//! with `run`.
 //!
 //! The tests of a server that never gets to listen run everywhere. The full
-//! cycle needs Docker and runs only with `FERRY_E2E=1` (otherwise it prints
-//! "skipped" and passes); every Docker object it creates carries a unique
+//! cycles need Docker and run only with `FERRY_E2E=1` (otherwise they print
+//! "skipped" and pass); every Docker object they create carries a unique
 //! `ferrytest-bg-*` prefix and is removed at the end, even on failure.
 #![cfg(unix)]
 
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 const FERRYD: &str = env!("CARGO_BIN_EXE_ferryd");
 
@@ -58,6 +61,19 @@ impl Drop for Cleanup<'_> {
 fn healthz(port: u16) -> String {
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connecting to the API");
     stream.write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();
+    let mut answer = String::new();
+    let _ = stream.read_to_string(&mut answer);
+    answer
+}
+
+/// `GET /api/v1/server/logs?{query}` with the server's token, as raw HTTP:
+/// the log the dashboard reads (Server → Server logs).
+fn server_logs(port: u16, token: &str, query: &str) -> String {
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connecting to the API");
+    let head = format!(
+        "GET /api/v1/server/logs?{query} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes()).unwrap();
     let mut answer = String::new();
     let _ = stream.read_to_string(&mut answer);
     answer
@@ -178,6 +194,10 @@ fn start_status_logs_stop() {
     assert_eq!(logs.code, 0, "{}", logs.stderr);
     assert!(logs.stdout.contains("engine started"), "{}", logs.stdout);
     assert_eq!(ferryd(&["logs", "--data-dir", dir, "-n", "2"]).stdout.lines().count(), 2);
+    // The dashboard reads the same lines, from the server's memory.
+    let kept = server_logs(api_port, server_token.trim(), "level=info");
+    assert!(kept.starts_with("HTTP/1.1 200"), "{kept}");
+    assert!(kept.contains(r#""message":"engine started""#) && kept.contains("event: end"), "{kept}");
 
     let stop = ferryd(&["stop", "--data-dir", dir]);
     assert_eq!(stop.code, 0, "{}", stop.stderr);
@@ -185,4 +205,66 @@ fn start_status_logs_stop() {
     assert_eq!(ferryd(&["status", "--data-dir", dir]).code, 3);
     assert!(std::net::TcpStream::connect(("127.0.0.1", api_port)).is_err(), "the API no longer listens");
     assert!(!Path::new(dir).join("ferryd.json").exists());
+}
+
+/// `ferryd run` under a service manager: its output goes to the journal, it
+/// writes no `ferryd.log`, and the dashboard reads its log all the same.
+#[test]
+fn run_keeps_its_log_in_memory() {
+    if std::env::var("FERRY_E2E").ok().as_deref() != Some("1") {
+        eprintln!("skipped: set FERRY_E2E=1 to run the Docker end-to-end test");
+        return;
+    }
+    let data = tempfile::tempdir().unwrap();
+    let dir = data.path().to_str().unwrap();
+    let prefix = format!("ferrytest-bg-{}", unique_suffix());
+    let _cleanup = Cleanup { data_dir: dir, prefix: prefix.clone() };
+    let api_port = free_port();
+    let api_addr = format!("127.0.0.1:{api_port}");
+    let proxy_addr = format!("127.0.0.1:{}", free_port());
+    let args =
+        ["run", "--data-dir", dir, "--api-addr", &api_addr, "--proxy-addr", &proxy_addr, "--name-prefix", &prefix];
+    let args = [&args[..], &["--dashboard-host", "none", "--oom-score-adj=0"]].concat();
+    // Like systemd with its journal: the output goes nowhere this test can read.
+    let mut server = Command::new(FERRYD)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("running ferryd");
+
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while std::net::TcpStream::connect(("127.0.0.1", api_port)).is_err() {
+        if let Some(status) = server.try_wait().unwrap() {
+            let mut stderr = String::new();
+            let _ = server.stderr.take().unwrap().read_to_string(&mut stderr);
+            if stderr.contains("cannot connect to Docker") {
+                eprintln!("skipped: no Docker daemon");
+                return;
+            }
+            panic!("ferryd run exited ({status}): {stderr}");
+        }
+        assert!(Instant::now() < deadline, "ferryd run did not listen within 60 s");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let token = std::fs::read_to_string(Path::new(dir).join("api_token")).unwrap();
+    let token = token.trim();
+
+    let all = server_logs(api_port, token, "");
+    assert!(all.starts_with("HTTP/1.1 200"), "{all}");
+    assert!(all.contains("content-type: text/event-stream"), "{all}");
+    assert!(all.contains(r#""message":"engine started""#), "{all}");
+    assert!(all.contains(r#""level":"info""#) && all.contains("event: end"), "{all}");
+    let warnings = server_logs(api_port, token, "level=warn");
+    assert!(!warnings.contains(r#""level":"info""#), "{warnings}");
+    // Without a token: nothing.
+    let anonymous = server_logs(api_port, "wrong", "");
+    assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+    assert!(!Path::new(dir).join("ferryd.log").exists(), "`ferryd run` writes no log file");
+
+    let stop = ferryd(&["stop", "--data-dir", dir]);
+    assert_eq!(stop.code, 0, "{}", stop.stderr);
+    let status = server.wait().unwrap();
+    assert!(status.success(), "{status}");
 }

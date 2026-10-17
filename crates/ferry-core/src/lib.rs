@@ -1,8 +1,9 @@
 //! # ferry-core
 //!
 //! The shared vocabulary of Ferry: domain models, API DTOs, configuration,
-//! persistence (SQLite), environment-variable resolution, log plumbing and the
-//! [`Engine`] trait that decouples the HTTP API from the deployment engine.
+//! persistence (SQLite), environment-variable resolution, log plumbing (the
+//! server's own log included) and the [`Engine`] trait that decouples the
+//! HTTP API from the deployment engine.
 //!
 //! Every other crate depends on this one; this crate depends on no other Ferry crate.
 
@@ -21,6 +22,7 @@ pub mod naming;
 pub mod requests;
 pub mod resources;
 pub mod schedule;
+pub mod server_logs;
 pub mod store;
 pub mod tls;
 pub mod validate;

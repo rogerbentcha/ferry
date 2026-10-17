@@ -38,7 +38,7 @@ code).
 | Suspend / resume, restart | ✅ |
 | One-off jobs | ✅ `ferry run` |
 | Blueprints (`render.yaml`) | ✅ `ferry blueprint apply` (same schema, subset) |
-| Logs (build + runtime, live tail), basic metrics | ✅ SSE streams, CPU/mem in status, live host and container metrics, the requests and latency of each service, and their last 24 hours (§22) |
+| Logs (build + runtime, live tail), basic metrics | ✅ SSE streams, CPU/mem in status, live host and container metrics, the requests and latency of each service, and their last 24 hours, the server's own log in the dashboard (§22) |
 | Dashboard, CLI, REST API | ✅ |
 | `ferry up` (deploy a local directory without git) | ➕ Ferry extra |
 
@@ -66,14 +66,14 @@ auth, secret files, IP allow lists, teams/RBAC.
 
 | crate | kind | depends on | responsibility |
 |---|---|---|---|
-| `ferry-core` | lib | — | models, DTOs, config, `Store` (SQLite), env resolution, naming, `Engine` trait, `TlsHooks` trait, validation, resource limits (`resources`: ranges, size / CPU parsing and formatting), cron schedules, git URL helpers, git connections (§18), the server's domains (§21). **Frozen.** |
+| `ferry-core` | lib | — | models, DTOs, config, `Store` (SQLite), env resolution, naming, `Engine` trait, `TlsHooks` trait, validation, resource limits (`resources`: ranges, size / CPU parsing and formatting), cron schedules, git URL helpers, git connections (§18), the server's domains (§21), the server's own log kept in memory (`server_logs`, §22). **Frozen.** |
 | `ferry-docker` | lib | core | typed Docker wrapper (containers, images, volumes, networks, logs, stats, exec) |
 | `ferry-build` | lib | core | git fetch / archive extract, the branches of a remote (`git ls-remote`), runtime detection, Dockerfile generation, `docker build` |
 | `ferry-scm` | lib | core | git providers (§18): GitHub / GitLab REST clients, authorizing an account in the browser (GitHub App manifest + installation, GitLab OAuth), the tokens of a connection (minted or renewed on demand), which connection reads a repository |
 | `ferry-proxy` | lib | core | `RouteTable`, HTTP/HTTPS reverse proxy, websockets, error pages, request counts (`RequestStats`, §22) |
 | `ferry-tls` | lib | core | ACME certificates, SNI resolver, `TlsHooks` impl, the state of each certificate (`Certificates`) |
 | `ferry-engine` | lib | core, docker, build, proxy, scm | `FerryEngine: Engine` — deploys, reconciler, cron, jobs, datastores, logs, verifying domains (§21), server metrics, the proxy's requests and their 24-hour history (§22) |
-| `ferry-api` | lib | core, build, scm | axum router: REST, SSE (logs + `/api/v1/events`), webhooks, blueprints, OpenAPI + Swagger UI, git connections (§18; `build` only for the branches of a remote), serves the embedded web client (`web/dist`) |
+| `ferry-api` | lib | core, build, scm | axum router: REST, SSE (logs, the server's own log + `/api/v1/events`), webhooks, blueprints, OpenAPI + Swagger UI, git connections (§18; `build` only for the branches of a remote), serves the embedded web client (`web/dist`) |
 | `ferry-cli` | bin `ferry` | core | CLI client |
 | `ferryd` | bin | all | wiring (already written) |
 
@@ -367,6 +367,8 @@ log (runtime logs are Docker's container logs).
   no duplicates) and end when it reaches a terminal state.
 * Runtime logs: `docker.logs` of each current container, merged; `instance`
   = last 6 chars of the container name.
+* The server's own log (§22): what ferryd logs, its last 2,000 lines kept
+  in memory (`ServerLogLine`), not in a file.
 * API streams as **SSE**: `event: log` + `data: <LogLine JSON>`; finite streams
   end with `event: end` + an empty `data:` line (so EventSource dispatches it).
   Keep-alive comments every 15s. All streams end when the server shuts down.
@@ -418,6 +420,7 @@ routes and checks that the document, the router and `lib.rs` agree.
 | `GET /api/v1/info` | `ServerInfo` (including `base_domain`, the `default_domain` service URLs are shown with (§21), the default limits `default_memory_limit_mb` / `default_cpu_limit`, 0 = unlimited, the Docker host's `docker_cpus` / `docker_memory_bytes`, `null` when unknown, `github_webhook_enabled` — `/hooks/github` takes deliveries: a connected GitHub account's app has a webhook (§18), or the server has a webhook secret — and `github_webhook_secret_set`, the second case alone) |
 | `GET /api/v1/server/metrics` | `ServerMetrics` `{at, host, containers, requests}` (§22): how busy the machine is right now — `HostMetrics` `{cpu_percent, cpu_count, memory_used_bytes, memory_total_bytes, disks, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`, each `DiskMetrics` `{mount_point, used_bytes, total_bytes, read_bytes_per_sec, write_bytes_per_sec}` — and every running service instance and datastore, `ContainerMetrics` `{kind, id, name, instance, cpu_percent, memory_bytes, memory_limit_bytes, cpu_limit}`, the busiest first — and what the proxy answered in its last reading (10 s), `RequestMetrics` `{target, name, requests_per_sec, status_2xx, status_3xx, status_4xx, status_5xx, p50_ms, p95_ms}` per target that had requests: the services busiest first, then `dashboard` and `unrouted` (`engine.server_metrics`). A value that can't be read is `null`; `containers` is `null` when Docker does not answer. Takes about a second |
 | `GET /api/v1/server/metrics/history?range=1h\|6h\|24h` | `MetricsHistory` `{range, step_seconds, from, to, host, containers, requests, request_targets}` (§22): the readings ferryd keeps (one every 10 s, 24 hours), averaged into steps of 10 / 60 / 240 s — 360 at most — oldest first, a step without a reading left out. `HostPoint` `{at, cpu_percent, memory_used_bytes, memory_total_bytes, disk_read_bytes_per_sec, disk_write_bytes_per_sec, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`; the 5 containers whose CPU peaked highest, `ContainerSeries` `{kind, id, name, instance, points: [ContainerPoint {at, cpu_percent, memory_bytes}]}`; the services' requests together, `RequestPoint` `{at, seconds, requests_per_sec, status_2xx, status_3xx, status_4xx, status_5xx, p50_ms, p95_ms}` for every step ferryd ran in and stored requests for (zeros without a request; `seconds` less than the step for the last one, still filling), and each target over the range, `RequestMetrics` (`engine.metrics_history`). `range` defaults to `1h`; any other value is a 400 |
+| `GET /api/v1/server/logs?tail=&follow=&level=` | SSE (§22): the server's own log, the last 2,000 lines it keeps in memory (`tail`: the last N at the level asked, all by default), then with `follow` each new one. `event: log` + `ServerLogLine` `{ts, level, target, message, fields}`; `level` (`error` / `warn` / `info` / `debug`, the default) keeps that level and above, any other value is a 400; `event: skipped` + `{"count": N}` where a follower more than 1,024 lines behind missed N lines; without `follow`, `event: end` after the recent lines |
 | `GET /api/v1/events` | SSE change feed: `event: ready` (`data: {}`) once the feed watches the store (refetch after it), then `event: change` with `ChangeEvent` `{kind, id, service_id, action}` — `kind` ∈ `service`/`deploy`/`datastore`/`env_group`/`job`/`git_connection`/`domain`, `action` ∈ `created`/`updated`/`deleted`, `service_id` set for services (own id), deploys and jobs; a lagging subscriber gets `{kind:"all", id:"*", service_id:null, action:"resync"}` (refetch everything). The store is polled every second while someone listens and nudged after every API/webhook write |
 | `GET /api/v1/services` | `[ServiceView]` |
 | `POST /api/v1/services` | `CreateService` → 201 `ServiceView` (queues a `create` deploy when it has a repo/image, unless `deploy:false`) |
@@ -679,8 +682,8 @@ Rust build never runs Node.
   resources, custom domains, deploy hook) · datastores (+ detail,
   connection strings, resources) · env groups (+ detail) · blueprints (paste
   YAML → dry run → apply) · server (incl. default container limits, the
-  Docker host's size, **Monitoring** — below —, the connected git
-  accounts, **Domains** — below —
+  Docker host's size, **Monitoring** and **Server logs** — below —, the
+  connected git accounts, **Domains** — below —
   and **Account**: the
   email, changing the password, the API tokens — created with a name and
   an expiry, shown once, revoked — and the sessions).
@@ -774,6 +777,20 @@ Rust build never runs Node.
   how many), the error rate (the share of 5xx) and p95. Nothing counted
   in the range says "No requests yet"; only the dashboard or unrouted
   requests, "No request to your services in this range" in the charts.
+* **Server logs in the UI** (§22): Server → Server logs
+  (`?section=logs`) follows `GET /api/v1/server/logs` with `useLogStream`
+  (its `query` and `parse` options; on a reconnect it replays from
+  scratch, the server's lines replacing the page's) and the `LogViewer`
+  of the service logs: a level column colored by level (error red, warn
+  orange, info blue, debug gray), error and warning rows marked in the
+  gutter, a copy button at the end of each line (`copyLines`; shown on
+  hover or focus, always on touch screens), the search, follow that
+  pauses when scrolled up, wrap and timestamps; no Download (out of
+  scope). The level select (Error / Warn / Info / Debug, Debug first)
+  asks the server again (`level=`); the page keeps 2,000 lines. A
+  `skipped` event becomes a "N lines skipped" marker row
+  (`src/lib/server-logs.ts`), kept by the search and left out of the line
+  count.
 * **Resource limits in the UI** (§14): "Memory limit" / "CPU limit" selects
   (`Server default (512 MiB)` from `/api/v1/info`, presets, Custom…) in the
   service's Settings → Resources ("Changes apply on the next deploy or
@@ -1144,7 +1161,9 @@ ancestor cgroup, e.g. `system.slice`, has one too).
   in `ferryd/tests/background.rs`: without Docker, a start that fails
   before the server listens (its error reaches the terminal, exit code 1)
   and `status` / `stop` / `logs` when nothing runs; gated, the whole cycle
-  `start` → `status` → `logs` → `stop`.
+  `start` → `status` → `logs` → `stop` (the dashboard's server log too),
+  and `ferryd run` with its output nowhere (as under systemd): no
+  `ferryd.log`, and `GET /api/v1/server/logs` serves its lines.
 
 ## 18. Git connections
 
@@ -1448,7 +1467,9 @@ The server logs with colors only when its stdout is a terminal (and
 `NO_COLOR` is unset): never into `ferryd.log`, a pipe or the journal.
 Nothing rotates `ferryd.log` while a server runs; a long-lived server
 belongs under a service manager with `ferryd run` (README, "Running the
-server").
+server"). Either way the server also keeps its last 2,000 lines in memory
+for Server → Server logs (§22): the dashboard reads them with `run` and
+`start` alike, and `ferryd logs` and the file stay as they were.
 
 ## 20. Accounts, sessions and API tokens
 
@@ -1724,10 +1745,11 @@ domain); internationalized names (use the punycode form).
 
 Server → Monitoring answers "why is it slow?" without SSH: how busy the
 machine is right now and over the last 24 hours, which service or
-datastore uses it, and how the services answer their requests. Nothing to
-install: ferryd reads the numbers itself and keeps 24 hours of them in its
-own database (ferryd's own logs come later; Prometheus and Grafana are not
-bundled).
+datastore uses it, and how the services answer their requests; Server →
+Server logs answers "what is Ferry doing?" — why a deploy failed, why a
+certificate was not issued — with ferryd's own log. Nothing to install:
+ferryd reads the numbers itself and keeps 24 hours of them in its own
+database (Prometheus, Grafana and log shipping are not bundled).
 
 `GET /api/v1/server/metrics` (§10) → `engine.server_metrics()`
 (`ferry-engine/src/metrics.rs`), which reads the host and the containers
@@ -1860,3 +1882,32 @@ inside it (`LatencyHistogram::percentile`). Requests per second: a
 step's requests over its stored seconds; a target's over the range, up to
 the last slot stored. The targets come back the services first, the
 busiest first, then `dashboard` and `unrouted`.
+
+**Server logs** (`ferry_core::server_logs`, `ferryd/src/logging.rs`). The
+server's `tracing` subscriber has one filter — `RUST_LOG`, else `info` —
+and two layers: the `fmt` layer that prints to standard output as before
+(the terminal, `ferryd.log` under `start`, the journal under `run`), and
+one that turns each event into a `ServerLogLine` `{ts, level, target,
+message, fields}` — the event's fields and those of the spans around it
+(an HTTP request's `method` and `path`), as text; `trace` counts as
+`debug`; a `log` crate line keeps the `log.target` it came with — and
+pushes it into `ServerLogs`, the last 2,000 lines in memory (nothing is
+written to disk; a restart starts empty). That layer has a filter of its
+own: every line at `info` and above, but `debug` / `trace` only from
+Ferry's crates (targets `ferry*`). The libraries' stay in the output: h2
+logs each frame it sends at `debug` (hyper each write at `trace`), so the
+stream of the page would log its own frames, without end. A line longer
+than 8 KiB — its message, then its fields — is cut, a cut value ending
+with `…`. `AppState.server_logs` is the handle the router reads
+(`ferry-api` needs no new crate). bollard logs each answer of Docker whole
+at `debug` — the variables of the services and the datastores' passwords
+among them —, so the filter keeps it at `info` when `RUST_LOG` asks for
+`debug` or more, unless it names `bollard`.
+
+`GET /api/v1/server/logs` sends the recent lines at the level asked under
+the lock that registers a follower, so none is missed or sent twice.
+Logging never waits for a reader: each follower has a bounded queue of
+1,024 lines filled with `try_send`; a line that does not fit is counted
+for that follower, and the next line it gets carries the count, sent
+first as `event: skipped`. A closed follower is dropped at the next line.
+The stream ends on shutdown like every SSE stream (§9).

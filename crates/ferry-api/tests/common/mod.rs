@@ -13,6 +13,7 @@ use ferry_core::dto::{
     ContainerKind, ContainerMetrics, ContainerPoint, ContainerSeries, DiskMetrics, HostMetrics, HostPoint,
     InstanceStatus, MetricsHistory, MetricsRange, RequestMetrics, RequestPoint, RuntimeStatus, ServerMetrics,
 };
+use ferry_core::server_logs::ServerLogs;
 use ferry_core::tls::{CertificateStatus, Certificates};
 use ferry_core::{
     CancellationToken, CheckOutcome, Config, Deploy, DeployRequest, DeploySource, DeployStatus, DeployTrigger, Domain,
@@ -460,6 +461,8 @@ pub struct TestApp {
     /// Set (with [`TestApp::with_tls`]) when the server "runs with HTTPS".
     pub certificates: Option<Arc<FakeCertificates>>,
     pub config: Arc<Config>,
+    /// The server's own log the router reads (lines pushed here are served).
+    pub server_logs: ServerLogs,
     pub shutdown: CancellationToken,
     pub dir: tempfile::TempDir,
 }
@@ -516,6 +519,7 @@ impl TestApp {
         ferry_core::domains::init(&store, &config).await.unwrap();
         let engine = Arc::new(MockEngine::new(store.clone()));
         let shutdown = CancellationToken::new();
+        let server_logs = ServerLogs::default();
         let router = router(AppState {
             config: config.clone(),
             store: store.clone(),
@@ -524,9 +528,10 @@ impl TestApp {
             docker_version: Some("27.0.0".into()),
             docker_cpus: Some(4),
             docker_memory_bytes: Some(8 << 30),
+            server_logs: server_logs.clone(),
             shutdown: shutdown.clone(),
         });
-        TestApp { router, store, engine, certificates, config, shutdown, dir }
+        TestApp { router, store, engine, certificates, config, server_logs, shutdown, dir }
     }
 
     pub async fn send(&self, req: Request<Body>) -> Resp {

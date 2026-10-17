@@ -25,6 +25,7 @@ const ROUTES: &[(&str, &str)] = &[
     // how the server is doing
     ("GET", "/api/v1/server/metrics"),
     ("GET", "/api/v1/server/metrics/history"),
+    ("GET", "/api/v1/server/logs"),
     // the account, its sessions and API tokens, `ferry login`
     ("GET", "/api/v1/auth/status"),
     ("POST", "/api/v1/auth/setup"),
@@ -327,12 +328,17 @@ async fn streams_and_special_bodies_are_documented() {
         "/api/v1/services/{id}/logs",
         "/api/v1/deploys/{deploy_id}/logs",
         "/api/v1/jobs/{job_id}/logs",
+        "/api/v1/server/logs",
     ] {
         let ok = &op("GET", path)["responses"]["200"];
         assert!(ok["content"].get("text/event-stream").is_some(), "{path}: {ok}");
         let description = ok["description"].as_str().unwrap();
         if path == "/api/v1/events" {
             for word in ["event: ready", "event: change", "ChangeEvent", "service_id", "resync"] {
+                assert!(description.contains(word), "{path}: {word}");
+            }
+        } else if path == "/api/v1/server/logs" {
+            for word in ["event: log", "ServerLogLine", "event: skipped", "event: end"] {
                 assert!(description.contains(word), "{path}: {word}");
             }
         } else {
@@ -357,6 +363,11 @@ async fn streams_and_special_bodies_are_documented() {
     let names: BTreeSet<&str> =
         logs["parameters"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
     assert_eq!(names, BTreeSet::from(["id", "follow", "tail"]));
+
+    let server_logs = op("GET", "/api/v1/server/logs");
+    let names: BTreeSet<&str> =
+        server_logs["parameters"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
+    assert_eq!(names, BTreeSet::from(["tail", "follow", "level"]));
 
     let hook = op("POST", "/hooks/github");
     assert_eq!(

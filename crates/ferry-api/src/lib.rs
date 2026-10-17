@@ -5,6 +5,8 @@
 //!   [`auth`] and DESIGN.md §20);
 //! * `/hooks/github` and `/hooks/deploy/{service_id}` — webhooks;
 //! * `/api/v1/events` — SSE change feed for the web client;
+//! * `/api/v1/server/logs` — the server's own log (SSE), from the in-memory
+//!   [`ServerLogs`] ferryd keeps;
 //! * `/api/openapi.json` and `/api/docs` — the OpenAPI document and Swagger
 //!   UI (no auth, see [`openapi`]);
 //! * `/healthz` — liveness (no auth);
@@ -19,6 +21,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
+use ferry_core::server_logs::ServerLogs;
 use ferry_core::tls::Certificates;
 use ferry_core::{CancellationToken, Config, Engine, Store};
 use tower_http::trace::TraceLayer;
@@ -63,6 +66,9 @@ pub struct AppState {
     pub docker_cpus: Option<u32>,
     /// Total memory of the Docker host in bytes (for `/api/v1/info`).
     pub docker_memory_bytes: Option<u64>,
+    /// The server's own log, the last lines kept in memory (for
+    /// `/api/v1/server/logs`).
+    pub server_logs: ServerLogs,
     /// Cancelled when the server shuts down: open SSE log streams end so the
     /// HTTP server's graceful shutdown can complete.
     pub shutdown: CancellationToken,
@@ -92,6 +98,7 @@ pub fn router(state: AppState) -> axum::Router {
         // how the server is doing
         .route("/v1/server/metrics", get(server::metrics))
         .route("/v1/server/metrics/history", get(server::history))
+        .route("/v1/server/logs", get(server::logs))
         // services
         .route("/v1/services", get(services::list).post(services::create))
         .route("/v1/services/{id}", get(services::get).patch(services::update).delete(services::delete))

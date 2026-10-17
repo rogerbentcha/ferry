@@ -1,14 +1,18 @@
 //! How the server is doing: the machine, its containers and the requests of
-//! the proxy, now and over the last 24 hours (DESIGN.md §22).
+//! the proxy, now and over the last 24 hours, and the server's own log
+//! (DESIGN.md §22).
 
 use axum::Json;
 use axum::extract::State;
+use axum::response::Response;
 use ferry_core::dto::{ApiErrorBody, MetricsHistory, MetricsRange, ServerMetrics};
+use ferry_core::server_logs::{ServerLogLevel, ServerLogQuery};
 use serde::Deserialize;
 
 use crate::AppState;
 use crate::error::ApiResult;
-use crate::extract::ApiQuery;
+use crate::extract::{ApiQuery, de_flag};
+use crate::sse;
 
 /// `GET /api/v1/server/metrics`
 #[utoipa::path(
@@ -52,4 +56,38 @@ pub async fn history(
     ApiQuery(q): ApiQuery<HistoryQuery>,
 ) -> ApiResult<Json<MetricsHistory>> {
     Ok(Json(st.engine.metrics_history(q.range).await?))
+}
+
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ServerLogsQuery {
+    /// Start with at most this many recent lines (at the level asked). By
+    /// default all the lines the server keeps (2,000); `0` for none.
+    pub tail: Option<usize>,
+    /// Keep the stream open and send new lines as they are logged.
+    #[serde(default, deserialize_with = "de_flag")]
+    pub follow: bool,
+    /// Only the lines at this level or above: `error`, `warn`, `info`, or
+    /// `debug` (the default: every line).
+    #[serde(default)]
+    pub level: ServerLogLevel,
+}
+
+/// `GET /api/v1/server/logs?tail=&follow=&level=` (SSE)
+#[utoipa::path(
+    get,
+    path = "/api/v1/server/logs",
+    tag = "server",
+    operation_id = "streamServerLogs",
+    summary = "Server log (SSE)",
+    description = "ferryd's own log: the lines it prints to its standard output (the terminal, `ferryd.log` or the service manager), as values. The server keeps its last 2,000 lines in memory, from its start, the same with `ferryd start` and `ferryd run`, and writes nothing more to disk: older lines are only in its output. It logs `info` lines and above, and `debug` lines when `RUST_LOG` asks for them: those of Ferry itself are kept here, those of the libraries it uses only in its output. A line longer than 8 KiB (its message and fields together) is cut. A follower that falls behind never slows the server down: it misses lines, and an `event: skipped` says how many.",
+    params(ServerLogsQuery),
+    responses(
+        (status = 200, description = crate::openapi::SSE_SERVER_LOGS, content_type = "text/event-stream", body = String, example = "event: log\ndata: {\"ts\":\"2026-10-17T12:00:00Z\",\"level\":\"warn\",\"target\":\"ferry_tls\",\"message\":\"certificate request failed\",\"fields\":{\"host\":\"app.example.com\"}}\n\nevent: end\ndata: \n\n"),
+        (status = 400, description = "Unknown level (not `error`, `warn`, `info` or `debug`).", body = ApiErrorBody),
+    ),
+)]
+pub async fn logs(State(st): State<AppState>, ApiQuery(q): ApiQuery<ServerLogsQuery>) -> Response {
+    let stream = st.server_logs.stream(ServerLogQuery { tail: q.tail, follow: q.follow, level: q.level });
+    sse::server_log_response(stream, !q.follow, &st.shutdown)
 }

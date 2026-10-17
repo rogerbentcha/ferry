@@ -92,6 +92,14 @@ pub(crate) const SSE_RUNTIME_LOGS: &str = "Server-Sent Events. Every line is an 
 `data`) after the recent lines; with `follow=true` it stays open and never sends `end`. `: keep-alive` \
 comments every 15 s while idle.";
 
+/// Response description of the server's log stream.
+pub(crate) const SSE_SERVER_LOGS: &str = "Server-Sent Events. Every line is an `event: log` whose `data` is a \
+`ServerLogLine` JSON object (see the `ServerLogLine` schema), the oldest first. Where a follower fell more than \
+1,024 lines behind and missed some, an `event: skipped` whose `data` is `{\"count\": N}` stands for the N lines it \
+missed. Without `follow` the stream ends with `event: end` (empty `data`) after the recent lines; with \
+`follow=true` it stays open and never sends `end`. `: keep-alive` comments every 15 s while idle; the stream ends \
+when the server shuts down.";
+
 /// Response description of the change feed.
 pub(crate) const SSE_EVENTS: &str = "Server-Sent Events. First `event: ready` (`data: {}`) once the feed \
 watches the store: changes after it are reported, so (re)fetch your data after `ready`. Then one \
@@ -128,6 +136,7 @@ down.";
         crate::events::stream,
         server::metrics,
         server::history,
+        server::logs,
         services::list,
         services::create,
         services::get,
@@ -234,6 +243,8 @@ down.";
         ferry_core::dto::ContainerPoint,
         ferry_core::dto::RequestMetrics,
         ferry_core::dto::RequestPoint,
+        ferry_core::server_logs::ServerLogLine,
+        ferry_core::server_logs::ServerLogLevel,
         ferry_core::dto::CreateDatastore,
         ferry_core::dto::UpdateDatastore,
         ferry_core::dto::DatastoreView,
@@ -297,7 +308,7 @@ down.";
     modifiers(&Security),
     tags(
         (name = "info", description = "Server info, liveness and this document."),
-        (name = "server", description = "How the server is doing: how busy the machine is, now and over the last 24 hours, and which service or datastore uses it."),
+        (name = "server", description = "How the server is doing: how busy the machine is, now and over the last 24 hours, which service or datastore uses it, and what the server logs."),
         (name = "auth", description = "The account of the server (its administrator), signing in and out of the dashboard, the sessions and the API tokens, and `ferry login` (a terminal asks, the dashboard approves). The status, the first-run setup, signing in and out, and the two calls of a terminal need no authentication; the others only accept the dashboard's session, never an API token."),
         (name = "services", description = "Web services, private services, background workers, static sites and cron jobs: CRUD, lifecycle actions (restart, suspend, resume, scale, rollback), status and runtime logs."),
         (name = "deploys", description = "Deploy history, manual deploys, source uploads (`ferry up`), cancellation and build logs."),

@@ -208,7 +208,9 @@ the proxy answers the dashboard for the host `ferry.localhost`.
 
 `stop`, `status` and `logs` find the server through its data directory: run
 them where you started `ferryd`, or with the same `--data-dir` /
-`FERRY_DATA_DIR`. Apps and datastores keep running in Docker while `ferryd`
+`FERRY_DATA_DIR`. The dashboard shows the server's log too (Server → Server
+logs: its last 2,000 lines, live), with `ferryd start` and `ferryd run`
+alike. Apps and datastores keep running in Docker while `ferryd`
 is stopped; their public URLs answer again once it is back.
 
 ### Account, sessions and API tokens

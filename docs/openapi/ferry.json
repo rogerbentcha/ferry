@@ -3757,6 +3757,97 @@
         ]
       }
     },
+    "/api/v1/server/logs": {
+      "get": {
+        "tags": [
+          "server"
+        ],
+        "summary": "Server log (SSE)",
+        "description": "ferryd's own log: the lines it prints to its standard output (the terminal, `ferryd.log` or the service manager), as values. The server keeps its last 2,000 lines in memory, from its start, the same with `ferryd start` and `ferryd run`, and writes nothing more to disk: older lines are only in its output. It logs `info` lines and above, and `debug` lines when `RUST_LOG` asks for them: those of Ferry itself are kept here, those of the libraries it uses only in its output. A line longer than 8 KiB (its message and fields together) is cut. A follower that falls behind never slows the server down: it misses lines, and an `event: skipped` says how many.",
+        "operationId": "streamServerLogs",
+        "parameters": [
+          {
+            "name": "tail",
+            "in": "query",
+            "description": "Start with at most this many recent lines (at the level asked). By\ndefault all the lines the server keeps (2,000); `0` for none.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "description": "Keep the stream open and send new lines as they are logged.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "description": "Only the lines at this level or above: `error`, `warn`, `info`, or\n`debug` (the default: every line).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ServerLogLevel"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-Sent Events. Every line is an `event: log` whose `data` is a `ServerLogLine` JSON object (see the `ServerLogLine` schema), the oldest first. Where a follower fell more than 1,024 lines behind and missed some, an `event: skipped` whose `data` is `{\"count\": N}` stands for the N lines it missed. Without `follow` the stream ends with `event: end` (empty `data`) after the recent lines; with `follow=true` it stays open and never sends `end`. `: keep-alive` comments every 15 s while idle; the stream ends when the server shuts down.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "event: log\ndata: {\"ts\":\"2026-10-17T12:00:00Z\",\"level\":\"warn\",\"target\":\"ferry_tls\",\"message\":\"certificate request failed\",\"fields\":{\"host\":\"app.example.com\"}}\n\nevent: end\ndata: \n\n"
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown level (not `error`, `warn`, `info` or `debug`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API token, or no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server error (`docker_error` as 502, `database_error`, `internal_error`...).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/server/metrics": {
       "get": {
         "tags": [
@@ -9276,6 +9367,53 @@
           }
         }
       },
+      "ServerLogLevel": {
+        "type": "string",
+        "description": "How important a line is, the least important first (`debug`, the\ndefault, is every level). `TRACE` lines (only with `RUST_LOG=trace`) count\nas `debug`.",
+        "enum": [
+          "debug",
+          "info",
+          "warn",
+          "error"
+        ]
+      },
+      "ServerLogLine": {
+        "type": "object",
+        "description": "One line of the server's log: what ferryd prints, as values.",
+        "required": [
+          "ts",
+          "level",
+          "target",
+          "message"
+        ],
+        "properties": {
+          "fields": {
+            "type": "object",
+            "description": "The other values of the line (`service`, `deploy`, the `path` of a\nrequest…), as text.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "level": {
+            "$ref": "#/components/schemas/ServerLogLevel"
+          },
+          "message": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string",
+            "description": "The module that logged it, e.g. `ferry_engine::deploy`."
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When ferryd logged it."
+          }
+        }
+      },
       "ServerMetrics": {
         "type": "object",
         "description": "`GET /api/v1/server/metrics` — how busy the machine and its containers\nare right now (DESIGN.md §22). Every call reads again; the last 24 hours\nare [`MetricsHistory`].",
@@ -9904,7 +10042,7 @@
     },
     {
       "name": "server",
-      "description": "How the server is doing: how busy the machine is, now and over the last 24 hours, and which service or datastore uses it."
+      "description": "How the server is doing: how busy the machine is, now and over the last 24 hours, which service or datastore uses it, and what the server logs."
     },
     {
       "name": "auth",
