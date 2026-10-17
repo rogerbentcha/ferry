@@ -3763,7 +3763,7 @@
           "server"
         ],
         "summary": "Live server metrics",
-        "description": "How busy the machine and its containers are right now. The host: CPU use (0–100 % of the whole machine) and CPU count, memory used without the page cache and total, the used and total space and the read / write speed of the disk of the data directory (and of Docker's data directory when it is another local disk), and the network traffic without the loopback and Docker's own interfaces. The containers: every running service instance and datastore with its CPU use (100 = one core), memory use and limits, the busiest first. Speeds are bytes per second since the previous call (within a minute) or over one second, so a call takes about a second. Nothing is kept. A value the server can't read is `null` (on macOS, most host values); `containers` is `null` when Docker does not answer, and the CPU and memory of a container that does not answer in time are `null`.",
+        "description": "How busy the machine and its containers are right now. The host: CPU use (0–100 % of the whole machine) and CPU count, memory used without the page cache and total, the used and total space and the read / write speed of the disk of the data directory (and of Docker's data directory when it is another local disk), and the network traffic without the loopback and Docker's own interfaces. The containers: every running service instance and datastore with its CPU use (100 = one core), memory use and limits, the busiest first. Speeds are bytes per second since the previous call (within a minute) or over one second, so a call takes about a second. Every call reads again: the last 24 hours are `GET /api/v1/server/metrics/history`. A value the server can't read is `null` (on macOS, most host values); `containers` is `null` when Docker does not answer, and the CPU and memory of a container that does not answer in time are `null`.",
         "operationId": "getServerMetrics",
         "responses": {
           "200": {
@@ -3772,6 +3772,77 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ServerMetrics"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API token, or no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server error (`docker_error` as 502, `database_error`, `internal_error`...).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/server/metrics/history": {
+      "get": {
+        "tags": [
+          "server"
+        ],
+        "summary": "Server metrics of the last 24 hours",
+        "description": "The server's metrics over the last hour, 6 hours or 24 hours. ferryd reads the server every 10 s while it runs and keeps 24 hours of readings in its database. They come back averaged into steps (`step_seconds`: 10, 60 or 240), 360 points at most per series, oldest first, each at the start of its step. A step without a reading — ferryd was stopped — has no point, so a gap between two points is a time without data. The host: CPU use (0–100 % of the machine), memory used and total, the read / write speed of its disks together and the network traffic, like `GET /api/v1/server/metrics`. The containers: the 5 service instances and datastores whose CPU use (100 = one core) was the highest in the range, the busiest first, with their memory. A value that could not be read in a whole step is `null`.",
+        "operationId": "getServerMetricsHistory",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "description": "How far back: `1h` (the default; a point every 10 s), `6h` (every\nminute) or `24h` (every 4 minutes).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MetricsRange"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server's metrics over the range.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricsHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown range (not `1h`, `6h` or `24h`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
                 }
               }
             }
@@ -6992,6 +7063,74 @@
           }
         }
       },
+      "ContainerPoint": {
+        "type": "object",
+        "description": "A container over one step.",
+        "required": [
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The start of the step."
+          },
+          "cpu_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "CPU use in percent of one core (100 = one full core)."
+          },
+          "memory_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Memory use without the page cache.",
+            "minimum": 0
+          }
+        }
+      },
+      "ContainerSeries": {
+        "type": "object",
+        "description": "One service instance or datastore over the range.",
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "points"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Id of the service or datastore."
+          },
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The instance, as in the logs; `null` for a datastore."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ContainerKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name when it was last read."
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContainerPoint"
+            },
+            "description": "Oldest first."
+          }
+        }
+      },
       "CreateApiToken": {
         "type": "object",
         "description": "`POST /api/v1/auth/tokens`",
@@ -8408,6 +8547,80 @@
           }
         }
       },
+      "HostPoint": {
+        "type": "object",
+        "description": "The machine over one step (or one reading, when it is stored). A value\nthat could not be read in the whole step is `null`.",
+        "required": [
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The start of the step."
+          },
+          "cpu_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "CPU use of the whole machine, 0–100 %."
+          },
+          "disk_read_bytes_per_sec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Read from the disks of `HostMetrics.disks`, all together.",
+            "minimum": 0
+          },
+          "disk_write_bytes_per_sec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Written to the same disks.",
+            "minimum": 0
+          },
+          "memory_total_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "memory_used_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Memory in use, without the page cache.",
+            "minimum": 0
+          },
+          "network_rx_bytes_per_sec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Received over the network, like `HostMetrics`.",
+            "minimum": 0
+          },
+          "network_tx_bytes_per_sec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "InstanceStatus": {
         "type": "object",
         "description": "Live container state of one instance.",
@@ -8654,6 +8867,62 @@
         },
         "additionalProperties": false
       },
+      "MetricsHistory": {
+        "type": "object",
+        "description": "`GET /api/v1/server/metrics/history` — the server's metrics over a\nrange, averaged into steps of `step_seconds` (DESIGN.md §22). A step\nwithout a reading (ferryd was stopped) has no point.",
+        "required": [
+          "range",
+          "step_seconds",
+          "from",
+          "to",
+          "host",
+          "containers"
+        ],
+        "properties": {
+          "containers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContainerSeries"
+            },
+            "description": "The 5 service instances and datastores whose CPU use was the highest\nin the range, the busiest first."
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The start of the first step of the range."
+          },
+          "host": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostPoint"
+            },
+            "description": "The machine, oldest first."
+          },
+          "range": {
+            "$ref": "#/components/schemas/MetricsRange"
+          },
+          "step_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The time each point averages: 10 (1h), 60 (6h) or 240 (24h).",
+            "minimum": 0
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the history was read (the end of the range)."
+          }
+        }
+      },
+      "MetricsRange": {
+        "type": "string",
+        "description": "How far back `GET /api/v1/server/metrics/history` looks.",
+        "enum": [
+          "1h",
+          "6h",
+          "24h"
+        ]
+      },
       "PatchEnv": {
         "type": "object",
         "description": "`PATCH /api/v1/services/{id}/env` (and env groups): upsert `set`, delete `unset`.",
@@ -8857,7 +9126,7 @@
       },
       "ServerMetrics": {
         "type": "object",
-        "description": "`GET /api/v1/server/metrics` — how busy the machine and its containers\nare right now (DESIGN.md §22). Nothing is kept: every call reads again.",
+        "description": "`GET /api/v1/server/metrics` — how busy the machine and its containers\nare right now (DESIGN.md §22). Every call reads again; the last 24 hours\nare [`MetricsHistory`].",
         "required": [
           "at",
           "host"
@@ -9475,7 +9744,7 @@
     },
     {
       "name": "server",
-      "description": "How the server is doing: how busy the machine is, and which service or datastore uses it."
+      "description": "How the server is doing: how busy the machine is, now and over the last 24 hours, and which service or datastore uses it."
     },
     {
       "name": "auth",

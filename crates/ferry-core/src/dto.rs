@@ -242,7 +242,8 @@ pub struct RuntimeStatus {
 }
 
 /// `GET /api/v1/server/metrics` — how busy the machine and its containers
-/// are right now (DESIGN.md §22). Nothing is kept: every call reads again.
+/// are right now (DESIGN.md §22). Every call reads again; the last 24 hours
+/// are [`MetricsHistory`].
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ServerMetrics {
     /// When the values were read.
@@ -319,6 +320,101 @@ pub struct ContainerMetrics {
     pub memory_limit_bytes: Option<u64>,
     /// The container's CPU limit (CPUs); `null` when unlimited (or unknown).
     pub cpu_limit: Option<f64>,
+}
+
+/// How far back `GET /api/v1/server/metrics/history` looks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub enum MetricsRange {
+    /// The last hour, a point every 10 s.
+    #[default]
+    #[serde(rename = "1h")]
+    Hour,
+    /// The last 6 hours, a point every minute.
+    #[serde(rename = "6h")]
+    SixHours,
+    /// The last 24 hours, a point every 4 minutes.
+    #[serde(rename = "24h")]
+    Day,
+}
+
+impl MetricsRange {
+    /// The length of the range, in seconds.
+    pub fn seconds(self) -> u32 {
+        match self {
+            MetricsRange::Hour => 3_600,
+            MetricsRange::SixHours => 6 * 3_600,
+            MetricsRange::Day => 24 * 3_600,
+        }
+    }
+
+    /// The time one point averages, in seconds: a range has 360 of them.
+    pub fn step_seconds(self) -> u32 {
+        self.seconds() / 360
+    }
+}
+
+/// `GET /api/v1/server/metrics/history` — the server's metrics over a
+/// range, averaged into steps of `step_seconds` (DESIGN.md §22). A step
+/// without a reading (ferryd was stopped) has no point.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MetricsHistory {
+    pub range: MetricsRange,
+    /// The time each point averages: 10 (1h), 60 (6h) or 240 (24h).
+    pub step_seconds: u32,
+    /// The start of the first step of the range.
+    pub from: DateTime<Utc>,
+    /// When the history was read (the end of the range).
+    pub to: DateTime<Utc>,
+    /// The machine, oldest first.
+    pub host: Vec<HostPoint>,
+    /// The 5 service instances and datastores whose CPU use was the highest
+    /// in the range, the busiest first.
+    pub containers: Vec<ContainerSeries>,
+}
+
+/// The machine over one step (or one reading, when it is stored). A value
+/// that could not be read in the whole step is `null`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct HostPoint {
+    /// The start of the step.
+    pub at: DateTime<Utc>,
+    /// CPU use of the whole machine, 0–100 %.
+    pub cpu_percent: Option<f64>,
+    /// Memory in use, without the page cache.
+    pub memory_used_bytes: Option<u64>,
+    pub memory_total_bytes: Option<u64>,
+    /// Read from the disks of `HostMetrics.disks`, all together.
+    pub disk_read_bytes_per_sec: Option<u64>,
+    /// Written to the same disks.
+    pub disk_write_bytes_per_sec: Option<u64>,
+    /// Received over the network, like `HostMetrics`.
+    pub network_rx_bytes_per_sec: Option<u64>,
+    pub network_tx_bytes_per_sec: Option<u64>,
+}
+
+/// One service instance or datastore over the range.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ContainerSeries {
+    pub kind: ContainerKind,
+    /// Id of the service or datastore.
+    pub id: String,
+    /// Its name when it was last read.
+    pub name: String,
+    /// The instance, as in the logs; `null` for a datastore.
+    pub instance: Option<String>,
+    /// Oldest first.
+    pub points: Vec<ContainerPoint>,
+}
+
+/// A container over one step.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ContainerPoint {
+    /// The start of the step.
+    pub at: DateTime<Utc>,
+    /// CPU use in percent of one core (100 = one full core).
+    pub cpu_percent: Option<f64>,
+    /// Memory use without the page cache.
+    pub memory_bytes: Option<u64>,
 }
 
 /// `POST /api/v1/datastores`

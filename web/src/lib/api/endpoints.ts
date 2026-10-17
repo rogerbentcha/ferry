@@ -31,6 +31,8 @@ import type {
   GitRepositoryList,
   JobRun,
   Login,
+  MetricsHistory,
+  MetricsRange,
   PatchEnv,
   ReplaceEnv,
   RunJobRequest,
@@ -70,6 +72,8 @@ export const endpoints = {
   // info
   info: (signal?: AbortSignal) => api.get<ServerInfo>(`${V1}/info`, undefined, signal),
   serverMetrics: (signal?: AbortSignal) => api.get<ServerMetrics>(`${V1}/server/metrics`, undefined, signal),
+  metricsHistory: (range: MetricsRange, signal?: AbortSignal) =>
+    api.get<MetricsHistory>(`${V1}/server/metrics/history`, { range }, signal),
 
   // services
   listServices: (signal?: AbortSignal) => api.get<ServiceView[]>(`${V1}/services`, undefined, signal),

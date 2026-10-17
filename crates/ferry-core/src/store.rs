@@ -10,6 +10,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Row, SqlitePool};
 
 use crate::config::Config;
+use crate::dto::{ContainerKind, ContainerMetrics, ContainerPoint, ContainerSeries, HostPoint};
 use crate::env::{self, ServiceRef};
 use crate::models::*;
 use crate::{Error, Result};
@@ -21,6 +22,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0004_git_authorization.sql"),
     include_str!("../migrations/0005_accounts.sql"),
     include_str!("../migrations/0006_domains.sql"),
+    include_str!("../migrations/0007_metrics.sql"),
 ];
 
 /// Handle to the Ferry database.
@@ -172,6 +174,32 @@ fn row_to_env(r: &SqliteRow) -> Result<EnvVar> {
 
 fn get_u64_opt(r: &SqliteRow, col: &str) -> Result<Option<u64>> {
     Ok(r.try_get::<Option<i64>, _>(col)?.and_then(|v| u64::try_from(v).ok()))
+}
+
+/// An `AVG` of byte counts, rounded to a whole byte.
+fn get_avg_u64(r: &SqliteRow, col: &str) -> Result<Option<u64>> {
+    Ok(r.try_get::<Option<f64>, _>(col)?.map(|v| v.round().max(0.0) as u64))
+}
+
+/// A Unix time in seconds (the metrics history).
+fn get_unix_time(r: &SqliteRow, col: &str) -> Result<DateTime<Utc>> {
+    let secs: i64 = r.try_get(col)?;
+    DateTime::from_timestamp(secs, 0).ok_or_else(|| Error::internal(format!("bad time {secs} in database")))
+}
+
+fn container_kind_str(kind: ContainerKind) -> &'static str {
+    match kind {
+        ContainerKind::Service => "service",
+        ContainerKind::Datastore => "datastore",
+    }
+}
+
+fn parse_container_kind(s: &str) -> Result<ContainerKind> {
+    match s {
+        "service" => Ok(ContainerKind::Service),
+        "datastore" => Ok(ContainerKind::Datastore),
+        _ => Err(Error::internal(format!("bad container kind '{s}' in database"))),
+    }
 }
 
 fn row_to_git_connection(r: &SqliteRow) -> Result<GitConnection> {
@@ -1619,6 +1647,150 @@ impl Store {
     }
 
     // -----------------------------------------------------------------------
+    // metrics history (DESIGN.md §22)
+
+    /// Record one reading of the server, in one transaction: the host at
+    /// `host.at` (to the second; a second reading in the same second replaces
+    /// the first) and its containers' CPU and memory (their limits are not
+    /// kept). A container without either value is left out.
+    pub async fn insert_metrics(&self, host: &HostPoint, containers: &[ContainerMetrics]) -> Result<()> {
+        let at = host.at.timestamp();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT OR REPLACE INTO host_samples (at, cpu_percent, memory_used_bytes, memory_total_bytes,
+                 disk_read_bytes_per_sec, disk_write_bytes_per_sec, network_rx_bytes_per_sec,
+                 network_tx_bytes_per_sec)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(at)
+        .bind(host.cpu_percent)
+        .bind(sql_u64(host.memory_used_bytes))
+        .bind(sql_u64(host.memory_total_bytes))
+        .bind(sql_u64(host.disk_read_bytes_per_sec))
+        .bind(sql_u64(host.disk_write_bytes_per_sec))
+        .bind(sql_u64(host.network_rx_bytes_per_sec))
+        .bind(sql_u64(host.network_tx_bytes_per_sec))
+        .execute(&mut *tx)
+        .await?;
+        for c in containers.iter().filter(|c| c.cpu_percent.is_some() || c.memory_bytes.is_some()) {
+            sqlx::query(
+                "INSERT OR REPLACE INTO container_samples
+                     (at, kind, owner_id, instance, name, cpu_percent, memory_bytes)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(at)
+            .bind(container_kind_str(c.kind))
+            .bind(&c.id)
+            .bind(c.instance.as_deref().unwrap_or_default())
+            .bind(&c.name)
+            .bind(c.cpu_percent)
+            .bind(sql_u64(c.memory_bytes))
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// The readings taken from `from` to `to` (both included), averaged into
+    /// steps of `step` seconds counted from the Unix epoch: one point per
+    /// step that has a reading, at the start of the step, oldest first. A
+    /// value is the average of the readings that have it, `None` when none
+    /// has. The containers come in no particular order, each named as in
+    /// its last reading.
+    pub async fn metrics_history(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        step: u32,
+    ) -> Result<(Vec<HostPoint>, Vec<ContainerSeries>)> {
+        let step = i64::from(step.max(1));
+        let rows = sqlx::query(
+            "SELECT (at / ?) * ? AS step_at, AVG(cpu_percent) AS cpu_percent,
+                    AVG(memory_used_bytes) AS memory_used_bytes, AVG(memory_total_bytes) AS memory_total_bytes,
+                    AVG(disk_read_bytes_per_sec) AS disk_read_bytes_per_sec,
+                    AVG(disk_write_bytes_per_sec) AS disk_write_bytes_per_sec,
+                    AVG(network_rx_bytes_per_sec) AS network_rx_bytes_per_sec,
+                    AVG(network_tx_bytes_per_sec) AS network_tx_bytes_per_sec
+             FROM host_samples WHERE at BETWEEN ? AND ?
+             GROUP BY step_at ORDER BY step_at",
+        )
+        .bind(step)
+        .bind(step)
+        .bind(from.timestamp())
+        .bind(to.timestamp())
+        .fetch_all(&self.pool)
+        .await?;
+        let host = rows
+            .iter()
+            .map(|r| {
+                Ok(HostPoint {
+                    at: get_unix_time(r, "step_at")?,
+                    cpu_percent: r.try_get("cpu_percent")?,
+                    memory_used_bytes: get_avg_u64(r, "memory_used_bytes")?,
+                    memory_total_bytes: get_avg_u64(r, "memory_total_bytes")?,
+                    disk_read_bytes_per_sec: get_avg_u64(r, "disk_read_bytes_per_sec")?,
+                    disk_write_bytes_per_sec: get_avg_u64(r, "disk_write_bytes_per_sec")?,
+                    network_rx_bytes_per_sec: get_avg_u64(r, "network_rx_bytes_per_sec")?,
+                    network_tx_bytes_per_sec: get_avg_u64(r, "network_tx_bytes_per_sec")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // `kind` and `name` are the same in every row of a series (but for a
+        // renamed service): SQLite takes them from any row of the step.
+        let rows = sqlx::query(
+            "SELECT owner_id, instance, kind, name, (at / ?) * ? AS step_at, AVG(cpu_percent) AS cpu_percent,
+                    AVG(memory_bytes) AS memory_bytes
+             FROM container_samples WHERE at BETWEEN ? AND ?
+             GROUP BY owner_id, instance, step_at ORDER BY owner_id, instance, step_at",
+        )
+        .bind(step)
+        .bind(step)
+        .bind(from.timestamp())
+        .bind(to.timestamp())
+        .fetch_all(&self.pool)
+        .await?;
+        let mut containers: Vec<ContainerSeries> = Vec::new();
+        for r in &rows {
+            let id: String = r.try_get("owner_id")?;
+            let instance: String = r.try_get("instance")?;
+            let instance = (!instance.is_empty()).then_some(instance);
+            let point = ContainerPoint {
+                at: get_unix_time(r, "step_at")?,
+                cpu_percent: r.try_get("cpu_percent")?,
+                memory_bytes: get_avg_u64(r, "memory_bytes")?,
+            };
+            let name: String = r.try_get("name")?;
+            match containers.last_mut() {
+                Some(series) if series.id == id && series.instance == instance => {
+                    series.name = name;
+                    series.points.push(point);
+                }
+                _ => containers.push(ContainerSeries {
+                    kind: parse_container_kind(&r.try_get::<String, _>("kind")?)?,
+                    id,
+                    name,
+                    instance,
+                    points: vec![point],
+                }),
+            }
+        }
+        Ok((host, containers))
+    }
+
+    /// Delete the readings taken before `before`; returns how many rows went.
+    pub async fn prune_metrics(&self, before: DateTime<Utc>) -> Result<u64> {
+        let before = before.timestamp();
+        let mut tx = self.pool.begin().await?;
+        let host = sqlx::query("DELETE FROM host_samples WHERE at < ?").bind(before).execute(&mut *tx).await?;
+        let containers =
+            sqlx::query("DELETE FROM container_samples WHERE at < ?").bind(before).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(host.rows_affected() + containers.rows_affected())
+    }
+
+    // -----------------------------------------------------------------------
     // derived data
 
     /// Datastores and service references for [`crate::env::RefContext`].
@@ -2173,5 +2345,177 @@ mod tests {
         store.delete_domain(&base.id).await.unwrap();
         assert!(matches!(store.delete_domain(&base.id).await, Err(Error::NotFound(_))));
         assert!(matches!(store.record_domain_check(&base).await, Err(Error::NotFound(_))));
+    }
+
+    fn host_point(at: DateTime<Utc>, cpu: Option<f64>, memory: Option<u64>) -> HostPoint {
+        HostPoint {
+            at,
+            cpu_percent: cpu,
+            memory_used_bytes: memory,
+            memory_total_bytes: Some(8 << 30),
+            disk_read_bytes_per_sec: Some(100),
+            disk_write_bytes_per_sec: None,
+            network_rx_bytes_per_sec: Some(1000),
+            network_tx_bytes_per_sec: Some(10),
+        }
+    }
+
+    fn container(
+        kind: ContainerKind,
+        id: &str,
+        name: &str,
+        instance: Option<&str>,
+        cpu: Option<f64>,
+    ) -> ContainerMetrics {
+        ContainerMetrics {
+            kind,
+            id: id.into(),
+            name: name.into(),
+            instance: instance.map(Into::into),
+            cpu_percent: cpu,
+            memory_bytes: cpu.map(|c| c as u64 * 1000),
+            memory_limit_bytes: Some(512 << 20),
+            cpu_limit: None,
+        }
+    }
+
+    /// 2026-10-17T00:00:00Z, a multiple of every step.
+    fn midnight() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-10-17T00:00:00Z").unwrap().with_timezone(&Utc)
+    }
+
+    #[tokio::test]
+    async fn a_new_database_has_the_metrics_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("ferry.db")).await.unwrap();
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(store.pool()).await.unwrap();
+        assert_eq!(version, MIGRATIONS.len() as i64);
+        let t = midnight();
+        store.insert_metrics(&host_point(t, Some(5.0), Some(1 << 30)), &[]).await.unwrap();
+        let (host, containers) = store.metrics_history(t, t, 10).await.unwrap();
+        assert_eq!(host, vec![host_point(t, Some(5.0), Some(1 << 30))]);
+        assert!(containers.is_empty());
+    }
+
+    /// A database written before the metrics history (schema v6) gets its
+    /// tables, empty, and keeps everything else.
+    #[tokio::test]
+    async fn upgrades_a_database_without_the_metrics_history() {
+        use sqlx::Connection;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ferry.db");
+        {
+            let opts = SqliteConnectOptions::new().filename(&path).create_if_missing(true).foreign_keys(true);
+            let mut conn = sqlx::SqliteConnection::connect_with(&opts).await.unwrap();
+            for sql in &MIGRATIONS[..6] {
+                sqlx::raw_sql(sql).execute(&mut conn).await.unwrap();
+            }
+            sqlx::raw_sql(
+                "PRAGMA user_version = 6;
+                 INSERT INTO services (id, name, service_type, image, deploy_hook_key, created_at, updated_at)
+                 VALUES ('srv-00000000000000000001', 'old', 'web_service', 'nginx', 'k',
+                         '2026-01-01T00:00:00.000000Z', '2026-01-01T00:00:00.000000Z');",
+            )
+            .execute(&mut conn)
+            .await
+            .unwrap();
+            conn.close().await.unwrap();
+        }
+        let store = Store::open(&path).await.unwrap();
+        assert_eq!(store.require_service("old").await.unwrap().image.as_deref(), Some("nginx"));
+        let t = midnight();
+        let day = chrono::Duration::days(1);
+        assert_eq!(store.metrics_history(t - day, t, 240).await.unwrap(), (vec![], vec![]));
+        let web = container(ContainerKind::Service, "srv-00000000000000000001", "old", Some("aaaaaa"), Some(1.0));
+        store.insert_metrics(&host_point(t, Some(5.0), None), &[web]).await.unwrap();
+        // Reopening applies nothing twice and keeps the readings.
+        store.pool().close().await;
+        let store = Store::open(&path).await.unwrap();
+        let (host, containers) = store.metrics_history(t - day, t, 240).await.unwrap();
+        assert_eq!((host.len(), containers.len()), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn metrics_history_averages_the_readings_of_each_step() {
+        let store = Store::open_in_memory().await.unwrap();
+        let t = midnight();
+        let secs = |s: i64| t + chrono::Duration::seconds(s);
+        let web = |instance, cpu| container(ContainerKind::Service, "srv-1", "web", Some(instance), cpu);
+        let db = |cpu| container(ContainerKind::Datastore, "ds-1", "db", None, cpu);
+        // Step [0, 60): three readings, one without CPU or memory.
+        store
+            .insert_metrics(&host_point(secs(0), Some(10.0), Some(100)), &[web("aaaaaa", Some(50.0)), db(Some(1.0))])
+            .await
+            .unwrap();
+        store.insert_metrics(&host_point(secs(10), None, None), &[web("aaaaaa", Some(150.0)), db(None)]).await.unwrap();
+        store.insert_metrics(&host_point(secs(20), Some(30.0), Some(201)), &[web("bbbbbb", Some(7.0))]).await.unwrap();
+        // Step [60, 120): nothing. Step [120, 180): one reading, in which
+        // the service was renamed; a second reading in the same second
+        // replaces the first.
+        store.insert_metrics(&host_point(secs(130), Some(1.0), Some(1)), &[]).await.unwrap();
+        let renamed = container(ContainerKind::Service, "srv-1", "site", Some("aaaaaa"), Some(2.0));
+        store.insert_metrics(&host_point(secs(130), Some(90.0), Some(9)), &[renamed]).await.unwrap();
+        // Outside the range.
+        store.insert_metrics(&host_point(secs(-1), Some(99.0), None), &[web("aaaaaa", Some(99.0))]).await.unwrap();
+        store.insert_metrics(&host_point(secs(181), Some(99.0), None), &[db(Some(99.0))]).await.unwrap();
+
+        let (host, mut containers) = store.metrics_history(secs(0), secs(180), 60).await.unwrap();
+        let summary: Vec<_> = host.iter().map(|p| (p.at, p.cpu_percent, p.memory_used_bytes)).collect();
+        assert_eq!(
+            summary,
+            vec![(secs(0), Some(20.0), Some(151)), (secs(120), Some(90.0), Some(9))],
+            "averages of the values that were read; no point for an empty step"
+        );
+        assert_eq!(host[0].disk_read_bytes_per_sec, Some(100));
+        assert_eq!(host[0].disk_write_bytes_per_sec, None, "never read in the step");
+        assert_eq!(host[0].memory_total_bytes, Some(8 << 30));
+
+        containers.sort_by(|a, b| (&a.id, &a.instance).cmp(&(&b.id, &b.instance)));
+        let summary: Vec<_> = containers
+            .iter()
+            .map(|c| {
+                let points: Vec<_> = c.points.iter().map(|p| (p.at, p.cpu_percent, p.memory_bytes)).collect();
+                (c.kind, c.id.as_str(), c.name.as_str(), c.instance.as_deref(), points)
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                // Without CPU or memory (Docker did not answer): not kept.
+                (ContainerKind::Datastore, "ds-1", "db", None, vec![(secs(0), Some(1.0), Some(1000))]),
+                (
+                    ContainerKind::Service,
+                    "srv-1",
+                    "site",
+                    Some("aaaaaa"),
+                    vec![(secs(0), Some(100.0), Some(100_000)), (secs(120), Some(2.0), Some(2000))],
+                ),
+                (ContainerKind::Service, "srv-1", "web", Some("bbbbbb"), vec![(secs(0), Some(7.0), Some(7000))]),
+            ]
+        );
+
+        // Steps of 10 s: one point per reading.
+        let (host, _) = store.metrics_history(secs(0), secs(180), 10).await.unwrap();
+        let at: Vec<_> = host.iter().map(|p| p.at).collect();
+        assert_eq!(at, vec![secs(0), secs(10), secs(20), secs(130)]);
+        assert_eq!(host[1].cpu_percent, None);
+    }
+
+    #[tokio::test]
+    async fn pruning_deletes_only_the_older_readings() {
+        let store = Store::open_in_memory().await.unwrap();
+        let t = midnight();
+        let day = chrono::Duration::days(1);
+        let web = |cpu| [container(ContainerKind::Service, "srv-1", "web", Some("aaaaaa"), Some(cpu))];
+        for at in [t - day - chrono::Duration::seconds(10), t - day, t] {
+            store.insert_metrics(&host_point(at, Some(1.0), None), &web(1.0)).await.unwrap();
+        }
+        // The host's row and the container's of the oldest reading.
+        assert_eq!(store.prune_metrics(t - day).await.unwrap(), 2);
+        let (host, containers) = store.metrics_history(t - day * 2, t, 10).await.unwrap();
+        let at: Vec<_> = host.iter().map(|p| p.at).collect();
+        assert_eq!(at, vec![t - day, t], "exactly 24 hours old is kept");
+        assert_eq!(containers[0].points.len(), 2);
+        assert_eq!(store.prune_metrics(t - day).await.unwrap(), 0);
     }
 }

@@ -417,6 +417,62 @@ export interface ContainerMetrics {
   cpu_limit: number | null
 }
 
+/** How far back `GET /api/v1/server/metrics/history` looks. */
+export type MetricsRange = '1h' | '6h' | '24h'
+
+/**
+ * `GET /api/v1/server/metrics/history` — the server's metrics over a range, averaged into steps of
+ * `step_seconds`. A step without a reading (ferryd was stopped) has no point.
+ */
+export interface MetricsHistory {
+  range: MetricsRange
+  /** 10 (1h), 60 (6h) or 240 (24h). */
+  step_seconds: number
+  /** The start of the first step of the range. */
+  from: string
+  /** When the history was read (the end of the range). */
+  to: string
+  /** The machine, oldest first. */
+  host: HostPoint[]
+  /** The 5 service instances and datastores whose CPU peaked highest in the range, the busiest first. */
+  containers: ContainerSeries[]
+}
+
+/** The machine over one step; `null` when a value could not be read in the whole step. */
+export interface HostPoint {
+  /** The start of the step. */
+  at: string
+  /** 0–100 % of the whole machine. */
+  cpu_percent: number | null
+  memory_used_bytes: number | null
+  memory_total_bytes: number | null
+  /** The disks of the live view, together. */
+  disk_read_bytes_per_sec: number | null
+  disk_write_bytes_per_sec: number | null
+  network_rx_bytes_per_sec: number | null
+  network_tx_bytes_per_sec: number | null
+}
+
+/** One service instance or datastore over the range. */
+export interface ContainerSeries {
+  kind: ContainerKind
+  /** Id of the service or datastore. */
+  id: string
+  name: string
+  /** Instance id as in the logs; `null` for a datastore. */
+  instance: string | null
+  /** Oldest first. */
+  points: ContainerPoint[]
+}
+
+/** A container over one step. */
+export interface ContainerPoint {
+  at: string
+  /** Percent of one core (100 = one full core). */
+  cpu_percent: number | null
+  memory_bytes: number | null
+}
+
 /** `POST /api/v1/datastores` */
 export interface CreateDatastore {
   name: string

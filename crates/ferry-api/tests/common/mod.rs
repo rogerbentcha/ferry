@@ -10,7 +10,8 @@ use axum::Router;
 use axum::body::Body;
 use ferry_api::{AppState, router};
 use ferry_core::dto::{
-    ContainerKind, ContainerMetrics, DiskMetrics, HostMetrics, InstanceStatus, RuntimeStatus, ServerMetrics,
+    ContainerKind, ContainerMetrics, ContainerPoint, ContainerSeries, DiskMetrics, HostMetrics, HostPoint,
+    InstanceStatus, MetricsHistory, MetricsRange, RuntimeStatus, ServerMetrics,
 };
 use ferry_core::tls::{CertificateStatus, Certificates};
 use ferry_core::{
@@ -359,6 +360,38 @@ impl Engine for MockEngine {
                     cpu_limit: None,
                 },
             ]),
+        })
+    }
+
+    /// Two steps of the host, the second without CPU (macOS), and one
+    /// service instance.
+    async fn metrics_history(&self, range: MetricsRange) -> Result<MetricsHistory> {
+        self.record(format!("metrics_history {}", serde_json::to_value(range).unwrap().as_str().unwrap()));
+        let to = chrono::Utc::now();
+        let step = range.step_seconds();
+        let from = to - chrono::TimeDelta::seconds(range.seconds().into());
+        let at = |n: i64| from + chrono::TimeDelta::seconds(n * i64::from(step));
+        Ok(MetricsHistory {
+            range,
+            step_seconds: step,
+            from,
+            to,
+            host: vec![
+                HostPoint {
+                    at: at(0),
+                    cpu_percent: Some(12.5),
+                    memory_used_bytes: Some(1 << 30),
+                    ..HostPoint::default()
+                },
+                HostPoint { at: at(1), cpu_percent: None, memory_used_bytes: Some(1 << 30), ..HostPoint::default() },
+            ],
+            containers: vec![ContainerSeries {
+                kind: ContainerKind::Service,
+                id: "srv-1".into(),
+                name: "web".into(),
+                instance: Some("9f8e7d".into()),
+                points: vec![ContainerPoint { at: at(0), cpu_percent: Some(150.0), memory_bytes: Some(300 << 20) }],
+            }],
         })
     }
 }

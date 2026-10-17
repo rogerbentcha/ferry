@@ -16,6 +16,11 @@ import { cn } from '@/lib/utils'
 
 import { servicePath } from '../service/context'
 
+// The charts and their library load when the section is opened.
+const MetricsHistorySection = React.lazy(() =>
+  import('./MetricsHistory').then((m) => ({ default: m.MetricsHistorySection })),
+)
+
 /** What a value ferryd can't read shows (for example on macOS, which has no `/proc`). */
 export const NOT_AVAILABLE = 'Not available'
 
@@ -209,7 +214,7 @@ export function ContainersTable({ containers }: { containers: ContainerMetrics[]
 export function MonitoringView({ metrics }: { metrics: ServerMetrics }) {
   return (
     <>
-      <PageSection title="This server" description="The machine ferryd runs on.">
+      <PageSection title="This server" description="The machine ferryd runs on, right now. Refreshed every 5 seconds.">
         <HostCards host={metrics.host} />
       </PageSection>
       <PageSection
@@ -237,7 +242,7 @@ function MonitoringSkeleton() {
 /**
  * Server → Monitoring: how busy the machine is right now and which service
  * or datastore uses it (`GET /api/v1/server/metrics`, asked every 5 s while
- * the tab is visible).
+ * the tab is visible), then the charts of the last hours.
  */
 export function MonitoringSection() {
   const { data, error, isLoading, refetch, isRefetching } = useServerMetrics()
@@ -245,7 +250,7 @@ export function MonitoringSection() {
     <>
       <PageHeader
         title="Monitoring"
-        description="How busy this server is right now, and which service or datastore uses it. Refreshed every 5 seconds."
+        description="How busy this server is right now and over the last 24 hours, and which service or datastore uses it."
       />
       {isLoading ? (
         <MonitoringSkeleton />
@@ -266,6 +271,9 @@ export function MonitoringSection() {
           retrying={isRefetching}
         />
       )}
+      <React.Suspense fallback={null}>
+        <MetricsHistorySection />
+      </React.Suspense>
     </>
   )
 }

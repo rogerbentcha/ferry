@@ -25,6 +25,7 @@
     "---Server---",
     "server",
     "server-monitoring",
+    "server-charts",
     "server-domains",
     "server-account",
     "live-updates"

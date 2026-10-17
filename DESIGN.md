@@ -38,7 +38,7 @@ code).
 | Suspend / resume, restart | ✅ |
 | One-off jobs | ✅ `ferry run` |
 | Blueprints (`render.yaml`) | ✅ `ferry blueprint apply` (same schema, subset) |
-| Logs (build + runtime, live tail), basic metrics | ✅ SSE streams, CPU/mem in status, live host and container metrics (§22) |
+| Logs (build + runtime, live tail), basic metrics | ✅ SSE streams, CPU/mem in status, live host and container metrics and their last 24 hours (§22) |
 | Dashboard, CLI, REST API | ✅ |
 | `ferry up` (deploy a local directory without git) | ➕ Ferry extra |
 
@@ -72,7 +72,7 @@ auth, secret files, IP allow lists, teams/RBAC.
 | `ferry-scm` | lib | core | git providers (§18): GitHub / GitLab REST clients, authorizing an account in the browser (GitHub App manifest + installation, GitLab OAuth), the tokens of a connection (minted or renewed on demand), which connection reads a repository |
 | `ferry-proxy` | lib | core | `RouteTable`, HTTP/HTTPS reverse proxy, websockets, error pages |
 | `ferry-tls` | lib | core | ACME certificates, SNI resolver, `TlsHooks` impl, the state of each certificate (`Certificates`) |
-| `ferry-engine` | lib | core, docker, build, proxy, scm | `FerryEngine: Engine` — deploys, reconciler, cron, jobs, datastores, logs, verifying domains (§21), server metrics (§22) |
+| `ferry-engine` | lib | core, docker, build, proxy, scm | `FerryEngine: Engine` — deploys, reconciler, cron, jobs, datastores, logs, verifying domains (§21), server metrics and their 24-hour history (§22) |
 | `ferry-api` | lib | core, build, scm | axum router: REST, SSE (logs + `/api/v1/events`), webhooks, blueprints, OpenAPI + Swagger UI, git connections (§18; `build` only for the branches of a remote), serves the embedded web client (`web/dist`) |
 | `ferry-cli` | bin `ferry` | core | CLI client |
 | `ferryd` | bin | all | wiring (already written) |
@@ -417,6 +417,7 @@ routes and checks that the document, the router and `lib.rs` agree.
 | `POST /api/v1/auth/cli/{id}/token` | `CliLoginPoll` `{secret}` → `CliLoginResult` `{status, token?}` (no auth): `pending`, `denied`, or `approved` with the token, once. 401 for another secret, 404 once expired or collected |
 | `GET /api/v1/info` | `ServerInfo` (including `base_domain`, the `default_domain` service URLs are shown with (§21), the default limits `default_memory_limit_mb` / `default_cpu_limit`, 0 = unlimited, the Docker host's `docker_cpus` / `docker_memory_bytes`, `null` when unknown, `github_webhook_enabled` — `/hooks/github` takes deliveries: a connected GitHub account's app has a webhook (§18), or the server has a webhook secret — and `github_webhook_secret_set`, the second case alone) |
 | `GET /api/v1/server/metrics` | `ServerMetrics` `{at, host, containers}` (§22): how busy the machine is right now — `HostMetrics` `{cpu_percent, cpu_count, memory_used_bytes, memory_total_bytes, disks, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`, each `DiskMetrics` `{mount_point, used_bytes, total_bytes, read_bytes_per_sec, write_bytes_per_sec}` — and every running service instance and datastore, `ContainerMetrics` `{kind, id, name, instance, cpu_percent, memory_bytes, memory_limit_bytes, cpu_limit}`, the busiest first (`engine.server_metrics`). A value that can't be read is `null`; `containers` is `null` when Docker does not answer. Takes about a second |
+| `GET /api/v1/server/metrics/history?range=1h\|6h\|24h` | `MetricsHistory` `{range, step_seconds, from, to, host, containers}` (§22): the readings ferryd keeps (one every 10 s, 24 hours), averaged into steps of 10 / 60 / 240 s — 360 at most — oldest first, a step without a reading left out. `HostPoint` `{at, cpu_percent, memory_used_bytes, memory_total_bytes, disk_read_bytes_per_sec, disk_write_bytes_per_sec, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`; the 5 containers whose CPU peaked highest, `ContainerSeries` `{kind, id, name, instance, points: [ContainerPoint {at, cpu_percent, memory_bytes}]}` (`engine.metrics_history`). `range` defaults to `1h`; any other value is a 400 |
 | `GET /api/v1/events` | SSE change feed: `event: ready` (`data: {}`) once the feed watches the store (refetch after it), then `event: change` with `ChangeEvent` `{kind, id, service_id, action}` — `kind` ∈ `service`/`deploy`/`datastore`/`env_group`/`job`/`git_connection`/`domain`, `action` ∈ `created`/`updated`/`deleted`, `service_id` set for services (own id), deploys and jobs; a lagging subscriber gets `{kind:"all", id:"*", service_id:null, action:"resync"}` (refetch everything). The store is polled every second while someone listens and nudged after every API/webhook write |
 | `GET /api/v1/services` | `[ServiceView]` |
 | `POST /api/v1/services` | `CreateService` → 201 `ServiceView` (queues a `create` deploy when it has a repo/image, unless `deploy:false`) |
@@ -751,7 +752,20 @@ Rust build never runs Node.
   order (the busiest first), each linked to its page, with "—" for a
   container Docker did not measure. A value that is `null` says "Not
   available"; no container running is an empty state, `containers:
-  null` says Docker did not answer.
+  null` says Docker did not answer. Under them, **Over time** — loaded
+  with Recharts (shadcn's `chart` component) only when the section opens
+  (`React.lazy`; Recharts and what only it uses stay out of the `vendor`
+  chunk) — asks `GET /api/v1/server/metrics/history` every 10 s
+  (`useMetricsHistory`, paused in a hidden tab) for the range of a 1 h /
+  6 h / 24 h toggle (1 h first): line charts of the host's CPU (0–100 %),
+  memory (up to the machine's), disk read / write and network in / out,
+  then the CPU and memory of the 5 busiest containers with one legend,
+  colored `--chart-1..5`. `src/lib/metrics-history.ts` turns the answer
+  into rows: a row of `null`s where two points are more than 2 steps
+  apart (ferryd was stopped), so the lines break there; the tooltip says
+  the time, the step it averages and each value with its unit. No point
+  yet says "Collecting data… first points in about 10 s"; a value never
+  read in the range, "Not available".
 * **Resource limits in the UI** (§14): "Memory limit" / "CPU limit" selects
   (`Server default (512 MiB)` from `/api/v1/info`, presets, Custom…) in the
   service's Settings → Resources ("Changes apply on the next deploy or
@@ -1701,10 +1715,10 @@ domain); internationalized names (use the punycode form).
 ## 22. Monitoring
 
 Server → Monitoring answers "why is it slow?" without SSH: how busy the
-machine is right now, and which service or datastore uses it. Nothing to
-install: ferryd reads the numbers when asked, and keeps none (history,
-requests and ferryd's own logs come later; Prometheus and Grafana are not
-bundled).
+machine is right now and over the last 24 hours, and which service or
+datastore uses it. Nothing to install: ferryd reads the numbers itself
+and keeps 24 hours of them in its own database (requests and ferryd's own
+logs come later; Prometheus and Grafana are not bundled).
 
 `GET /api/v1/server/metrics` (§10) → `engine.server_metrics()`
 (`ferry-engine/src/metrics.rs`), which reads the host and the containers
@@ -1747,3 +1761,33 @@ at the same time:
 macOS, everything but the CPU count (`available_parallelism`) and the
 disks' space — it is `null` in the API and "Not available" on the page,
 logged at `debug` only, and nothing waits for a second reading.
+
+**History** (`ferry-engine/src/history.rs`). From `start` to shutdown, a
+task of the engine reads the server every 10 s (a `tokio` interval that
+skips the ticks it missed) and stores the reading in one transaction
+(`Store::insert_metrics`): the host's values — the disks' speeds added
+together — and the CPU and memory of every container of the live view
+(not inspected: limits are not kept; one Docker did not measure is left
+out). It has its own `HostSampler`, so each rate is the average over the
+10 s since its previous reading. A reading that fails, or is not done
+within 9 s, is skipped with a warning; nothing stops the task but the
+shutdown. Before its first reading, then every 5 minutes, it deletes the
+readings older than 24 hours (`Store::prune_metrics`). Neither the
+interval nor the 24 hours can be changed.
+
+Migration 7 adds two tables to `ferry.db`: `host_samples` (`at` — Unix
+seconds, the key — and the host's values) and `container_samples`
+(`WITHOUT ROWID`, keyed by `(at, owner_id, instance)`: the service or
+datastore id, the instance or `''` for a datastore; with `kind` and
+`name`). Values are `NULL` when not read; a deleted service's rows age
+out with the others. With 20 containers, 24 hours take about 15 MB, and
+pruning keeps the file at that size (SQLite reuses the freed pages).
+
+`GET /api/v1/server/metrics/history?range=` → `engine.metrics_history`:
+`Store::metrics_history` averages the readings with `GROUP BY at / step`
+(`AVG` skips `NULL`s) over the 360 steps of the range — the first starts
+on the step after the one `now - range` falls in — and the engine keeps
+the 5 containers whose CPU peaked highest in the range (an app busy for
+ten minutes at night shows; an average would hide it), the busiest
+first. A step with no reading has no point: the dashboard breaks its
+lines where points are more than 2 steps apart.

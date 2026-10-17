@@ -18,12 +18,13 @@
 //! hub), `images` (pull policy + retention), `limits` (container resource
 //! limits, OOM messages, free-disk check), `domains` (the domains services
 //! are served under, and their verification), `metrics` (how busy the host
-//! and the containers are).
+//! and the containers are), `history` (the last 24 hours of those metrics).
 
 mod datastores;
 mod deploy;
 mod domains;
 mod health;
+mod history;
 mod images;
 mod instances;
 mod jobs;
@@ -45,7 +46,7 @@ use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use ferry_build::Builder;
-use ferry_core::dto::{RuntimeStatus, ServerMetrics};
+use ferry_core::dto::{MetricsHistory, MetricsRange, RuntimeStatus, ServerMetrics};
 use ferry_core::{
     CancellationToken, Config, Deploy, DeployRequest, DeployTrigger, Domain, Engine, Error, JobRun, JobTrigger,
     LogOptions, LogStream, Result, Store,
@@ -84,7 +85,8 @@ impl FerryEngine {
     ///    (stopping stale instances, starting missing ones) continues in the
     ///    background;
     /// 7. spawn deploy workers, the reconcile loop, the route and OOM
-    ///    watchers, the cron scheduler, the domain verifier and datastore
+    ///    watchers, the cron scheduler, the domain verifier, the metrics
+    ///    sampler (a reading every 10 s, kept 24 hours) and datastore
     ///    provisioning for rows still `creating`.
     ///
     /// Calling it twice is a `Conflict` error.
@@ -139,6 +141,7 @@ impl FerryEngine {
         inner.spawn(reconcile::watch_oom(inner.clone()));
         inner.spawn(jobs::run_scheduler(inner.clone()));
         inner.spawn(domains::run_verifier(inner.clone()));
+        inner.spawn(history::run_sampler(inner.clone()));
         inner.spawn(deploy::fail_queued_on_shutdown(inner.clone()));
         datastores::resume_provisioning(inner).await?;
         info!(prefix = %inner.naming.prefix(), "engine started");
@@ -276,5 +279,9 @@ impl Engine for FerryEngine {
 
     async fn server_metrics(&self) -> Result<ServerMetrics> {
         metrics::server_metrics(&self.inner).await
+    }
+
+    async fn metrics_history(&self, range: MetricsRange) -> Result<MetricsHistory> {
+        history::metrics_history(&self.inner, range).await
     }
 }
