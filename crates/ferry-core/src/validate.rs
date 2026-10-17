@@ -68,7 +68,16 @@ pub fn env_group_name(name: &str) -> Result<()> {
 /// Environment variable keys: non-empty, no `=`, whitespace or NUL, ≤ 256 chars.
 pub fn env_key(key: &str) -> Result<()> {
     let ok = !key.is_empty() && key.len() <= 256 && !key.chars().any(|c| c == '=' || c == '\0' || c.is_whitespace());
-    if ok { Ok(()) } else { Err(Error::invalid(format!("invalid environment variable name '{key}'"))) }
+    if ok {
+        return Ok(());
+    }
+    // A pasted `KEY=value` (or `KEY value`) line: the message, which reaches
+    // the log, never repeats the value.
+    let shown = match key.find(|c: char| c == '=' || c.is_whitespace()) {
+        Some(end) => format!("{}…", &key[..end]),
+        None => key.to_string(),
+    };
+    Err(Error::invalid(format!("invalid environment variable name '{shown}'")))
 }
 
 /// Validate one variable (key rules plus value size / no NUL bytes).
@@ -138,7 +147,9 @@ pub fn branch(b: &str) -> Result<()> {
 /// working directory, not the user's).
 pub fn repo_url(url: &str) -> Result<()> {
     let u = url.trim();
-    let invalid = |why: &str| Err(Error::invalid(format!("invalid repo_url '{u}': {why}")));
+    // Without its credentials: the message reaches the log.
+    let shown = crate::git::redact_url(u);
+    let invalid = |why: &str| Err(Error::invalid(format!("invalid repo_url '{shown}': {why}")));
     if u.is_empty() || u.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return invalid("must not be empty or contain whitespace");
     }
@@ -455,6 +466,9 @@ mod tests {
         assert!(repo_url("rel/path").is_err());
         assert!(repo_url("--upload-pack=x").is_err());
         assert!(repo_url("ftp://x/y").is_err());
+        // An invalid URL is named without its credentials.
+        let e = repo_url("https://u:tok3n@host.example/a b").unwrap_err().to_string();
+        assert!(e.contains("https://***@host.example/a b") && !e.contains("tok3n"), "{e}");
         for bad in [
             "ext::sh -c touch%S",
             "fd::3",
@@ -544,6 +558,11 @@ mod tests {
         assert!(domain("-a.com").is_err());
         assert!(env_key("DATABASE_URL").is_ok());
         assert!(env_key("A=B").is_err());
+        // A pasted `KEY=value` line is named without its value.
+        let e = env_key("DATABASE_URL=postgres://u:pw@db/app").unwrap_err().to_string();
+        assert!(e.contains("'DATABASE_URL…'") && !e.contains("pw@"), "{e}");
+        let e = env_key("API_KEY\tsk_live_0123").unwrap_err().to_string();
+        assert!(e.contains("'API_KEY…'") && !e.contains("sk_live"), "{e}");
         assert!(env_key("").is_err());
     }
 

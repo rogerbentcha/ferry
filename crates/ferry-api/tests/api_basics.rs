@@ -5,7 +5,7 @@ mod common;
 use axum::body::Body;
 use common::{TOKEN, TestApp};
 use http::{Method, Request, StatusCode};
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn req(method: Method, uri: &str) -> http::request::Builder {
     Request::builder().method(method).uri(uri)
@@ -222,6 +222,203 @@ async fn server_info() {
     .await;
     let v = app.get("/api/v1/info").await.json();
     assert_eq!((v["default_memory_limit_mb"].clone(), v["default_cpu_limit"].clone()), (json!(2048), json!(0.5)));
+}
+
+#[tokio::test]
+async fn server_metrics_come_from_the_engine_and_need_auth() {
+    let app = TestApp::new().await;
+    let r = app.send(req(Method::GET, "/api/v1/server/metrics").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert!(app.engine.calls_with("server_metrics").is_empty(), "nothing is read without a token");
+
+    let r = app.get("/api/v1/server/metrics").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(app.engine.calls_with("server_metrics"), ["server_metrics"]);
+    let v = r.json();
+    assert!(v["at"].as_str().is_some_and(|at| at.ends_with('Z')), "{v}");
+    let host = &v["host"];
+    assert_eq!((&host["cpu_percent"], &host["cpu_count"]), (&json!(37.5), &json!(4)));
+    assert_eq!((&host["memory_used_bytes"], &host["memory_total_bytes"]), (&json!(3u64 << 30), &json!(8u64 << 30)));
+    // A value that can't be read is null, not missing.
+    assert!(host.get("network_rx_bytes_per_sec").is_some_and(|v| v.is_null()), "{host}");
+    assert_eq!(
+        host["disks"],
+        json!([{
+            "mount_point": "/",
+            "used_bytes": 40u64 << 30,
+            "total_bytes": 100u64 << 30,
+            "read_bytes_per_sec": 1 << 20,
+            "write_bytes_per_sec": 512 << 10,
+        }])
+    );
+    let containers = v["containers"].as_array().unwrap();
+    assert_eq!(containers.len(), 2);
+    assert_eq!(
+        containers[0],
+        json!({
+            "kind": "service",
+            "id": "srv-1",
+            "name": "web",
+            "instance": "9f8e7d",
+            "cpu_percent": 120.0,
+            "memory_bytes": 300 << 20,
+            "memory_limit_bytes": 512 << 20,
+            "cpu_limit": 2.0,
+        })
+    );
+    assert_eq!((&containers[1]["kind"], &containers[1]["instance"]), (&json!("datastore"), &Value::Null));
+    assert!(containers[1]["cpu_percent"].is_null() && containers[1]["memory_bytes"].is_null());
+    let requests = v["requests"].as_array().unwrap();
+    assert_eq!(
+        requests[0],
+        json!({
+            "target": "srv-1",
+            "name": "web",
+            "requests_per_sec": 12.5,
+            "status_2xx": 90,
+            "status_3xx": 0,
+            "status_4xx": 0,
+            "status_5xx": 10,
+            "p50_ms": 1.0,
+            "p95_ms": 4.0,
+        })
+    );
+    // Without a request to time, the percentiles are null, not missing.
+    assert_eq!(requests[1]["target"], json!("unrouted"));
+    assert!(requests[1].get("p95_ms").is_some_and(Value::is_null), "{}", requests[1]);
+}
+
+#[tokio::test]
+async fn the_metrics_history_takes_a_range_and_needs_auth() {
+    let app = TestApp::new().await;
+    let r = app.send(req(Method::GET, "/api/v1/server/metrics/history").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert!(app.engine.calls_with("metrics_history").is_empty(), "nothing is read without a token");
+
+    // The last hour by default.
+    let r = app.get("/api/v1/server/metrics/history").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let v = r.json();
+    assert_eq!((&v["range"], &v["step_seconds"]), (&json!("1h"), &json!(10)));
+    assert!(v["from"].as_str().is_some_and(|at| at.ends_with('Z')), "{v}");
+    assert!(v["to"].as_str().is_some_and(|at| at.ends_with('Z')), "{v}");
+    let host = v["host"].as_array().unwrap();
+    assert_eq!(host.len(), 2);
+    assert_eq!((&host[0]["cpu_percent"], &host[0]["memory_used_bytes"]), (&json!(12.5), &json!(1u64 << 30)));
+    // A value that wasn't read is null, not missing.
+    assert!(host[1].get("cpu_percent").is_some_and(Value::is_null), "{}", host[1]);
+    assert!(host[1].get("network_rx_bytes_per_sec").is_some_and(Value::is_null), "{}", host[1]);
+    let containers = v["containers"].as_array().unwrap();
+    assert_eq!(
+        (&containers[0]["kind"], &containers[0]["name"], &containers[0]["instance"]),
+        (&json!("service"), &json!("web"), &json!("9f8e7d"))
+    );
+    assert_eq!(containers[0]["points"][0]["cpu_percent"], json!(150.0));
+    let requests = v["requests"].as_array().unwrap();
+    assert_eq!(
+        requests[0],
+        json!({
+            "at": host[0]["at"],
+            "seconds": 10,
+            "requests_per_sec": 2.5,
+            "status_2xx": 20,
+            "status_3xx": 1,
+            "status_4xx": 2,
+            "status_5xx": 2,
+            "p50_ms": 12.0,
+            "p95_ms": 180.0,
+        })
+    );
+    assert!(requests[1].get("p50_ms").is_some_and(Value::is_null), "{}", requests[1]);
+    let targets = v["request_targets"].as_array().unwrap();
+    assert_eq!(
+        (&targets[0]["target"], &targets[0]["name"], &targets[0]["p95_ms"]),
+        (&json!("srv-1"), &json!("web"), &json!(180.0))
+    );
+
+    for (range, step) in [("1h", 10), ("6h", 60), ("24h", 240)] {
+        let r = app.get(&format!("/api/v1/server/metrics/history?range={range}")).await;
+        assert_eq!(r.status, StatusCode::OK, "{range}: {}", r.text());
+        assert_eq!((&r.json()["range"], &r.json()["step_seconds"]), (&json!(range), &json!(step)));
+    }
+    assert_eq!(
+        app.engine.calls_with("metrics_history"),
+        ["metrics_history 1h", "metrics_history 1h", "metrics_history 6h", "metrics_history 24h"]
+    );
+
+    for range in ["2h", "1H", "", "7d"] {
+        let r = app.get(&format!("/api/v1/server/metrics/history?range={range}")).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{range}: {}", r.text());
+        assert!(r.json()["error"]["message"].as_str().is_some_and(|m| m.contains("range")), "{}", r.text());
+    }
+    assert_eq!(app.engine.calls_with("metrics_history").len(), 4, "an unknown range reads nothing");
+}
+
+#[tokio::test]
+async fn prometheus_collects_the_metrics_with_an_api_token() {
+    let app = TestApp::new().await;
+    let get_metrics = |authorization: Option<String>| {
+        let mut r = req(Method::GET, "/metrics");
+        if let Some(value) = authorization {
+            r = r.header(http::header::AUTHORIZATION, value);
+        }
+        app.send(r.body(Body::empty()).unwrap())
+    };
+    // Without a token, or with a wrong one: 401, and nothing is read.
+    for authorization in [None, Some("Bearer nope".to_string())] {
+        let r = get_metrics(authorization.clone()).await;
+        assert_eq!((r.status, r.code().as_str()), (StatusCode::UNAUTHORIZED, "unauthorized"), "{authorization:?}");
+    }
+    assert!(app.engine.calls_with("metrics_snapshot").is_empty(), "nothing is read without a token");
+
+    // A named API token, sent the way Prometheus sends its credentials.
+    let token = ferry_core::auth::new_api_token();
+    app.store.create_api_token(&ferry_core::ApiToken::new("prometheus", &token, None)).await.unwrap();
+    let r = get_metrics(Some(format!("Bearer {token}"))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.headers["content-type"], "text/plain; version=0.0.4; charset=utf-8");
+    assert_eq!(app.engine.calls_with("metrics_snapshot"), ["metrics_snapshot"]);
+    let text = r.text();
+    let families: Vec<&str> =
+        text.lines().filter_map(|l| l.strip_prefix("# TYPE ")).filter_map(|l| l.split(' ').next()).collect();
+    assert_eq!(
+        families,
+        [
+            "ferry_build_info",
+            "ferry_host_cpu_count",
+            "ferry_host_cpu_seconds_total",
+            "ferry_host_memory_total_bytes",
+            "ferry_host_memory_available_bytes",
+            "ferry_host_disk_total_bytes",
+            "ferry_host_disk_used_bytes",
+            "ferry_host_disk_read_bytes_total",
+            "ferry_host_disk_written_bytes_total",
+            "ferry_host_network_receive_bytes_total",
+            "ferry_host_network_transmit_bytes_total",
+            "ferry_container_cpu_percent",
+            "ferry_container_memory_bytes",
+            "ferry_http_requests_total",
+            "ferry_http_request_duration_seconds",
+        ]
+    );
+    for line in [
+        format!("ferry_build_info{{version=\"{}\"}} 1", ferry_core::VERSION),
+        "ferry_host_cpu_seconds_total{mode=\"idle\"} 8550".into(),
+        "ferry_host_network_receive_bytes_total{device=\"eth0\"} 3100000".into(),
+        "ferry_container_cpu_percent{kind=\"service\",id=\"srv-1\",name=\"web\",instance_id=\"9f8e7d\"} 120".into(),
+        "ferry_http_requests_total{target=\"srv-1\",name=\"web\",status_class=\"5xx\"} 10".into(),
+        "ferry_http_request_duration_seconds_bucket{target=\"srv-1\",name=\"web\",le=\"0.05\"} 1".into(),
+        "ferry_http_request_duration_seconds_sum{target=\"srv-1\",name=\"web\"} 0.04".into(),
+        "ferry_http_request_duration_seconds_count{target=\"unrouted\",name=\"unrouted\"} 0".into(),
+    ] {
+        assert!(text.lines().any(|l| l == line), "{line} in:\n{text}");
+    }
+    assert!(!text.contains("name=\"db\""), "the datastore Docker did not measure is left out: {text}");
+
+    // The server token works too; only GET reads.
+    assert_eq!(app.get("/metrics").await.status, StatusCode::OK);
+    let r = app.call(Method::POST, "/metrics", None).await;
+    assert_eq!((r.status, r.code().as_str()), (StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed"));
 }
 
 #[tokio::test]

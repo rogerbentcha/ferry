@@ -1,11 +1,13 @@
 //! Server-Sent Events framing for log streams (DESIGN.md §9); the change
 //! feed (`crate::events`) uses the same response headers and keep-alives.
 //!
-//! Every line is `event: log` + `data: <LogLine JSON>`. Finite streams (deploy
-//! and job logs, runtime logs without `follow`) end with `event: end` and an
-//! empty `data:` field — the empty data line matters: browsers only dispatch
-//! events that carry a data field. A `:` comment is sent after 15 seconds
-//! without output so proxies and clients keep the connection open.
+//! Every line is `event: log` + `data: <LogLine JSON>` (the server's own log:
+//! `<ServerLogLine JSON>`, and `event: skipped` + `data: {"count": N}` where a
+//! follower missed N lines). Finite streams (deploy and job logs, runtime and
+//! server logs without `follow`) end with `event: end` and an empty `data:`
+//! field — the empty data line matters: browsers only dispatch events that
+//! carry a data field. A `:` comment is sent after 15 seconds without output
+//! so proxies and clients keep the connection open.
 //!
 //! The framing is written by hand (instead of `axum::response::Sse`) because
 //! axum drops empty data fields, which would make `end` invisible to
@@ -21,9 +23,11 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
+use ferry_core::server_logs::{ServerLogEvent, ServerLogStream};
 use ferry_core::{CancellationToken, LogLine, LogStream};
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use http::{HeaderValue, header};
+use serde::Serialize;
 
 /// Interval of keep-alive comments while a stream is idle.
 pub const KEEP_ALIVE: Duration = Duration::from_secs(15);
@@ -34,16 +38,30 @@ pub const KEEP_ALIVE_FRAME: &[u8] = b": keep-alive\n\n";
 /// The terminating frame of finite streams.
 pub const END_FRAME: &[u8] = b"event: end\ndata: \n\n";
 
-/// Frame one log line: `event: log\ndata: {json}\n\n`. Compact JSON never
+/// Frame one value: `event: {event}\ndata: {json}\n\n`. Compact JSON never
 /// contains raw newlines (they are escaped inside strings), so one `data:`
 /// field is always enough.
-pub fn log_frame(line: &LogLine) -> Option<Bytes> {
-    match serde_json::to_string(line) {
-        Ok(json) => Some(Bytes::from(format!("event: log\ndata: {json}\n\n"))),
+fn json_frame(event: &str, value: &impl Serialize) -> Option<Bytes> {
+    match serde_json::to_string(value) {
+        Ok(json) => Some(Bytes::from(format!("event: {event}\ndata: {json}\n\n"))),
         Err(e) => {
             tracing::debug!("dropping unserializable log line: {e}");
             None
         }
+    }
+}
+
+/// Frame one log line: `event: log\ndata: {json}\n\n`.
+pub fn log_frame(line: &LogLine) -> Option<Bytes> {
+    json_frame("log", line)
+}
+
+/// Frame one event of the server's log: `event: log` and the line, or
+/// `event: skipped` and `{"count": N}` where the follower missed N lines.
+pub fn server_log_frame(event: &ServerLogEvent) -> Option<Bytes> {
+    match event {
+        ServerLogEvent::Line(line) => json_frame("log", line),
+        ServerLogEvent::Skipped(count) => json_frame("skipped", &serde_json::json!({ "count": count })),
     }
 }
 
@@ -56,9 +74,26 @@ enum Phase {
 /// `event: end` frame when the log stream completes. The response body ends
 /// when `shutdown` is cancelled.
 pub fn log_response(stream: LogStream, finite: bool, shutdown: &CancellationToken) -> Response {
+    frames_response(stream, log_frame, finite, shutdown)
+}
+
+/// [`log_response`] for the server's own log.
+pub fn server_log_response(stream: ServerLogStream, finite: bool, shutdown: &CancellationToken) -> Response {
+    frames_response(stream, server_log_frame, finite, shutdown)
+}
+
+/// An SSE response that sends each item of `stream` as `frame` makes it
+/// (items it makes nothing of are left out), with the keep-alives, the
+/// `event: end` of `finite` streams and the end on `shutdown` of
+/// [`log_response`].
+fn frames_response<S, F>(stream: S, frame: F, finite: bool, shutdown: &CancellationToken) -> Response
+where
+    S: Stream + Unpin + Send + 'static,
+    F: Fn(&S::Item) -> Option<Bytes> + Send + 'static,
+{
     let shutdown = shutdown.clone();
-    let state = (stream, Phase::Streaming, shutdown);
-    let frames = futures::stream::unfold(state, move |(mut stream, phase, shutdown)| async move {
+    let state = (stream, frame, Phase::Streaming, shutdown);
+    let frames = futures::stream::unfold(state, move |(mut stream, frame, phase, shutdown)| async move {
         if matches!(phase, Phase::Done) {
             return None;
         }
@@ -67,18 +102,19 @@ pub fn log_response(stream: LogStream, finite: bool, shutdown: &CancellationToke
                 biased;
                 _ = shutdown.cancelled() => return None,
                 item = stream.next() => match item {
-                    Some(line) => {
-                        if let Some(frame) = log_frame(&line) {
-                            return Some((Ok::<Bytes, Infallible>(frame), (stream, Phase::Streaming, shutdown)));
+                    Some(item) => {
+                        if let Some(bytes) = frame(&item) {
+                            return Some((Ok::<Bytes, Infallible>(bytes), (stream, frame, Phase::Streaming, shutdown)));
                         }
                     }
                     None if finite => {
-                        return Some((Ok(Bytes::from_static(END_FRAME)), (stream, Phase::Done, shutdown)));
+                        return Some((Ok(Bytes::from_static(END_FRAME)), (stream, frame, Phase::Done, shutdown)));
                     }
                     None => return None,
                 },
                 _ = tokio::time::sleep(KEEP_ALIVE) => {
-                    return Some((Ok(Bytes::from_static(KEEP_ALIVE_FRAME)), (stream, Phase::Streaming, shutdown)));
+                    let state = (stream, frame, Phase::Streaming, shutdown);
+                    return Some((Ok(Bytes::from_static(KEEP_ALIVE_FRAME)), state));
                 }
             }
         }
@@ -117,6 +153,26 @@ mod tests {
         assert_eq!(events.len(), 3, "{text}");
         assert!(events[0].starts_with("event: log\ndata: {"));
         assert!(events[1].contains(r#""line":"a\nb""#));
+        assert_eq!(events[2], "event: end\ndata: ");
+    }
+
+    #[tokio::test]
+    async fn frames_the_server_log() {
+        use ferry_core::server_logs::{ServerLogLevel, ServerLogLine};
+        let line = ServerLogLine::new(ServerLogLevel::Warn, "ferry_tls", "no certificate").with_field("host", "a.b");
+        let events = vec![ServerLogEvent::Line(line), ServerLogEvent::Skipped(1500)];
+        let resp = server_log_response(Box::pin(futures::stream::iter(events)), true, &CancellationToken::new());
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        let events: Vec<&str> = text.split("\n\n").filter(|s| !s.is_empty()).collect();
+        assert_eq!(events.len(), 3, "{text}");
+        assert!(events[0].starts_with("event: log\ndata: {"), "{text}");
+        assert!(events[0].contains(r#""level":"warn""#) && events[0].contains(r#""fields":{"host":"a.b"}"#), "{text}");
+        assert_eq!(
+            events[1],
+            r#"event: skipped
+data: {"count":1500}"#
+        );
         assert_eq!(events[2], "event: end\ndata: ");
     }
 

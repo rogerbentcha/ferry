@@ -44,6 +44,19 @@
 //! 6. `101 Switching Protocols` (websockets, HTTP/1.1 only) → both sides are
 //!    spliced.
 //!
+//! Every request the handler answers, on either listener, is counted once
+//! in memory ([`RouteTable::request_stats`], DESIGN.md §22): for the
+//! service its host routes to — the 308 to HTTPS and the suspended /
+//! no-upstreams pages included — else as unrouted (unknown or invalid host,
+//! ACME challenges, domain checks, `CONNECT`); by status class (a websocket
+//! that opened is a 2xx) and by the time until its response headers are
+//! ready (websockets left out), in counters that only go up. A request that
+//! ends before its answer — hyper drops the handler when the client goes
+//! away or a shutdown cuts the connection — counts as a `499` (a 4xx) after
+//! the time it waited, so a service that hangs shows as slow. Requests hyper
+//! rejects before the handler (a malformed head, a header timeout) are not
+//! counted.
+//!
 //! Proxy-generated error pages carry an `x-ferry-error: <kind>` header
 //! (`bad_request`, `not_found`, `method_not_allowed`, `request_timeout`,
 //! `suspended`, `no_upstreams`, `bad_gateway`). The `no_upstreams` page does
@@ -75,12 +88,14 @@ mod limits;
 mod pages;
 mod routes;
 mod server;
+mod stats;
 
 #[cfg(test)]
 mod tests;
 
 pub use limits::ConnectionLimits;
 pub use routes::{Resolution, RouteSnapshot, RouteTable, normalize_host};
+pub use stats::{RequestStats, RequestTarget, RequestTotals};
 
 /// Proxy listeners and TLS settings.
 #[derive(Clone)]

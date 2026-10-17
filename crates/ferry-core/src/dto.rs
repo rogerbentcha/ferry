@@ -241,6 +241,311 @@ pub struct RuntimeStatus {
     pub instances: Vec<InstanceStatus>,
 }
 
+/// `GET /api/v1/server/metrics` — how busy the machine and its containers
+/// are right now (DESIGN.md §22). Every call reads again; the last 24 hours
+/// are [`MetricsHistory`].
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ServerMetrics {
+    /// When the values were read.
+    pub at: DateTime<Utc>,
+    pub host: HostMetrics,
+    /// The running instances of services and the running datastores, the
+    /// busiest (CPU) first. `null` when Docker did not answer.
+    pub containers: Option<Vec<ContainerMetrics>>,
+    /// The requests the proxy answered in the last 10 s (its last reading),
+    /// one entry per target that had any: the services, the busiest first,
+    /// then `dashboard` and `unrouted`. Empty before the first reading.
+    pub requests: Vec<RequestMetrics>,
+}
+
+/// The requests the proxy answered for one target over a time
+/// (DESIGN.md §22).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct RequestMetrics {
+    /// A service id; `dashboard` for the dashboard's host; `unrouted` for a
+    /// host no service has (and the requests without a valid host).
+    pub target: String,
+    /// The service's name (its last one in the range); the target itself
+    /// for `dashboard` and `unrouted`.
+    pub name: String,
+    /// The requests per second, on average over the time.
+    pub requests_per_sec: f64,
+    /// The requests answered 2xx, and the WebSockets that opened.
+    pub status_2xx: u64,
+    pub status_3xx: u64,
+    /// With the requests that ended before their answer (the client went
+    /// away), counted as 499.
+    pub status_4xx: u64,
+    /// The proxy's own 502 and 503 pages included.
+    pub status_5xx: u64,
+    /// Half the requests got their response headers within this many
+    /// milliseconds. Exact to a bucket of the histogram (DESIGN.md §22);
+    /// WebSockets left out. `null` without such a request.
+    pub p50_ms: Option<f64>,
+    /// 95 % of the requests got their response headers within this many
+    /// milliseconds.
+    pub p95_ms: Option<f64>,
+}
+
+/// The machine ferryd runs on. A value ferryd can't read is `null` (on
+/// macOS: everything but the CPU count and the disks' space).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct HostMetrics {
+    /// CPU use of the whole machine, 0–100 %, since the previous reading
+    /// (at least one second).
+    pub cpu_percent: Option<f64>,
+    /// CPUs of the machine.
+    pub cpu_count: u32,
+    /// Memory in use, without the page cache (like `free`).
+    pub memory_used_bytes: Option<u64>,
+    pub memory_total_bytes: Option<u64>,
+    /// The filesystem of the data directory, then Docker's data directory
+    /// when it is on another filesystem of this machine.
+    pub disks: Vec<DiskMetrics>,
+    /// Received over the network interfaces, without the loopback and
+    /// Docker's own (`docker0`, `br-*`, `veth*`).
+    pub network_rx_bytes_per_sec: Option<u64>,
+    /// Sent over the same interfaces.
+    pub network_tx_bytes_per_sec: Option<u64>,
+}
+
+/// One filesystem of `HostMetrics.disks`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DiskMetrics {
+    /// Where the filesystem is mounted, e.g. `/`.
+    pub mount_point: String,
+    /// Used space (like the `Used` column of `df`).
+    pub used_bytes: u64,
+    pub total_bytes: u64,
+    /// Read from its device. `null` when the kernel does not count it for
+    /// this filesystem (network filesystems, btrfs, ZFS, macOS).
+    pub read_bytes_per_sec: Option<u64>,
+    pub write_bytes_per_sec: Option<u64>,
+}
+
+/// What a container of `ServerMetrics.containers` runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerKind {
+    Service,
+    Datastore,
+}
+
+/// CPU and memory of one running container.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ContainerMetrics {
+    pub kind: ContainerKind,
+    /// Id of the service or datastore.
+    pub id: String,
+    /// Name of the service or datastore.
+    pub name: String,
+    /// The instance, as in the logs (last 6 characters of the container
+    /// name). `null` for a datastore: it has one container.
+    pub instance: Option<String>,
+    /// CPU use in percent of one core (100 = one full core), like
+    /// `InstanceStatus.cpu_percent`. `null` when Docker did not answer in
+    /// time.
+    pub cpu_percent: Option<f64>,
+    /// Memory use without the page cache. `null` when Docker did not answer
+    /// in time.
+    pub memory_bytes: Option<u64>,
+    /// The container's memory limit; `null` when unlimited (or unknown).
+    pub memory_limit_bytes: Option<u64>,
+    /// The container's CPU limit (CPUs); `null` when unlimited (or unknown).
+    pub cpu_limit: Option<f64>,
+}
+
+/// What `GET /metrics` publishes in the Prometheus text format (DESIGN.md
+/// §22). Not JSON: `ferry-api` writes it out. The host and the containers
+/// come from ferryd's last reading (one every 10 s), the requests from the
+/// proxy's counters.
+#[derive(Debug, Clone, Default)]
+pub struct MetricsSnapshot {
+    /// `None` before the first reading, or when the last one is too old.
+    pub host: Option<HostCounters>,
+    /// The running service instances and datastores of the last reading
+    /// (their limits are not read). `None` when Docker did not answer it,
+    /// or when it is too old.
+    pub containers: Option<Vec<ContainerMetrics>>,
+    /// Every target the proxy counted since ferryd started: the services,
+    /// then `dashboard` and `unrouted`.
+    pub requests: Vec<crate::requests::TargetRequestTotals>,
+}
+
+/// The machine at the last reading, as counters for `GET /metrics`: the CPU
+/// seconds and the bytes read and written count from the start of the
+/// machine, the bytes received and sent from the start of each interface. A
+/// value ferryd can't read is `None` (or left out).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HostCounters {
+    /// CPUs of the machine.
+    pub cpu_count: u32,
+    /// The seconds all the CPUs spent in each mode of `/proc/stat`, in its
+    /// order: `user`, `nice`, `system`, `idle`, `iowait`, `irq`, `softirq`,
+    /// `steal`. Empty when it can't be read.
+    pub cpu_seconds: Vec<(String, f64)>,
+    pub memory_total_bytes: Option<u64>,
+    /// The total minus `HostMetrics.memory_used_bytes` (`MemAvailable`).
+    pub memory_available_bytes: Option<u64>,
+    /// The filesystems of `HostMetrics.disks`.
+    pub disks: Vec<DiskCounters>,
+    /// Each interface `HostMetrics` counts (not added up: a sum would go
+    /// down when an interface goes away). Empty when it can't be read.
+    pub network: Vec<NetworkCounters>,
+}
+
+/// One network interface of `HostCounters.network`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkCounters {
+    /// Its name, e.g. `eth0`.
+    pub device: String,
+    /// Received since the interface came up.
+    pub receive_bytes: u64,
+    /// Sent since the interface came up.
+    pub transmit_bytes: u64,
+}
+
+/// One filesystem of `HostCounters.disks`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskCounters {
+    /// Where the filesystem is mounted, e.g. `/`.
+    pub mount_point: String,
+    pub used_bytes: u64,
+    pub total_bytes: u64,
+    /// Read from its device since the machine started. `None` when the
+    /// kernel does not count it for this filesystem.
+    pub read_bytes: Option<u64>,
+    /// Written to its device since the machine started.
+    pub written_bytes: Option<u64>,
+}
+
+/// How far back `GET /api/v1/server/metrics/history` looks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub enum MetricsRange {
+    /// The last hour, a point every 10 s.
+    #[default]
+    #[serde(rename = "1h")]
+    Hour,
+    /// The last 6 hours, a point every minute.
+    #[serde(rename = "6h")]
+    SixHours,
+    /// The last 24 hours, a point every 4 minutes.
+    #[serde(rename = "24h")]
+    Day,
+}
+
+impl MetricsRange {
+    /// The length of the range, in seconds.
+    pub fn seconds(self) -> u32 {
+        match self {
+            MetricsRange::Hour => 3_600,
+            MetricsRange::SixHours => 6 * 3_600,
+            MetricsRange::Day => 24 * 3_600,
+        }
+    }
+
+    /// The time one point averages, in seconds: a range has 360 of them.
+    pub fn step_seconds(self) -> u32 {
+        self.seconds() / 360
+    }
+}
+
+/// `GET /api/v1/server/metrics/history` — the server's metrics over a
+/// range, averaged into steps of `step_seconds` (DESIGN.md §22). A step
+/// without a reading (ferryd was stopped) has no point.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct MetricsHistory {
+    pub range: MetricsRange,
+    /// The time each point averages: 10 (1h), 60 (6h) or 240 (24h).
+    pub step_seconds: u32,
+    /// The start of the first step of the range.
+    pub from: DateTime<Utc>,
+    /// When the history was read (the end of the range).
+    pub to: DateTime<Utc>,
+    /// The machine, oldest first.
+    pub host: Vec<HostPoint>,
+    /// The 5 service instances and datastores whose CPU use was the highest
+    /// in the range, the busiest first.
+    pub containers: Vec<ContainerSeries>,
+    /// The requests to the services (neither the dashboard's nor the
+    /// unrouted ones), oldest first: a point for every step ferryd ran in
+    /// and stored requests for, with zeros when no request came.
+    pub requests: Vec<RequestPoint>,
+    /// Each target that had requests in the range, over the whole range:
+    /// the services, the busiest first, then `dashboard` and `unrouted`.
+    pub request_targets: Vec<RequestMetrics>,
+}
+
+/// The requests to the services over one step.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct RequestPoint {
+    /// The start of the step.
+    pub at: DateTime<Utc>,
+    /// The time the counts of the step cover, in seconds: `step_seconds`,
+    /// or less for the last step, still filling (ferryd stores the
+    /// requests every 10 s).
+    pub seconds: u32,
+    /// All of them, per second, on average over `seconds`.
+    pub requests_per_sec: f64,
+    /// The requests of the step answered 2xx, and the WebSockets that opened.
+    pub status_2xx: u64,
+    pub status_3xx: u64,
+    pub status_4xx: u64,
+    /// The proxy's own 502 and 503 pages included.
+    pub status_5xx: u64,
+    /// Half the requests of the step got their response headers within
+    /// this many milliseconds (WebSockets left out). `null` without such a
+    /// request.
+    pub p50_ms: Option<f64>,
+    /// 95 % of them got their response headers within this many milliseconds.
+    pub p95_ms: Option<f64>,
+}
+
+/// The machine over one step (or one reading, when it is stored). A value
+/// that could not be read in the whole step is `null`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct HostPoint {
+    /// The start of the step.
+    pub at: DateTime<Utc>,
+    /// CPU use of the whole machine, 0–100 %.
+    pub cpu_percent: Option<f64>,
+    /// Memory in use, without the page cache.
+    pub memory_used_bytes: Option<u64>,
+    pub memory_total_bytes: Option<u64>,
+    /// Read from the disks of `HostMetrics.disks`, all together.
+    pub disk_read_bytes_per_sec: Option<u64>,
+    /// Written to the same disks.
+    pub disk_write_bytes_per_sec: Option<u64>,
+    /// Received over the network, like `HostMetrics`.
+    pub network_rx_bytes_per_sec: Option<u64>,
+    pub network_tx_bytes_per_sec: Option<u64>,
+}
+
+/// One service instance or datastore over the range.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ContainerSeries {
+    pub kind: ContainerKind,
+    /// Id of the service or datastore.
+    pub id: String,
+    /// Its name when it was last read.
+    pub name: String,
+    /// The instance, as in the logs; `null` for a datastore.
+    pub instance: Option<String>,
+    /// Oldest first.
+    pub points: Vec<ContainerPoint>,
+}
+
+/// A container over one step.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ContainerPoint {
+    /// The start of the step.
+    pub at: DateTime<Utc>,
+    /// CPU use in percent of one core (100 = one full core).
+    pub cpu_percent: Option<f64>,
+    /// Memory use without the page cache.
+    pub memory_bytes: Option<u64>,
+}
+
 /// `POST /api/v1/datastores`
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]

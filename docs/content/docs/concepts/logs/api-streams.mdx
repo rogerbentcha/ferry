@@ -25,6 +25,7 @@ See the [API overview](/docs/reference/api-overview) for the rules of all endpoi
 | `GET /api/v1/deploys/{deploy_id}/logs` | `follow=true`: continue while the deploy runs | When the deploy is complete. Without `follow`: immediately. |
 | `GET /api/v1/jobs/{job_id}/logs` | `follow=true` | When the run is complete. Without `follow`: immediately. |
 | `GET /api/v1/services/{id}/logs` | `follow=true`, `tail=N` lines for each instance | With `follow`: when you disconnect. Without `follow`: immediately. |
+| `GET /api/v1/server/logs` | `follow=true`, `tail=N` lines, `level=warn` for this level and above | With `follow`: when you disconnect. Without `follow`: immediately. |
 
 ## The fields of a line
 
@@ -44,6 +45,11 @@ A stream needs an <Term id="api-token" />, as each `/api/v1` request does. Send 
     The `EventSource` of a browser cannot send an `Authorization` header. Thus `GET` requests also accept the token as `?access_token=`.
 
     The dashboard uses its session, not a token.
+  </Accordion>
+  <Accordion title="The stream of the server log">
+    `GET /api/v1/server/logs` sends the lines of the <Term id="server-log" />. The `data` of each line has `ts`, `level`, `target`, `message` and `fields`.
+
+    If you read slower than the server writes, the server does not wait for you. You lose lines, and an `event: skipped` with `{"count": N}` tells how many.
   </Accordion>
   <Accordion title="The end of a stream">
     - A stream that has an end stops with `event: end` and an empty `data:` field.

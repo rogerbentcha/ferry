@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ferry_build::Builder;
+use ferry_core::dto::{ContainerKind, ContainerMetrics, HostPoint, MetricsRange};
 use ferry_core::{
     CheckOutcome, Config, Datastore, DatastoreKind, Deploy, DeployRequest, DeploySource, DeployStatus, DeployTrigger,
     Domain, DomainSource, DomainStatus, Engine, Error, GitConnection, GitProvider, JobRun, JobStatus, JobTrigger,
@@ -125,6 +126,152 @@ async fn deploy_validation_errors() {
     }
     assert!(matches!(e.deploy_logs("dep-missing", false).await, Err(Error::NotFound(_))));
     assert!(matches!(e.job_logs("job-missing", false).await, Err(Error::NotFound(_))));
+}
+
+#[tokio::test]
+async fn server_metrics_report_the_host_when_docker_does_not_answer() {
+    let f = fixture(2).await;
+    let m = f.engine.server_metrics().await.unwrap();
+    assert!(m.containers.is_none(), "Docker is unreachable: {:?}", m.containers);
+    assert!(m.host.cpu_count > 0);
+    // The filesystem of the data directory, wherever it is mounted.
+    let data_dir = f._dir.path().canonicalize().unwrap();
+    assert_eq!(m.host.disks.len(), 1, "{:?}", m.host.disks);
+    assert!(data_dir.starts_with(&m.host.disks[0].mount_point), "{:?}", m.host.disks);
+    if cfg!(target_os = "linux") {
+        assert!(m.host.cpu_percent.is_some_and(|c| (0.0..=100.0).contains(&c)), "{:?}", m.host);
+        assert!(m.host.memory_used_bytes.is_some() && m.host.memory_total_bytes.is_some(), "{:?}", m.host);
+        assert!(m.host.network_rx_bytes_per_sec.is_some(), "{:?}", m.host);
+    } else {
+        assert_eq!((m.host.cpu_percent, m.host.memory_total_bytes), (None, None), "no /proc here");
+    }
+}
+
+#[tokio::test]
+async fn a_reading_for_the_history_keeps_the_host_when_docker_does_not_answer() {
+    let f = fixture(2).await;
+    let before = f.engine.metrics_snapshot().await.unwrap();
+    assert!(before.host.is_none() && before.containers.is_none(), "GET /metrics before the first reading");
+    let sampler = crate::metrics::HostSampler::new();
+    let (host, containers) = crate::history::read(&f.engine.inner, &sampler).await.unwrap();
+    assert!(containers.is_empty(), "Docker is unreachable");
+    assert!((chrono::Utc::now() - host.at).num_seconds() < 10);
+    if cfg!(target_os = "linux") {
+        assert!(host.cpu_percent.is_some() && host.memory_used_bytes.is_some(), "{host:?}");
+    }
+    f.store.insert_metrics(&host, &containers).await.unwrap();
+    let history = f.engine.metrics_history(MetricsRange::Hour).await.unwrap();
+    assert_eq!(history.host.len(), 1, "{history:?}");
+
+    // GET /metrics publishes that reading, without reading again.
+    let snapshot = f.engine.metrics_snapshot().await.unwrap();
+    assert!(snapshot.containers.is_none(), "Docker did not answer: no containers rather than zeros");
+    let counters = snapshot.host.unwrap();
+    assert!(counters.cpu_count > 0);
+    assert_eq!(counters.disks.len(), 1, "{counters:?}");
+    if cfg!(target_os = "linux") {
+        assert!(counters.cpu_seconds.iter().any(|(mode, s)| mode == "idle" && *s > 0.0), "{counters:?}");
+        assert!(counters.memory_available_bytes.is_some(), "{counters:?}");
+        // Each counted interface on its own (this machine may have none but Docker's).
+        assert!(counters.network.iter().all(|n| n.device != "lo" && !n.device.starts_with("docker")), "{counters:?}");
+    } else {
+        assert!(counters.cpu_seconds.is_empty() && counters.memory_total_bytes.is_none(), "no /proc here");
+    }
+}
+
+#[tokio::test]
+async fn the_metrics_history_shows_the_last_range_and_the_5_busiest_containers() {
+    let f = fixture(2).await;
+    let now = chrono::Utc::now();
+    let ago = |secs: i64| now - chrono::TimeDelta::seconds(secs);
+    let container = |n: u32, cpu: f64| ContainerMetrics {
+        kind: ContainerKind::Service,
+        id: format!("srv-{n}"),
+        name: format!("app{n}"),
+        instance: Some("aaaaaa".into()),
+        cpu_percent: Some(cpu),
+        memory_bytes: Some(1 << 20),
+        memory_limit_bytes: None,
+        cpu_limit: None,
+    };
+    let containers: Vec<_> = (1..=7).map(|n| container(n, f64::from(n))).collect();
+    // A reading 2 hours ago (out of the last hour), and two in the last minute.
+    for at in [ago(7200), ago(45), ago(30)] {
+        let host = HostPoint { at, cpu_percent: Some(50.0), ..HostPoint::default() };
+        f.store.insert_metrics(&host, &containers).await.unwrap();
+    }
+    let hour = f.engine.metrics_history(MetricsRange::Hour).await.unwrap();
+    assert_eq!((hour.range, hour.step_seconds), (MetricsRange::Hour, 10));
+    assert!(hour.from > ago(3600) && hour.from <= ago(3590) && hour.to >= now, "{} {}", hour.from, hour.to);
+    assert_eq!(hour.host.len(), 2, "{:?}", hour.host);
+    let names: Vec<_> = hour.containers.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["app7", "app6", "app5", "app4", "app3"]);
+    let day = f.engine.metrics_history(MetricsRange::Day).await.unwrap();
+    assert_eq!((day.step_seconds, day.containers.len()), (240, 5));
+    assert!(day.host.len() >= 2 && day.host.len() <= 3, "{:?}", day.host);
+}
+
+/// The requests the proxy counts in the route table the engine shares with
+/// it reach both the live metrics and the history.
+#[tokio::test]
+async fn the_live_metrics_and_the_history_have_the_proxys_requests() {
+    let f = fixture(2).await;
+    let web = service(&f.store, "web", ServiceType::WebService, |_| {}).await;
+    f.routes.set_service_routes(&web.id, &["web.localhost".into()], vec![]);
+    let stats = f.routes.request_stats();
+    let web_target = ferry_proxy::RequestTarget::Service(web.id.clone());
+    for status in [200, 200, 200, 503] {
+        stats.record(&web_target, status, Duration::from_millis(40));
+    }
+    stats.record(&ferry_proxy::RequestTarget::Unrouted, 404, Duration::from_millis(1));
+    assert!(f.engine.server_metrics().await.unwrap().requests.is_empty(), "before the first reading");
+
+    let mut sampler = crate::requests::RequestSampler::new();
+    crate::requests::read(&f.engine.inner, &mut sampler).await;
+    let live = f.engine.server_metrics().await.unwrap().requests;
+    let summary: Vec<_> = live.iter().map(|r| (r.name.as_str(), r.status_2xx, r.status_4xx, r.status_5xx)).collect();
+    assert_eq!(summary, [("web", 3, 0, 1), ("unrouted", 0, 1, 0)]);
+    assert!(live[0].p95_ms.is_some_and(|p| (30.0..=50.0).contains(&p)), "{live:?}");
+
+    let history = f.engine.metrics_history(MetricsRange::Hour).await.unwrap();
+    let points: Vec<_> = history.requests.iter().map(|p| (p.status_2xx, p.status_5xx)).collect();
+    assert_eq!(points, [(3, 1)], "the services' requests, without the unrouted ones");
+    let targets: Vec<_> = history.request_targets.iter().map(|t| (t.target.as_str(), t.name.as_str())).collect();
+    assert_eq!(targets, [(web.id.as_str(), "web"), ("unrouted", "unrouted")]);
+
+    // GET /metrics: the counters since the start, which the readings did not reset.
+    stats.record(&web_target, 200, Duration::from_millis(10));
+    let totals = f.engine.metrics_snapshot().await.unwrap().requests;
+    let totals: Vec<_> = totals.iter().map(|t| (t.name.as_str(), t.counts.status_2xx, t.counts.status_5xx)).collect();
+    assert_eq!(totals, [("web", 4, 1), ("unrouted", 0, 0)]);
+}
+
+#[tokio::test]
+async fn every_series_of_the_metrics_history_has_360_points_at_most() {
+    let f = fixture(2).await;
+    let now = chrono::Utc::now().timestamp();
+    let web = ContainerMetrics {
+        kind: ContainerKind::Service,
+        id: "srv-1".into(),
+        name: "web".into(),
+        instance: Some("aaaaaa".into()),
+        cpu_percent: Some(1.0),
+        memory_bytes: None,
+        memory_limit_bytes: None,
+        cpu_limit: None,
+    };
+    // A reading every 10 s for more than an hour, then every minute for
+    // more than 24 hours before that.
+    let times = (0..400).map(|n| now - n * 10).chain((65..1_600).map(|n| now - n * 60));
+    for at in times {
+        let host = HostPoint { at: chrono::DateTime::from_timestamp(at, 0).unwrap(), ..HostPoint::default() };
+        f.store.insert_metrics(&host, std::slice::from_ref(&web)).await.unwrap();
+    }
+    for (range, least) in [(MetricsRange::Hour, 355), (MetricsRange::SixHours, 355), (MetricsRange::Day, 355)] {
+        let h = f.engine.metrics_history(range).await.unwrap();
+        assert!((least..=360).contains(&h.host.len()), "{range:?}: {} points", h.host.len());
+        assert!((least..=360).contains(&h.containers[0].points.len()), "{range:?}");
+    }
 }
 
 #[tokio::test]
@@ -540,6 +687,75 @@ async fn start_twice_is_a_conflict_and_needs_docker() {
     assert!(f.engine.start(shutdown.clone()).await.is_err());
     assert!(matches!(f.engine.start(shutdown.clone()).await, Err(Error::Conflict(_))));
     shutdown.cancel();
+}
+
+/// Runs only inside [`start_kills_the_builds_a_killed_server_left_running`]'s
+/// child process: a server with a build child running that dies without
+/// stopping it. The child leads its own process group and is recorded under
+/// `FERRY_ENGINE_ORPHAN_HELPER` as `ferry-build` records its children
+/// (`<pid> <start, unix seconds> <program>`, see `write_record` in
+/// crates/ferry-build/src/orphans.rs).
+#[cfg(unix)]
+#[test]
+// Never waits for its child on purpose: the child must outlive it.
+#[allow(clippy::zombie_processes)]
+fn orphan_helper() {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let Some(records) = std::env::var_os("FERRY_ENGINE_ORPHAN_HELPER") else { return };
+    let child = Command::new("sleep")
+        .arg("60")
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let records = std::path::Path::new(&records);
+    std::fs::create_dir_all(records).unwrap();
+    std::fs::write(records.join(child.id().to_string()), format!("{} {now} sleep\n", child.id())).unwrap();
+    // Exits without waiting for it: `sleep` is re-parented, as after a SIGKILL.
+}
+
+/// Whether `pid` runs (`ps` knows it and it is not a zombie).
+#[cfg(unix)]
+fn running(pid: u32) -> bool {
+    let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+    out.status.success() && !String::from_utf8_lossy(&out.stdout).trim_start().starts_with('Z')
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn start_kills_the_builds_a_killed_server_left_running() {
+    let f = fixture(2).await;
+    let build_dir = f.engine.inner.config.builds_dir().join("dep-1");
+    let records = build_dir.join("children");
+    let helper = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tests::orphan_helper", "--nocapture", "--test-threads=1"])
+        .env("FERRY_ENGINE_ORPHAN_HELPER", &records)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(helper.success());
+    let entry = std::fs::read_dir(&records).unwrap().next().expect("the build child is recorded").unwrap();
+    let pid: u32 = entry.file_name().to_str().unwrap().parse().unwrap();
+    assert!(running(pid), "the orphaned build child runs");
+
+    let shutdown = ferry_core::CancellationToken::new();
+    // Docker is unreachable: the boot stops at the network, after the cleanup.
+    assert!(f.engine.start(shutdown.clone()).await.is_err());
+    shutdown.cancel();
+    let start = std::time::Instant::now();
+    while running(pid) {
+        if start.elapsed() > Duration::from_secs(5) {
+            // Not left running for a minute after the test.
+            let _ = std::process::Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
+            panic!("the orphaned build child {pid} survived the start");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!build_dir.exists(), "the stale scratch directory is removed");
 }
 
 #[tokio::test]

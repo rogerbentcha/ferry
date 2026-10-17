@@ -17,20 +17,25 @@
 //! `datastores`, `status` (status + runtime logs), `logs` (deploy/job log
 //! hub), `images` (pull policy + retention), `limits` (container resource
 //! limits, OOM messages, free-disk check), `domains` (the domains services
-//! are served under, and their verification).
+//! are served under, and their verification), `metrics` (how busy the host
+//! and the containers are), `history` (the last 24 hours of those metrics),
+//! `requests` (the requests the proxy answered, stored every 10 s).
 
 mod datastores;
 mod deploy;
 mod domains;
 mod health;
+mod history;
 mod images;
 mod instances;
 mod jobs;
 mod limits;
 mod logs;
+mod metrics;
 mod ops;
 mod pipeline;
 mod reconcile;
+mod requests;
 mod spec;
 mod state;
 mod status;
@@ -43,7 +48,7 @@ use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use ferry_build::Builder;
-use ferry_core::dto::RuntimeStatus;
+use ferry_core::dto::{MetricsHistory, MetricsRange, MetricsSnapshot, RuntimeStatus, ServerMetrics};
 use ferry_core::{
     CancellationToken, Config, Deploy, DeployRequest, DeployTrigger, Domain, Engine, Error, JobRun, JobTrigger,
     LogOptions, LogStream, Result, Store,
@@ -68,16 +73,23 @@ impl FerryEngine {
 
     /// Boot sequence, then return (background tasks keep running until
     /// `shutdown` is cancelled; [`FerryEngine::stopped`] waits for them):
-    /// 1. ensure the Docker network and data directories exist;
-    /// 2. mark deploys/jobs interrupted by a previous crash as failed;
-    /// 3. read the domains services are served under (the base domain and
+    /// 1. ensure the data directories exist;
+    /// 2. kill the build processes a previous server killed with SIGKILL
+    ///    left running ([`Builder::reap_orphans`]), then delete the scratch
+    ///    directories it left in `builds/` (they hold the records the
+    ///    reaping needs);
+    /// 3. ensure the Docker network exists;
+    /// 4. mark deploys/jobs interrupted by a previous crash as failed;
+    /// 5. read the domains services are served under (the base domain and
     ///    the connected ones, DESIGN.md §21);
-    /// 4. install the routes of every service synchronously (so they are live
+    /// 6. install the routes of every service synchronously (so they are live
     ///    before the proxy starts serving); the rest of the boot convergence
     ///    (stopping stale instances, starting missing ones) continues in the
     ///    background;
-    /// 5. spawn deploy workers, the reconcile loop, the route and OOM
-    ///    watchers, the cron scheduler, the domain verifier and datastore
+    /// 7. spawn deploy workers, the reconcile loop, the route and OOM
+    ///    watchers, the cron scheduler, the domain verifier, the metrics
+    ///    sampler (a reading every 10 s, kept 24 hours), the sampler of the
+    ///    proxy's requests (every 10 s, into the same history) and datastore
     ///    provisioning for rows still `creating`.
     ///
     /// Calling it twice is a `Conflict` error.
@@ -107,10 +119,21 @@ impl FerryEngine {
                 .await
                 .map_err(|e| Error::internal(format!("creating directory {}: {e}", dir.display())))?;
         }
-        inner.docker.ensure_network(&inner.naming.network(), &inner.naming.base_labels("network")).await?;
 
-        // No build runs yet: scratch directories are leftovers of a crash.
+        // No build runs yet: scratch directories are leftovers of a previous
+        // server. One killed with SIGKILL may have left its build processes
+        // running (on macOS nothing stops them): kill them first, their
+        // records are in those directories. Neither step needs Docker.
+        let reaper = inner.clone();
+        // Blocking: reads the scratch directories and runs `ps`.
+        match tokio::task::spawn_blocking(move || reaper.builder.reap_orphans()).await {
+            Ok(0) => {}
+            Ok(killed) => info!(killed, "killed the build processes a previous server left running"),
+            Err(e) => tracing::warn!("cannot look for build processes a previous server left running: {e}"),
+        }
         remove_stale_build_dirs(&config.builds_dir()).await;
+
+        inner.docker.ensure_network(&inner.naming.network(), &inner.naming.base_labels("network")).await?;
         deploy::recover_interrupted(inner).await?;
         // Before any route: a service's hostnames come from the domains.
         ferry_core::domains::init(&inner.store, config).await?;
@@ -121,6 +144,8 @@ impl FerryEngine {
         inner.spawn(reconcile::watch_oom(inner.clone()));
         inner.spawn(jobs::run_scheduler(inner.clone()));
         inner.spawn(domains::run_verifier(inner.clone()));
+        inner.spawn(history::run_sampler(inner.clone()));
+        inner.spawn(requests::run_sampler(inner.clone()));
         inner.spawn(deploy::fail_queued_on_shutdown(inner.clone()));
         datastores::resume_provisioning(inner).await?;
         info!(prefix = %inner.naming.prefix(), "engine started");
@@ -254,5 +279,17 @@ impl Engine for FerryEngine {
 
     async fn public_addresses(&self) -> Vec<std::net::IpAddr> {
         domains::public_addresses(&self.inner).await
+    }
+
+    async fn server_metrics(&self) -> Result<ServerMetrics> {
+        metrics::server_metrics(&self.inner).await
+    }
+
+    async fn metrics_history(&self, range: MetricsRange) -> Result<MetricsHistory> {
+        history::metrics_history(&self.inner, range).await
+    }
+
+    async fn metrics_snapshot(&self) -> Result<MetricsSnapshot> {
+        metrics::snapshot(&self.inner).await
     }
 }

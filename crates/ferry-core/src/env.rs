@@ -70,7 +70,8 @@ pub fn resolve_value(value: &str, ctx: &RefContext<'_>) -> Result<String> {
         out.push_str(&rest[..start]);
         let after = &rest[start + 3..];
         let Some(end) = after.find("}}") else {
-            return Err(Error::invalid(format!("unterminated reference in '{value}'")));
+            // Not the value: it may hold a secret, and the message reaches the log.
+            return Err(Error::invalid("unterminated reference: '${{' has no '}}' after it"));
         };
         let expr = after[..end].trim();
         out.push_str(&resolve_reference(expr, ctx)?);
@@ -230,6 +231,9 @@ mod tests {
         assert!(resolve_value("${{datastore.nope.host}}", &ctx).is_err());
         assert!(resolve_value("${{service.api.url}}", &ctx).is_err());
         assert!(resolve_value("${{service.api.port", &ctx).is_err());
+        // The message never repeats the value: it may hold a secret.
+        let e = resolve_value("postgres://app:S3cret@${{datastore.db.host}:5432/db", &ctx).unwrap_err();
+        assert!(e.to_string().contains("unterminated reference") && !e.to_string().contains("S3cret"), "{e}");
     }
 
     #[test]

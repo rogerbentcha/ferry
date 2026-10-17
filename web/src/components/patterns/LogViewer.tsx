@@ -2,7 +2,9 @@ import * as React from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   ArrowDownToLine,
+  Check,
   Clock,
+  Copy,
   Download,
   Eraser,
   RotateCw,
@@ -16,9 +18,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Toggle } from '@/components/ui/toggle'
 import { Hint } from '@/components/ui/tooltip'
-import type { LogEntry, LogStreamStatus } from '@/lib/api/useLogStream'
+import { useCopy } from '@/hooks/useCopy'
+import type { ServerLogLevel } from '@/lib/api/types'
+import type { LogStreamStatus } from '@/lib/api/useLogStream'
 import { logTime } from '@/lib/format'
-import { logSeverity } from '@/lib/logs'
+import { filterLogLines, lineSeverity, logLineText, type LogViewerLine } from '@/lib/logs'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
 
@@ -26,7 +30,7 @@ import type { StatusTone } from './status-tones'
 import { StatePill } from './StatusBadge'
 
 export interface LogViewerProps {
-  lines: LogEntry[]
+  lines: LogViewerLine[]
   status: LogStreamStatus
   error?: string | null
   /** Clears the lines received so far. */
@@ -37,6 +41,10 @@ export interface LogViewerProps {
   showInstance?: boolean | 'auto'
   /** File name for Download (without extension). */
   downloadName?: string
+  /** Show the Download button. Default true. */
+  download?: boolean
+  /** A copy button on each line. */
+  copyLines?: boolean
   /** CSS height of the scroll area. */
   height?: string
   /** Shown when there are no lines yet. */
@@ -58,6 +66,14 @@ const STATUS_PILL: Record<LogStreamStatus, { tone: StatusTone; label: string; pu
 
 const ROW_HEIGHT = 20
 
+/** The ink of each level of the server's log. */
+const LEVEL_INK: Record<ServerLogLevel, string> = {
+  error: 'text-destructive',
+  warn: 'text-warning',
+  info: 'text-info',
+  debug: 'text-foreground-lighter',
+}
+
 const STATUS_ANNOUNCEMENT: Record<LogStreamStatus, string> = {
   idle: '',
   connecting: 'Connecting to the log stream',
@@ -70,10 +86,11 @@ const STATUS_ANNOUNCEMENT: Record<LogStreamStatus, string> = {
  * Supabase-style log viewer: mono 12.5px, faint surface, timestamp and
  * instance columns, lines coloured by severity (error / warning words, failed
  * `==>` system lines; plain stderr only gets a gutter mark), `==>` system lines
- * in green,
+ * in green; lines of the server's own log with a level column, coloured by
+ * level, and "N lines skipped" markers;
  * windowed rendering (thousands of lines), search filter with highlight,
  * follow (auto-scroll) that pauses when you scroll up, wrap / timestamps
- * toggles, clear and download.
+ * toggles, a copy button per line (`copyLines`), clear and download.
  */
 export function LogViewer({
   lines,
@@ -83,6 +100,8 @@ export function LogViewer({
   onRestart,
   showInstance = 'auto',
   downloadName = 'logs',
+  download: canDownload = true,
+  copyLines = false,
   height = 'min(68dvh, 680px)',
   emptyText = 'No log lines yet.',
   toolbarExtra,
@@ -98,19 +117,19 @@ export function LogViewer({
   const [searchAnnouncement, setSearchAnnouncement] = React.useState('')
 
   const needle = query.trim().toLowerCase()
-  const filtered = React.useMemo(
-    () => (needle ? lines.filter((l) => l.text.toLowerCase().includes(needle) || (l.instance ?? '').includes(needle)) : lines),
-    [lines, needle],
-  )
+  const filtered = React.useMemo(() => filterLogLines(lines, needle), [lines, needle])
   const hasInstance = React.useMemo(
     () => (showInstance === 'auto' ? lines.some((l) => l.instance) : showInstance),
     [lines, showInstance],
   )
   const instanceCol = hasInstance && prefs.instance
+  const levelCol = React.useMemo(() => lines.some((l) => l.level), [lines])
+  // Skipped-lines markers are not lines.
+  const lineCount = (ls: LogViewerLine[]) => ls.reduce((n, l) => (l.skipped === undefined ? n + 1 : n), 0)
 
   // Screen readers: announce the match count once typing settles (not every streamed line).
   const matchCount = React.useRef(0)
-  matchCount.current = filtered.length
+  matchCount.current = lineCount(filtered)
   React.useEffect(() => {
     const t = window.setTimeout(
       () => setSearchAnnouncement(needle ? `${matchCount.current} matching line${matchCount.current === 1 ? '' : 's'}` : ''),
@@ -232,7 +251,7 @@ export function LogViewer({
         <div className="ml-auto flex items-center gap-1.5">
           <StatePill tone={pill.tone} pulse={pill.pulse} label={pill.label} />
           <span className="hidden font-mono text-[11px] text-foreground-lighter tabular sm:inline">
-            {needle ? `${filtered.length}/${lines.length}` : lines.length} lines
+            {needle ? `${lineCount(filtered)}/${lineCount(lines)}` : lineCount(lines)} lines
           </span>
           {/* Announce stream state changes and settled search results only, never the raw line count. */}
           <span role="status" className="sr-only">
@@ -263,9 +282,11 @@ export function LogViewer({
               <Button size="icon" variant="ghost" icon={<Eraser />} aria-label="Clear logs" onClick={onClear} disabled={lines.length === 0} />
             </Hint>
           )}
-          <Hint label="Download">
-            <Button size="icon" variant="ghost" icon={<Download />} aria-label="Download logs" onClick={download} disabled={lines.length === 0} />
-          </Hint>
+          {canDownload && (
+            <Hint label="Download">
+              <Button size="icon" variant="ghost" icon={<Download />} aria-label="Download logs" onClick={download} disabled={lines.length === 0} />
+            </Hint>
+          )}
         </div>
       </div>
 
@@ -298,48 +319,20 @@ export function LogViewer({
               {items.map((item) => {
                 const l = filtered[item.index]
                 if (!l) return null
-                const severity = logSeverity(l.stream, l.text)
                 return (
-                  <div
+                  <LogRow
                     key={item.key}
+                    line={l}
+                    needle={needle}
+                    wrap={prefs.wrap}
+                    timestamps={prefs.timestamps}
+                    instance={instanceCol}
+                    level={levelCol}
+                    copy={copyLines}
                     data-index={item.index}
-                    data-stream={l.stream}
                     ref={virtualizer.measureElement}
-                    className={cn(
-                      'absolute left-0 flex w-full gap-3 px-3 hover:bg-surface-200',
-                      // stderr is often plain progress (BuildKit, nginx): mark the stream in the gutter only
-                      l.stream === 'stderr' && 'shadow-[inset_2px_0_0_var(--border-stronger)]',
-                      severity === 'error' && 'bg-destructive/[0.06] shadow-[inset_2px_0_0_var(--destructive)]',
-                      severity === 'warning' && 'shadow-[inset_2px_0_0_var(--warning)]',
-                    )}
                     style={{ transform: `translateY(${item.start + 6}px)` }}
-                  >
-                    {prefs.timestamps && (
-                      <time dateTime={l.ts} className="shrink-0 text-foreground-lighter select-none tabular" title={l.ts}>
-                        <span className="sm:hidden">{logTime(l.ts, false)}</span>
-                        <span className="hidden sm:inline">{logTime(l.ts)}</span>
-                      </time>
-                    )}
-                    {instanceCol && (
-                      <span className="hidden w-[6ch] shrink-0 text-foreground-lighter select-none sm:block">{l.instance ?? ''}</span>
-                    )}
-                    {l.stream === 'stderr' && <span className="sr-only">stderr: </span>}
-                    <span
-                      className={cn(
-                        'min-w-0',
-                        prefs.wrap ? 'break-all whitespace-pre-wrap' : 'whitespace-pre',
-                        severity === 'error'
-                          ? 'text-destructive'
-                          : severity === 'warning'
-                            ? 'text-warning'
-                            : l.stream === 'system'
-                              ? 'text-primary'
-                              : 'text-foreground',
-                      )}
-                    >
-                      {needle ? <Highlight text={l.text} needle={needle} /> : l.text || ' '}
-                    </span>
-                  </div>
+                  />
                 )
               })}
             </div>
@@ -358,6 +351,98 @@ export function LogViewer({
         )}
       </div>
     </div>
+  )
+}
+
+export interface LogRowProps extends React.ComponentProps<'div'> {
+  line: LogViewerLine
+  /** The search, lowercase: highlighted in the text. */
+  needle: string
+  wrap: boolean
+  timestamps: boolean
+  /** The instance column. */
+  instance: boolean
+  /** The level column (the server's log). */
+  level: boolean
+  /** The line's copy button. */
+  copy: boolean
+}
+
+/** One line of the viewer, positioned by its `style`; or a skipped-lines marker. */
+export function LogRow({ line: l, needle, wrap, timestamps, instance, level, copy, className, ...props }: LogRowProps) {
+  if (l.skipped !== undefined) {
+    return (
+      <div {...props} data-skipped={l.skipped} className={cn('absolute left-0 flex w-full items-center gap-3 px-3 text-warning', className)}>
+        <span aria-hidden="true" className="h-px min-w-4 flex-1 bg-warning-border" />
+        <span className="shrink-0 font-sans text-[12px]">{l.text}</span>
+        <span aria-hidden="true" className="h-px min-w-4 flex-1 bg-warning-border" />
+      </div>
+    )
+  }
+  const severity = lineSeverity(l)
+  return (
+    <div
+      {...props}
+      data-stream={l.stream}
+      data-level={l.level}
+      className={cn(
+        'group absolute left-0 flex w-full gap-3 px-3 hover:bg-surface-200',
+        // stderr is often plain progress (BuildKit, nginx): mark the stream in the gutter only
+        l.stream === 'stderr' && 'shadow-[inset_2px_0_0_var(--border-stronger)]',
+        severity === 'error' && 'bg-destructive/[0.06] shadow-[inset_2px_0_0_var(--destructive)]',
+        severity === 'warning' && 'shadow-[inset_2px_0_0_var(--warning)]',
+        className,
+      )}
+    >
+      {timestamps && (
+        <time dateTime={l.ts} className="shrink-0 text-foreground-lighter select-none tabular" title={l.ts}>
+          <span className="sm:hidden">{logTime(l.ts, false)}</span>
+          <span className="hidden sm:inline">{logTime(l.ts)}</span>
+        </time>
+      )}
+      {instance && <span className="hidden w-[6ch] shrink-0 text-foreground-lighter select-none sm:block">{l.instance ?? ''}</span>}
+      {level && (
+        <span className={cn('w-[5ch] shrink-0 font-medium select-none', l.level && LEVEL_INK[l.level])} title={l.target}>
+          {l.level?.toUpperCase()}
+        </span>
+      )}
+      {l.stream === 'stderr' && <span className="sr-only">stderr: </span>}
+      <span
+        className={cn(
+          'min-w-0',
+          wrap ? 'break-all whitespace-pre-wrap' : 'whitespace-pre',
+          severity === 'error'
+            ? 'text-destructive'
+            : severity === 'warning'
+              ? 'text-warning'
+              : l.level === 'debug'
+                ? 'text-foreground-light'
+                : l.stream === 'system'
+                  ? 'text-primary'
+                  : 'text-foreground',
+        )}
+      >
+        {needle ? <Highlight text={l.text} needle={needle} /> : l.text || ' '}
+      </span>
+      {copy && <CopyLine text={logLineText(l)} />}
+    </div>
+  )
+}
+
+/** The copy button at the end of a line: shown on hover or focus (always on touch screens). */
+function CopyLine({ text }: { text: string }) {
+  const [copied, copy] = useCopy()
+  return (
+    <Hint label={copied ? 'Copied' : 'Copy line'}>
+      <button
+        type="button"
+        aria-label="Copy line"
+        onClick={() => void copy(text)}
+        className="sticky right-0 ml-auto flex size-5 shrink-0 items-center justify-center rounded-sm bg-surface-200 text-foreground-lighter opacity-0 outline-none group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:opacity-100"
+      >
+        {copied ? <Check className="size-3.5 text-primary" /> : <Copy className="size-3.5" />}
+      </button>
+    </Hint>
   )
 }
 

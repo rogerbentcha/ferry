@@ -1,0 +1,11 @@
+{
+  "title": "Collect metrics with Prometheus",
+  "icon": "Activity",
+  "pages": [
+    "token",
+    "scrape",
+    "remote",
+    "metrics",
+    "queries"
+  ]
+}

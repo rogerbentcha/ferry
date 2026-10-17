@@ -25,7 +25,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
 use utoipa_swagger_ui::{Config, SwaggerUi};
 
 use crate::routes::{
-    auth, blueprints, custom_domains, datastores, deploys, domains, env, env_groups, git, hooks, info, jobs, services,
+    auth, blueprints, custom_domains, datastores, deploys, domains, env, env_groups, git, hooks, info, jobs, server,
+    services,
 };
 
 /// Where the document is served.
@@ -54,6 +55,10 @@ pub const PUBLIC_PATHS: &[&str] = &[
 /// The paths only the dashboard's session may call: the account itself.
 pub const SESSION_PATHS_PREFIX: &str = "/api/v1/auth/";
 
+/// Where Prometheus collects the metrics: outside `/api/v1`, with the same
+/// authentication.
+pub const METRICS_PATH: &str = "/metrics";
+
 const DESCRIPTION: &str = "\
 The HTTP API of [Ferry](https://github.com/Carter2307/ferry), a self-hosted Render alternative. \
 The `ferry` CLI and the web dashboard use exactly this API.
@@ -65,9 +70,9 @@ it as `?access_token=<token>` instead, because browsers' `EventSource` can't set
 the header: query strings end up in logs). The dashboard itself signs in to the server's account \
 (`POST /api/v1/auth/login`) and is then authenticated by its session cookie; the \
 operations on the account, its sessions and its tokens (`/api/v1/auth/...`) only accept that \
-session. Webhooks (`/hooks/...`) authenticate with their own secrets, and `/healthz`, this \
-document, Swagger UI and the calls made before signing in (the `auth` tag says which) need no \
-token.
+session. `GET /metrics`, the metrics in the Prometheus format, takes an API token too. Webhooks \
+(`/hooks/...`) authenticate with their own secrets, and `/healthz`, this document, Swagger UI and \
+the calls made before signing in (the `auth` tag says which) need no token.
 
 **Conventions.** JSON bodies with snake_case fields; request bodies reject unknown fields and an \
 empty body counts as `{}`. `{id}` path segments accept a resource id **or** its name. Errors are \
@@ -90,6 +95,14 @@ pub(crate) const SSE_RUNTIME_LOGS: &str = "Server-Sent Events. Every line is an 
 `LogLine` JSON object (see the `LogLine` schema). Without `follow` the stream ends with `event: end` (empty \
 `data`) after the recent lines; with `follow=true` it stays open and never sends `end`. `: keep-alive` \
 comments every 15 s while idle.";
+
+/// Response description of the server's log stream.
+pub(crate) const SSE_SERVER_LOGS: &str = "Server-Sent Events. Every line is an `event: log` whose `data` is a \
+`ServerLogLine` JSON object (see the `ServerLogLine` schema), the oldest first. Where a follower fell more than \
+1,024 lines behind and missed some, an `event: skipped` whose `data` is `{\"count\": N}` stands for the N lines it \
+missed. Without `follow` the stream ends with `event: end` (empty `data`) after the recent lines; with \
+`follow=true` it stays open and never sends `end`. `: keep-alive` comments every 15 s while idle; the stream ends \
+when the server shuts down.";
 
 /// Response description of the change feed.
 pub(crate) const SSE_EVENTS: &str = "Server-Sent Events. First `event: ready` (`data: {}`) once the feed \
@@ -125,6 +138,10 @@ down.";
         auth::cli_deny,
         auth::cli_token,
         crate::events::stream,
+        server::metrics,
+        server::history,
+        server::logs,
+        server::prometheus,
         services::list,
         services::create,
         services::get,
@@ -219,6 +236,20 @@ down.";
         ferry_core::dto::LinkEnvGroup,
         ferry_core::dto::InstanceStatus,
         ferry_core::dto::RuntimeStatus,
+        ferry_core::dto::ServerMetrics,
+        ferry_core::dto::HostMetrics,
+        ferry_core::dto::DiskMetrics,
+        ferry_core::dto::ContainerMetrics,
+        ferry_core::dto::ContainerKind,
+        ferry_core::dto::MetricsRange,
+        ferry_core::dto::MetricsHistory,
+        ferry_core::dto::HostPoint,
+        ferry_core::dto::ContainerSeries,
+        ferry_core::dto::ContainerPoint,
+        ferry_core::dto::RequestMetrics,
+        ferry_core::dto::RequestPoint,
+        ferry_core::server_logs::ServerLogLine,
+        ferry_core::server_logs::ServerLogLevel,
         ferry_core::dto::CreateDatastore,
         ferry_core::dto::UpdateDatastore,
         ferry_core::dto::DatastoreView,
@@ -282,6 +313,7 @@ down.";
     modifiers(&Security),
     tags(
         (name = "info", description = "Server info, liveness and this document."),
+        (name = "server", description = "How the server is doing: how busy the machine is, now and over the last 24 hours, which service or datastore uses it, what the server logs, and the same numbers in the Prometheus format."),
         (name = "auth", description = "The account of the server (its administrator), signing in and out of the dashboard, the sessions and the API tokens, and `ferry login` (a terminal asks, the dashboard approves). The status, the first-run setup, signing in and out, and the two calls of a terminal need no authentication; the others only accept the dashboard's session, never an API token."),
         (name = "services", description = "Web services, private services, background workers, static sites and cron jobs: CRUD, lifecycle actions (restart, suspend, resume, scale, rollback), status and runtime logs."),
         (name = "deploys", description = "Deploy history, manual deploys, source uploads (`ferry up`), cancellation and build logs."),
@@ -298,11 +330,11 @@ down.";
 )]
 pub struct ApiDoc;
 
-/// Marks every `/api/v1` operation with what authenticates it — an API
-/// token or the dashboard's session; the session alone under
-/// [`SESSION_PATHS_PREFIX`]; nothing for [`PUBLIC_PATHS`] — and adds the
-/// responses they share: 401, 5XX (webhooks too) and, for operations with a
-/// body or query parameters, 400.
+/// Marks every `/api/v1` operation, and [`METRICS_PATH`], with what
+/// authenticates it — an API token or the dashboard's session; the session
+/// alone under [`SESSION_PATHS_PREFIX`]; nothing for [`PUBLIC_PATHS`] — and
+/// adds the responses they share: 401, 5XX (webhooks too) and, for
+/// operations with a body or query parameters, 400.
 pub struct Security;
 
 impl Modify for Security {
@@ -332,7 +364,7 @@ impl Modify for Security {
             ))),
         );
         for (path, item) in openapi.paths.paths.iter_mut() {
-            let api = path.starts_with("/api/v1/");
+            let api = path.starts_with("/api/v1/") || path == METRICS_PATH;
             let authenticated = api && !PUBLIC_PATHS.contains(&path.as_str());
             let session_only = authenticated && path.starts_with(SESSION_PATHS_PREFIX);
             let fallible = api || path.starts_with("/hooks/");

@@ -12,12 +12,12 @@ use std::time::Duration;
 use anyhow::Context;
 use ferry_core::tls::{Certificates, TlsHooks};
 use ferry_core::{CancellationToken, Engine, Store};
-use tracing_subscriber::EnvFilter;
 
 use crate::banner;
 use crate::cli::ServerArgs;
 use crate::config::build_config;
 use crate::daemon;
+use crate::logging;
 use crate::oom::set_oom_score_adj;
 use crate::ownership::{claim_docker_prefix, lock_data_dir};
 
@@ -59,11 +59,8 @@ pub fn run(args: ServerArgs, detached: bool) -> anyhow::Result<ExitCode> {
 async fn serve(args: ServerArgs, detached: bool) -> anyhow::Result<()> {
     // Colors only for a person: not in `ferryd.log`, a pipe or the journal.
     let colors = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .with_target(false)
-        .with_ansi(colors)
-        .init();
+    // Also kept in memory, for Server → Server logs: the same without a log file.
+    let server_logs = logging::init(colors);
     let _ = rustls::crypto::ring::default_provider().install_default();
     // The proxy sizes its connection cap from the open-file limit; raise the
     // soft limit to the hard one (launchd's default soft limit is only 256).
@@ -184,6 +181,7 @@ async fn serve(args: ServerArgs, detached: bool) -> anyhow::Result<()> {
         docker_version: docker_version.clone(),
         docker_cpus: docker_host.as_ref().and_then(|h| h.cpus),
         docker_memory_bytes: docker_host.as_ref().and_then(|h| h.memory_bytes),
+        server_logs,
         shutdown: shutdown.clone(),
     });
     let listener = tokio::net::TcpListener::bind(config.api_addr)

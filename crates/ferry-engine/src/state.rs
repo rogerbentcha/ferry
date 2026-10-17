@@ -62,6 +62,13 @@ pub(crate) struct Inner {
     /// CPUs / memory / data directory of the Docker host, read once (see
     /// [`Inner::host_info`]).
     host: OnceCell<HostInfo>,
+    /// The last reading of the machine's counters (see `metrics`).
+    pub host_sampler: crate::metrics::HostSampler,
+    /// The last reading of the proxy's requests (see `requests`).
+    pub requests: crate::requests::State,
+    /// The history's last reading of the host and the containers, for
+    /// `GET /metrics` (see `metrics`).
+    pub last_reading: crate::metrics::LastReading,
 }
 
 /// In-memory bookkeeping (never held across an `.await`).
@@ -253,6 +260,9 @@ impl Inner {
             rt: StdMutex::new(Runtime::default()),
             domains: crate::domains::State::default(),
             host: OnceCell::new(),
+            host_sampler: crate::metrics::HostSampler::new(),
+            requests: crate::requests::State::default(),
+            last_reading: crate::metrics::LastReading::default(),
         }
     }
 

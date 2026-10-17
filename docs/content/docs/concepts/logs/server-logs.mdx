@@ -5,7 +5,7 @@ description: The server log is what ferryd writes about its own work.
 
 ```bash title="Terminal"
 journalctl -u ferryd      # read the log, with systemd
-RUST_LOG=debug ferryd     # also log every proxied request
+RUST_LOG=debug ferryd     # also log each request, one line each
 ```
 
 ```text title="journalctl -u ferryd" noCopy
@@ -13,6 +13,12 @@ WARN deploy failed: instance 2e58a7 exited with code 0: its command `node ./dist
 ```
 
 `ferryd` writes its <Term id="server-log" /> to standard output, at the `info` level. The <Term id="env-var" /> `RUST_LOG` changes the level. With <Term id="systemd" />, read the log with `journalctl`.
+
+## Read it in the dashboard
+
+Click **Server** in the icon rail. Then click **Server logs**. The section shows the last 2,000 lines of the server log, then each new line live. See [Server: Logs](/docs/getting-started/dashboard/server-logs).
+
+`ferryd` keeps these 2,000 lines in memory, not in a file. Thus the section is the same with `ferryd start` and with `ferryd run` under systemd. After a restart, the section starts again with the new lines.
 
 ## What is in the server log
 
@@ -31,8 +37,17 @@ The server log does not have the lines that your app prints. They stay in the de
 ferry logs --deploy ID
 ```
 
+## The requests
+
+The server log does not count the requests. To see how many requests each service gets, how many fail and how long they take, open **Server**, then **Monitoring**. See [Server: Requests](/docs/getting-started/dashboard/server-requests).
+
+With `RUST_LOG=debug`, the log also has one line for each request: its hostname, its path, its status code and its time in milliseconds.
+
 <Accordions>
   <Accordion title="The warning of a failed deploy">
     The warning tells as much as the end of the deploy log. It has the name of the service, the error, and the hint if Ferry has one.
+  </Accordion>
+  <Accordion title="A very long line">
+    In the dashboard, Ferry cuts a line longer than 8 KiB: first the message, then its values. The output of `ferryd` keeps the full line.
   </Accordion>
 </Accordions>

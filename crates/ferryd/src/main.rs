@@ -2,11 +2,12 @@
 //! proxy, optional TLS manager, engine and API.
 //!
 //! Layout: [`cli`] (clap syntax), [`config`] (the options as a `Config`),
-//! [`server`] (`ferryd run`: the wiring), [`ownership`] (the data directory's
-//! lock, the owner of the Docker name prefix), [`banner`] (what the server
-//! says when it starts), [`oom`] (the server's OOM score), [`fsutil`] (the
-//! private data directory and its secret files), [`daemon`] (`start`, `stop`,
-//! `status`, `logs`) and [`account`] (`reset-password`).
+//! [`server`] (`ferryd run`: the wiring), [`logging`] (its log, printed and
+//! kept in memory), [`ownership`] (the data directory's lock, the owner of
+//! the Docker name prefix), [`banner`] (what the server says when it
+//! starts), [`oom`] (the server's OOM score), [`fsutil`] (the private data
+//! directory and its secret files), [`daemon`] (`start`, `stop`, `status`,
+//! `logs`) and [`account`] (`reset-password`).
 
 mod account;
 mod banner;
@@ -14,6 +15,7 @@ mod cli;
 mod config;
 mod daemon;
 mod fsutil;
+mod logging;
 mod oom;
 mod ownership;
 mod server;

@@ -40,6 +40,14 @@ One commit = one logical change that builds and passes its tests on its own.
 
 ## 3. Write the message
 
+Load the `caveman-commit` skill
+([../caveman-commit/SKILL.md](../caveman-commit/SKILL.md)) and write each
+message by its rules: terse, why over what, a body only when it earns its
+place. Ferry's rules below win where the two differ: the scopes, `Refs:`
+instead of `Closes`, and the attribution trailers the environment asks for.
+caveman-commit only writes the message; this skill still stages and commits
+(step 4).
+
 ```
 <type>(<scope>)!: <description>
 
@@ -90,7 +98,7 @@ commits).
 - Imperative mood, lowercase first letter, no final period: `add`, `fix`,
   `show` — not `added`, `adds`, `Added`.
 - Says what changes for the reader, not which file was touched.
-- The whole first line fits in 72 characters.
+- The whole first line fits in 50 characters when possible, 72 at most.
 
 ### Breaking changes
 
@@ -101,12 +109,15 @@ CLI flag, the `render.yaml` schema, the data on disk.
 
 ### Body
 
-Skip it for a trivial commit. Otherwise, wrapped at 72 columns, in plain and
-specific English, as in the repo's history:
+Skip it when the first line says it all. Always write one for a breaking
+change, a security fix, a data migration or a revert. Wrapped at 72
+columns, caveman-terse:
 
 - what was wrong or missing,
-- what changes (a bullet list when there are several parts),
+- what changes (a `-` list when there are several parts),
 - what stays the same, when a reader could worry about it.
+
+No "this commit", "I", "we", "now": the diff says what.
 
 ### Footer
 
@@ -120,14 +131,13 @@ specific English, as in the repo's history:
 ### Examples
 
 ```
-feat(api): deploy a service when its git tag matches a pattern
+feat(api): deploy a service on a matching git tag
 
-A service could only deploy on a push to its branch. It now takes an
-optional `deploy_tags` glob: a pushed tag that matches it deploys the
-commit the tag points to.
+Only branch pushes deployed. New optional `deploy_tags` glob: a pushed
+tag that matches deploys the commit it points to.
 
-- The GitHub and GitLab webhooks read tag pushes.
-- The API and the CLI accept `deploy_tags`; the dashboard shows it.
+- GitHub and GitLab webhooks read tag pushes.
+- API and CLI accept `deploy_tags`; dashboard shows it.
 
 Branch pushes deploy as before.
 
@@ -171,4 +181,5 @@ git log --oneline -n <number of commits made>
 git status --short
 ```
 
-Report the commits made (hash + first line) and anything left out on purpose.
+Report in the `caveman` voice ([../caveman/SKILL.md](../caveman/SKILL.md)):
+the commits made (hash + first line) and anything left out on purpose.

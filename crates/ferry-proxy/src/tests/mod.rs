@@ -4,6 +4,7 @@
 mod connections;
 mod proxy;
 mod shutdown;
+mod stats;
 mod streaming;
 mod support;
 mod tls;

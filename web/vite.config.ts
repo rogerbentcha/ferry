@@ -32,6 +32,10 @@ const proxy: ProxyOptions = {
   },
 }
 
+/** Recharts and the packages only it uses. */
+const CHARTS =
+  /node_modules[\\/](recharts|react-is|victory-vendor|d3-[^\\/]+|internmap|@reduxjs[\\/]toolkit|react-redux|redux|redux-thunk|immer|reselect|es-toolkit|decimal\.js-light|eventemitter3|tiny-invariant|use-sync-external-store)[\\/]/
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -58,7 +62,8 @@ export default defineConfig({
           groups: [
             { name: 'react', test: /node_modules[\\/](react|react-dom|scheduler|react-router)[\\/]/, priority: 30 },
             { name: 'radix', test: /node_modules[\\/](@radix-ui|radix-ui|cmdk|@floating-ui)[\\/]/, priority: 20 },
-            { name: 'vendor', test: /node_modules[\\/]/, priority: 10 },
+            // Not Recharts and what only it uses: they load with the charts of Server → Monitoring.
+            { name: 'vendor', test: (id) => /node_modules[\\/]/.test(id) && !CHARTS.test(id), priority: 10 },
           ],
         },
       },

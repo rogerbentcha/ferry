@@ -11,6 +11,7 @@
     "domains",
     "custom-domains-https",
     "multiple-servers",
+    "prometheus",
     "host-docs-on-ferry",
     "troubleshooting"
   ]

@@ -11,7 +11,7 @@ INSTANCE   DEPLOY     STATE                                    PORT    CPU      
 note: instance 9b4e07 was killed for running out of memory (limit 512 MiB). Raise the limit with 'ferry update api --memory <SIZE>', then 'ferry restart api'.
 ```
 
-The command shows one line for each <Term id="instance" />. Ferry reads these <Term id="metric">metrics</Term> from Docker when you ask. It does not keep a history of them.
+The command shows one line for each <Term id="instance" />. Ferry reads these <Term id="metric">metrics</Term> from Docker when you ask.
 
 ## Read the columns
 
@@ -33,6 +33,10 @@ ferry status NAME
 ```
 
 In the dashboard, the **Overview** of the service shows the same data for each instance, with an **OOM killed** badge.
+
+To see all the instances and datastores of the server together, the busiest first, open [Server: Monitoring](/docs/getting-started/dashboard/server-monitoring).
+
+Ferry also reads the server and its containers every 10 seconds, and keeps the readings for 24 hours. Then it deletes them. The [charts](/docs/getting-started/dashboard/server-charts) of **Monitoring** show this history. The proxy also counts the requests of each service: see [Server: Requests](/docs/getting-started/dashboard/server-requests).
 
 <Accordions>
   <Accordion title="The note line">

@@ -200,6 +200,24 @@ export interface LogLine {
 }
 
 // ---------------------------------------------------------------------------
+// The server's own log (server_logs.rs)
+// ---------------------------------------------------------------------------
+
+/** How important a line of the server's log is (`trace` lines count as `debug`). */
+export type ServerLogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+/** One line of the server's log: `event: log` of `GET /api/v1/server/logs`. */
+export interface ServerLogLine {
+  ts: Timestamp
+  level: ServerLogLevel
+  /** The module that logged it, e.g. `ferry_engine::deploy`. */
+  target: string
+  message: string
+  /** The other values of the line (`service`, `deploy`, `path`…), as text. */
+  fields: Record<string, string>
+}
+
+// ---------------------------------------------------------------------------
 // DTOs (dto.rs)
 // ---------------------------------------------------------------------------
 
@@ -364,6 +382,164 @@ export interface RuntimeStatus {
   state: ServiceState
   desired_instances: number
   instances: InstanceStatus[]
+}
+
+/** `GET /api/v1/server/metrics` — how busy the machine and its containers are right now. */
+export interface ServerMetrics {
+  /** When the values were read. */
+  at: string
+  host: HostMetrics
+  /** Running service instances and datastores, the busiest (CPU) first; `null` when Docker did not answer. */
+  containers: ContainerMetrics[] | null
+  /**
+   * The requests the proxy answered in its last reading (the last 10 s), one entry per target that had
+   * any: the services, the busiest first, then `dashboard` and `unrouted`. Empty before the first reading.
+   */
+  requests: RequestMetrics[]
+}
+
+/** The requests the proxy answered for one target over a time. */
+export interface RequestMetrics {
+  /** A service id; `dashboard` for the dashboard's host; `unrouted` for a host no service has. */
+  target: string
+  /** The service's name; the target itself for `dashboard` and `unrouted`. */
+  name: string
+  /** On average over the time. */
+  requests_per_sec: number
+  /** With the WebSockets that opened. */
+  status_2xx: number
+  status_3xx: number
+  /** With the requests whose client went away before the answer (counted as 499). */
+  status_4xx: number
+  /** With the proxy's own 502 and 503 pages. */
+  status_5xx: number
+  /** Half the requests got their response headers within this many ms; `null` without a request to time. */
+  p50_ms: number | null
+  /** 95 % of the requests got their response headers within this many ms. */
+  p95_ms: number | null
+}
+
+/** The machine ferryd runs on. A value ferryd can't read is `null` (on macOS, most of them). */
+export interface HostMetrics {
+  /** CPU use of the whole machine, 0–100 %. */
+  cpu_percent: number | null
+  cpu_count: number
+  /** Memory in use, without the page cache (like `free`). */
+  memory_used_bytes: number | null
+  memory_total_bytes: number | null
+  /** The disk of the data directory, then Docker's when it is another one. */
+  disks: DiskMetrics[]
+  /** Without the loopback and Docker's own interfaces. */
+  network_rx_bytes_per_sec: number | null
+  network_tx_bytes_per_sec: number | null
+}
+
+export interface DiskMetrics {
+  mount_point: string
+  used_bytes: number
+  total_bytes: number
+  read_bytes_per_sec: number | null
+  write_bytes_per_sec: number | null
+}
+
+export type ContainerKind = 'service' | 'datastore'
+
+/** CPU and memory of one running container. */
+export interface ContainerMetrics {
+  kind: ContainerKind
+  /** Id of the service or datastore. */
+  id: string
+  name: string
+  /** Instance id as in the logs; `null` for a datastore. */
+  instance: string | null
+  /** Percent of one core (100 = one full core); `null` when Docker did not answer in time. */
+  cpu_percent: number | null
+  memory_bytes: number | null
+  /** The container's memory limit; `null` when unlimited. */
+  memory_limit_bytes: number | null
+  /** The container's CPU limit (CPUs); `null` when unlimited. */
+  cpu_limit: number | null
+}
+
+/** How far back `GET /api/v1/server/metrics/history` looks. */
+export type MetricsRange = '1h' | '6h' | '24h'
+
+/**
+ * `GET /api/v1/server/metrics/history` — the server's metrics over a range, averaged into steps of
+ * `step_seconds`. A step without a reading (ferryd was stopped) has no point.
+ */
+export interface MetricsHistory {
+  range: MetricsRange
+  /** 10 (1h), 60 (6h) or 240 (24h). */
+  step_seconds: number
+  /** The start of the first step of the range. */
+  from: string
+  /** When the history was read (the end of the range). */
+  to: string
+  /** The machine, oldest first. */
+  host: HostPoint[]
+  /** The 5 service instances and datastores whose CPU peaked highest in the range, the busiest first. */
+  containers: ContainerSeries[]
+  /**
+   * The requests to the services (neither the dashboard's nor the unrouted ones), oldest first: a point
+   * for every step ferryd ran in and stored requests for, with zeros when no request came.
+   */
+  requests: RequestPoint[]
+  /** Each target that had requests, over the whole range: the services, the busiest first, then `dashboard` and `unrouted`. */
+  request_targets: RequestMetrics[]
+}
+
+/** The requests to the services over one step. */
+export interface RequestPoint {
+  /** The start of the step. */
+  at: string
+  /** The time the counts cover: `step_seconds`, or less for the last step, still filling. */
+  seconds: number
+  /** On average over `seconds`. */
+  requests_per_sec: number
+  /** The requests of the step, by status class. */
+  status_2xx: number
+  status_3xx: number
+  status_4xx: number
+  status_5xx: number
+  /** `null` without a request to time in the step. */
+  p50_ms: number | null
+  p95_ms: number | null
+}
+
+/** The machine over one step; `null` when a value could not be read in the whole step. */
+export interface HostPoint {
+  /** The start of the step. */
+  at: string
+  /** 0–100 % of the whole machine. */
+  cpu_percent: number | null
+  memory_used_bytes: number | null
+  memory_total_bytes: number | null
+  /** The disks of the live view, together. */
+  disk_read_bytes_per_sec: number | null
+  disk_write_bytes_per_sec: number | null
+  network_rx_bytes_per_sec: number | null
+  network_tx_bytes_per_sec: number | null
+}
+
+/** One service instance or datastore over the range. */
+export interface ContainerSeries {
+  kind: ContainerKind
+  /** Id of the service or datastore. */
+  id: string
+  name: string
+  /** Instance id as in the logs; `null` for a datastore. */
+  instance: string | null
+  /** Oldest first. */
+  points: ContainerPoint[]
+}
+
+/** A container over one step. */
+export interface ContainerPoint {
+  at: string
+  /** Percent of one core (100 = one full core). */
+  cpu_percent: number | null
+  memory_bytes: number | null
 }
 
 /** `POST /api/v1/datastores` */

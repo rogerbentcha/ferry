@@ -5,8 +5,12 @@
 //!   [`auth`] and DESIGN.md §20);
 //! * `/hooks/github` and `/hooks/deploy/{service_id}` — webhooks;
 //! * `/api/v1/events` — SSE change feed for the web client;
+//! * `/api/v1/server/logs` — the server's own log (SSE), from the in-memory
+//!   [`ServerLogs`] ferryd keeps;
 //! * `/api/openapi.json` and `/api/docs` — the OpenAPI document and Swagger
 //!   UI (no auth, see [`openapi`]);
+//! * `/metrics` — the server's numbers in the Prometheus text format (an API
+//!   token, like the API; see [`prometheus`]);
 //! * `/healthz` — liveness (no auth);
 //! * `/` — the web client (a single-page app built from `web/` and embedded
 //!   at compile time, see [`web`]), with a SPA fallback for its routes.
@@ -19,6 +23,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
+use ferry_core::server_logs::ServerLogs;
 use ferry_core::tls::Certificates;
 use ferry_core::{CancellationToken, Config, Engine, Store};
 use tower_http::trace::TraceLayer;
@@ -33,6 +38,7 @@ mod extract;
 mod locks;
 pub mod openapi;
 mod ops;
+pub mod prometheus;
 mod routes;
 mod runtime;
 pub mod setup;
@@ -63,6 +69,9 @@ pub struct AppState {
     pub docker_cpus: Option<u32>,
     /// Total memory of the Docker host in bytes (for `/api/v1/info`).
     pub docker_memory_bytes: Option<u64>,
+    /// The server's own log, the last lines kept in memory (for
+    /// `/api/v1/server/logs`).
+    pub server_logs: ServerLogs,
     /// Cancelled when the server shuts down: open SSE log streams end so the
     /// HTTP server's graceful shutdown can complete.
     pub shutdown: CancellationToken,
@@ -89,6 +98,10 @@ pub fn router(state: AppState) -> axum::Router {
     let api = Router::new()
         .route("/v1/info", get(info::info))
         .route("/v1/events", get(events::stream).layer(axum::Extension(hub.clone())))
+        // how the server is doing
+        .route("/v1/server/metrics", get(server::metrics))
+        .route("/v1/server/metrics/history", get(server::history))
+        .route("/v1/server/logs", get(server::logs))
         // services
         .route("/v1/services", get(services::list).post(services::create))
         .route("/v1/services/{id}", get(services::get).patch(services::update).delete(services::delete))
@@ -155,6 +168,11 @@ pub fn router(state: AppState) -> axum::Router {
         .method_not_allowed_fallback(info::method_not_allowed);
     let api = api.merge(public_api).layer(axum::Extension(auth_runtime));
 
+    // Where Prometheus looks by default, with an API token like the API.
+    let metrics = Router::new()
+        .route("/metrics", get(server::prometheus))
+        .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::auth::require_auth));
+
     let hooks = Router::new()
         .route("/hooks/deploy/{service_id}", get(hooks::deploy_hook_get).post(hooks::deploy_hook))
         .route("/hooks/github", post(hooks::github).layer(DefaultBodyLimit::max(WEBHOOK_LIMIT)))
@@ -171,6 +189,7 @@ pub fn router(state: AppState) -> axum::Router {
 
     Router::new()
         .route("/healthz", get(info::healthz))
+        .merge(metrics)
         .merge(hooks)
         .nest("/api", api)
         .merge(openapi::router())

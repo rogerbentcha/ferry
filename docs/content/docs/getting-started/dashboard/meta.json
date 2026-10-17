@@ -24,6 +24,10 @@
     "blueprints",
     "---Server---",
     "server",
+    "server-monitoring",
+    "server-charts",
+    "server-requests",
+    "server-logs",
     "server-domains",
     "server-account",
     "live-updates"

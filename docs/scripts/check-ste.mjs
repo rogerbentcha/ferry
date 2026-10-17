@@ -80,7 +80,7 @@ const ING_NAMES = new Set(
   `thing things nothing anything something everything during string strings setting settings warning warnings
    networking scaling routing balancing healing logging ring king bring spring sibling siblings ping pending
    building staging billing meaning listing morning evening ceiling
-   heading headings coding polling troubleshooting forwarding`
+   heading headings coding polling troubleshooting forwarding monitoring`
     .split(/\s+/)
     .filter(Boolean),
 );

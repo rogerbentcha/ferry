@@ -9,7 +9,13 @@ use async_trait::async_trait;
 use axum::Router;
 use axum::body::Body;
 use ferry_api::{AppState, router};
-use ferry_core::dto::{InstanceStatus, RuntimeStatus};
+use ferry_core::dto::{
+    ContainerKind, ContainerMetrics, ContainerPoint, ContainerSeries, DiskCounters, DiskMetrics, HostCounters,
+    HostMetrics, HostPoint, InstanceStatus, MetricsHistory, MetricsRange, MetricsSnapshot, NetworkCounters,
+    RequestMetrics, RequestPoint, RuntimeStatus, ServerMetrics,
+};
+use ferry_core::requests::{RequestCounts, TargetRequestTotals};
+use ferry_core::server_logs::ServerLogs;
 use ferry_core::tls::{CertificateStatus, Certificates};
 use ferry_core::{
     CancellationToken, CheckOutcome, Config, Deploy, DeployRequest, DeploySource, DeployStatus, DeployTrigger, Domain,
@@ -313,6 +319,193 @@ impl Engine for MockEngine {
         self.record("public_addresses".into());
         self.public_ips.lock().unwrap().clone()
     }
+
+    /// A busy service instance, a datastore Docker did not measure in time,
+    /// a host without network counters, and the requests of a service and
+    /// unrouted ones.
+    async fn server_metrics(&self) -> Result<ServerMetrics> {
+        self.record("server_metrics".into());
+        Ok(ServerMetrics {
+            at: chrono::Utc::now(),
+            host: HostMetrics {
+                cpu_percent: Some(37.5),
+                cpu_count: 4,
+                memory_used_bytes: Some(3 << 30),
+                memory_total_bytes: Some(8 << 30),
+                disks: vec![DiskMetrics {
+                    mount_point: "/".into(),
+                    used_bytes: 40 << 30,
+                    total_bytes: 100 << 30,
+                    read_bytes_per_sec: Some(1 << 20),
+                    write_bytes_per_sec: Some(512 << 10),
+                }],
+                network_rx_bytes_per_sec: None,
+                network_tx_bytes_per_sec: None,
+            },
+            containers: Some(vec![
+                ContainerMetrics {
+                    kind: ContainerKind::Service,
+                    id: "srv-1".into(),
+                    name: "web".into(),
+                    instance: Some("9f8e7d".into()),
+                    cpu_percent: Some(120.0),
+                    memory_bytes: Some(300 << 20),
+                    memory_limit_bytes: Some(512 << 20),
+                    cpu_limit: Some(2.0),
+                },
+                ContainerMetrics {
+                    kind: ContainerKind::Datastore,
+                    id: "ds-1".into(),
+                    name: "db".into(),
+                    instance: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    memory_limit_bytes: None,
+                    cpu_limit: None,
+                },
+            ]),
+            requests: vec![
+                request_metrics("srv-1", "web", 12.5, Some(4.0)),
+                request_metrics("unrouted", "unrouted", 0.2, None),
+            ],
+        })
+    }
+
+    /// Two steps of the host, the second without CPU (macOS), one service
+    /// instance, and the requests of both steps (none in the second).
+    async fn metrics_history(&self, range: MetricsRange) -> Result<MetricsHistory> {
+        self.record(format!("metrics_history {}", serde_json::to_value(range).unwrap().as_str().unwrap()));
+        let to = chrono::Utc::now();
+        let step = range.step_seconds();
+        let from = to - chrono::TimeDelta::seconds(range.seconds().into());
+        let at = |n: i64| from + chrono::TimeDelta::seconds(n * i64::from(step));
+        Ok(MetricsHistory {
+            range,
+            step_seconds: step,
+            from,
+            to,
+            host: vec![
+                HostPoint {
+                    at: at(0),
+                    cpu_percent: Some(12.5),
+                    memory_used_bytes: Some(1 << 30),
+                    ..HostPoint::default()
+                },
+                HostPoint { at: at(1), cpu_percent: None, memory_used_bytes: Some(1 << 30), ..HostPoint::default() },
+            ],
+            containers: vec![ContainerSeries {
+                kind: ContainerKind::Service,
+                id: "srv-1".into(),
+                name: "web".into(),
+                instance: Some("9f8e7d".into()),
+                points: vec![ContainerPoint { at: at(0), cpu_percent: Some(150.0), memory_bytes: Some(300 << 20) }],
+            }],
+            requests: vec![
+                RequestPoint {
+                    at: at(0),
+                    seconds: step,
+                    requests_per_sec: 2.5,
+                    status_2xx: 20,
+                    status_3xx: 1,
+                    status_4xx: 2,
+                    status_5xx: 2,
+                    p50_ms: Some(12.0),
+                    p95_ms: Some(180.0),
+                },
+                RequestPoint {
+                    at: at(1),
+                    seconds: step,
+                    requests_per_sec: 0.0,
+                    status_2xx: 0,
+                    status_3xx: 0,
+                    status_4xx: 0,
+                    status_5xx: 0,
+                    p50_ms: None,
+                    p95_ms: None,
+                },
+            ],
+            request_targets: vec![request_metrics("srv-1", "web", 0.01, Some(180.0))],
+        })
+    }
+
+    /// A host with every value, a service instance, a datastore Docker did
+    /// not measure, and the requests of a service and unrouted ones.
+    async fn metrics_snapshot(&self) -> Result<MetricsSnapshot> {
+        self.record("metrics_snapshot".into());
+        let mut web = RequestCounts { status_2xx: 90, status_5xx: 10, ..RequestCounts::default() };
+        web.latency.record(std::time::Duration::from_millis(40));
+        Ok(MetricsSnapshot {
+            host: Some(HostCounters {
+                cpu_count: 4,
+                cpu_seconds: vec![("user".into(), 1_300.0), ("idle".into(), 8_550.0)],
+                memory_total_bytes: Some(8 << 30),
+                memory_available_bytes: Some(5 << 30),
+                disks: vec![DiskCounters {
+                    mount_point: "/".into(),
+                    used_bytes: 40 << 30,
+                    total_bytes: 100 << 30,
+                    read_bytes: Some(1 << 30),
+                    written_bytes: Some(2 << 30),
+                }],
+                network: vec![NetworkCounters {
+                    device: "eth0".into(),
+                    receive_bytes: 3_100_000,
+                    transmit_bytes: 1_040_000,
+                }],
+            }),
+            containers: Some(vec![
+                ContainerMetrics {
+                    kind: ContainerKind::Service,
+                    id: "srv-1".into(),
+                    name: "web".into(),
+                    instance: Some("9f8e7d".into()),
+                    cpu_percent: Some(120.0),
+                    memory_bytes: Some(300 << 20),
+                    memory_limit_bytes: None,
+                    cpu_limit: None,
+                },
+                ContainerMetrics {
+                    kind: ContainerKind::Datastore,
+                    id: "ds-1".into(),
+                    name: "db".into(),
+                    instance: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    memory_limit_bytes: None,
+                    cpu_limit: None,
+                },
+            ]),
+            requests: vec![
+                TargetRequestTotals {
+                    target: "srv-1".into(),
+                    name: "web".into(),
+                    counts: web,
+                    latency_sum: std::time::Duration::from_millis(40),
+                },
+                TargetRequestTotals {
+                    target: "unrouted".into(),
+                    name: "unrouted".into(),
+                    counts: RequestCounts::default(),
+                    latency_sum: std::time::Duration::ZERO,
+                },
+            ],
+        })
+    }
+}
+
+/// The requests of one target: 90 % 2xx, the rest 5xx.
+fn request_metrics(target: &str, name: &str, requests_per_sec: f64, p95_ms: Option<f64>) -> RequestMetrics {
+    RequestMetrics {
+        target: target.into(),
+        name: name.into(),
+        requests_per_sec,
+        status_2xx: 90,
+        status_3xx: 0,
+        status_4xx: 0,
+        status_5xx: 10,
+        p50_ms: p95_ms.map(|p| p / 4.0),
+        p95_ms,
+    }
 }
 
 /// A certificate manager that knows the state of a few hosts (the others
@@ -334,6 +527,8 @@ pub struct TestApp {
     /// Set (with [`TestApp::with_tls`]) when the server "runs with HTTPS".
     pub certificates: Option<Arc<FakeCertificates>>,
     pub config: Arc<Config>,
+    /// The server's own log the router reads (lines pushed here are served).
+    pub server_logs: ServerLogs,
     pub shutdown: CancellationToken,
     pub dir: tempfile::TempDir,
 }
@@ -390,6 +585,7 @@ impl TestApp {
         ferry_core::domains::init(&store, &config).await.unwrap();
         let engine = Arc::new(MockEngine::new(store.clone()));
         let shutdown = CancellationToken::new();
+        let server_logs = ServerLogs::default();
         let router = router(AppState {
             config: config.clone(),
             store: store.clone(),
@@ -398,9 +594,10 @@ impl TestApp {
             docker_version: Some("27.0.0".into()),
             docker_cpus: Some(4),
             docker_memory_bytes: Some(8 << 30),
+            server_logs: server_logs.clone(),
             shutdown: shutdown.clone(),
         });
-        TestApp { router, store, engine, certificates, config, shutdown, dir }
+        TestApp { router, store, engine, certificates, config, server_logs, shutdown, dir }
     }
 
     pub async fn send(&self, req: Request<Body>) -> Resp {

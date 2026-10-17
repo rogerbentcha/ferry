@@ -12,4 +12,5 @@ pub mod git;
 pub mod hooks;
 pub mod info;
 pub mod jobs;
+pub mod server;
 pub mod services;
