@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
 import * as React from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
@@ -7,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ContainerMetrics, HostMetrics, ServerMetrics } from '@/lib/api/types'
 
-import { ContainersTable, HostCards, MonitoringView, NOT_AVAILABLE } from './MonitoringSection'
+import { ChartsBoundary, ContainersTable, HostCards, MonitoringView, NOT_AVAILABLE } from './MonitoringSection'
 
 function html(node: React.ReactNode): string {
   return renderToStaticMarkup(
@@ -145,5 +147,37 @@ describe('MonitoringView', () => {
     const out = text(<MonitoringView metrics={metrics} />)
     expect(out.indexOf('This server')).toBeLessThan(out.indexOf('Services and datastores'))
     expect(out).toContain('web 9f8e7d')
+  })
+})
+
+describe('ChartsBoundary', () => {
+  it('puts an error in place of the charts when their code does not load, and keeps the rest', async () => {
+    // A server render skips error boundaries: mount it in jsdom.
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    const failure = new TypeError('Failed to fetch dynamically imported module: /assets/MetricsHistory-1a2b3c.js')
+    const Charts = React.lazy<React.ComponentType>(() => Promise.reject(failure))
+    const caught: unknown[] = []
+    const node = document.createElement('div')
+    const root = createRoot(node, { onCaughtError: (error) => caught.push(error) })
+    await React.act(async () => {
+      root.render(
+        <>
+          <p>Live cards</p>
+          <ChartsBoundary>
+            <React.Suspense fallback={null}>
+              <Charts />
+            </React.Suspense>
+          </ChartsBoundary>
+        </>,
+      )
+    })
+    const out = node.textContent ?? ''
+    expect(out).toContain('Live cards')
+    expect(out).toContain('Over time')
+    expect(out).toContain('Could not load the charts')
+    expect(out).toContain(failure.message)
+    expect(node.querySelector('button')?.textContent).toContain('Retry')
+    expect(caught).toEqual([failure])
+    React.act(() => root.unmount())
   })
 })

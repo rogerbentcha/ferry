@@ -227,6 +227,33 @@ export function MonitoringView({ metrics }: { metrics: ServerMetrics }) {
   )
 }
 
+interface ChartsBoundaryState {
+  failed: boolean
+  error?: unknown
+}
+
+/**
+ * An error in place of the charts when their code fails to load (a tab left
+ * open while ferryd was upgraded asks for a file that is gone) or to render,
+ * so the live cards stay. Retry reloads the page, which gets the current files.
+ */
+export class ChartsBoundary extends React.Component<{ children: React.ReactNode }, ChartsBoundaryState> {
+  override state: ChartsBoundaryState = { failed: false }
+
+  static getDerivedStateFromError(error: unknown): ChartsBoundaryState {
+    return { failed: true, error }
+  }
+
+  override render() {
+    if (!this.state.failed) return this.props.children
+    return (
+      <PageSection title="Over time">
+        <ErrorState error={this.state.error} title="Could not load the charts" onRetry={() => window.location.reload()} />
+      </PageSection>
+    )
+  }
+}
+
 function MonitoringSkeleton() {
   return (
     <PageSection title="This server" description="The machine ferryd runs on.">
@@ -271,9 +298,11 @@ export function MonitoringSection() {
           retrying={isRefetching}
         />
       )}
-      <React.Suspense fallback={null}>
-        <MetricsHistorySection />
-      </React.Suspense>
+      <ChartsBoundary>
+        <React.Suspense fallback={null}>
+          <MetricsHistorySection />
+        </React.Suspense>
+      </ChartsBoundary>
     </>
   )
 }
