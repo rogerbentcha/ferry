@@ -399,6 +399,9 @@ npm run build                                     # → web/dist, embedded by fe
 
 ## Development
 
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how to set up the tools, run Ferry locally and run the checks before a
+pull request.
+
 ```bash
 cargo test --workspace                     # unit + API tests
 FERRY_E2E=1 cargo test --workspace         # + Docker end-to-end tests
