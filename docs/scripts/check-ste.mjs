@@ -107,7 +107,9 @@ export function extract(source) {
   const description = front ? /^description:\s*["']?(.*?)["']?\s*$/m.exec(front[1])?.[1] : undefined;
   if (front) text = text.slice(front[0].length);
 
-  const figures = (text.match(/<(Diagram|Flow)\b/g)?.length ?? 0) + (text.match(/^```mermaid\b/gm)?.length ?? 0);
+  // A ```mermaid fence becomes a <Mermaid> component: count both, and fences inside an accordion.
+  const figures =
+    (text.match(/<(Diagram|Flow|Mermaid)\b/g)?.length ?? 0) + (text.match(/^\s*```mermaid\b/gm)?.length ?? 0);
 
   // Sentences inside figures (captions, step texts): they count as reading.
   const figureTexts = [];
