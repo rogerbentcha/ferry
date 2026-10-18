@@ -1,0 +1,250 @@
+---
+title: Deploys and rollbacks
+description: Follow a deploy step by step, fix a failed health check, restart, roll back or cancel a deploy.
+---
+
+A <Term id="deploy" /> puts one version of your <Term id="service" /> online. Ferry starts the new version next to the old version, tests it, then moves the traffic. If the new version fails, the old version stays online.
+
+```bash title="Terminal"
+ferry deploy api --follow
+```
+
+`--follow` shows the log until the deploy is live. If the deploy fails, the command stops with the <Term id="exit-code" /> 1.
+
+## What starts a deploy
+
+Each deploy records its <Term id="trigger" />: the cause that started it.
+
+| Trigger | Cause |
+|---|---|
+| `create` | You create a service with a repository or an image. Add `--no-deploy` to prevent this deploy. |
+| `manual` | `ferry deploy`, or **Manual deploy** in the dashboard. |
+| `upload` | `ferry up` sends a local folder. |
+| `webhook` | A push to the branch, when [auto-deploy](/docs/guides/github-auto-deploy) is on. |
+| `deploy_hook` | A request to the <Term id="deploy-hook" /> of the service: `ferry deploy-hook show api` prints its URL. |
+| `blueprint` | `ferry blueprint apply` creates the service, or changes its build or deploy settings. |
+| `rollback` | `ferry rollback`, or **Roll back to this deploy**. |
+| `restart` | `ferry restart`, or **Restart service**. |
+| `env_change` | You save variables with a restart: `ferry env set`, `ferry env unset`, or **Save & restart**. |
+
+A manual deploy builds the newest <Term id="commit" /> of the branch, pulls the Docker image again, or uses the last upload. It depends on the source of the service.
+
+```bash title="Terminal"
+ferry deploy api --commit <sha>     # build this exact commit (git services)
+ferry deploy api --clear-cache      # build without the Docker cache
+```
+
+## The steps of a deploy
+
+| Step | What Ferry does |
+|---|---|
+| Queue | The deploy waits for its turn. A service runs one deploy at a time. |
+| Build | Ferry gets your code and makes an <Term id="image" />. |
+| Start | Ferry starts new <Term id="instance">instances</Term>. The old instances continue to answer. |
+| Health check | Each new instance must pass a test. |
+| Switch | The <Term id="proxy" /> sends the traffic to the new instances. The deploy is live. |
+| Drain | Ferry stops the old instances and removes them. |
+
+The same steps show in the <Term id="deploy-log" />. The lines that start with `==>` come from Ferry:
+
+```text title="Deploy log" noCopy
+==> Starting deploy dep-ba5a7fce730d4061aaa7 (trigger: upload)
+==> Build successful 🎉
+==> Starting 1 instance(s)
+==> Waiting for 1 instance(s) to become healthy: the port must accept TCP connections (timeout 120s)
+==> Health check passed
+==> Routing traffic to the new instance(s)
+==> Stopping 1 old instance(s)
+==> Your service is live 🎉
+```
+
+If a step fails, Ferry removes the new instances. It does not touch the old instances. Your service stays online.
+
+### See the deploys of a service
+
+```bash title="Terminal"
+ferry deploys api                                  # the 20 newest deploys (-n for more)
+ferry logs --deploy dep-ba5a7fce730d4061aaa7 -f    # the log of one deploy
+```
+
+```text noCopy
+ID                         STATUS          TRIGGER      COMMIT   CREATED   DURATION
+dep-fad68a5ea71b43ae9820   live            upload       -        7m ago    2s
+dep-d21d077ff8464b4a9501   deactivated     manual       -        11m ago   2s
+dep-ca4bc7b5862742959b70   deploy_failed   upload       -        17m ago   1s
+✗ dep-ca4bc7b5862742959b70: instance d1c6b8 crashed (exit code 1)
+```
+
+| Status | Meaning |
+|---|---|
+| `queued`, `building`, `deploying` | The deploy is in progress. |
+| `live` | The deploy gets the traffic. A service has one live deploy at most. |
+| `deactivated` | The deploy was live. A newer deploy replaced it. |
+| `build_failed` | Ferry could not get the source, or could not build or pull the image. |
+| `deploy_failed` | The image is good, but the new instances did not become healthy. |
+| `canceled` | You canceled it, or a newer deploy in the queue replaced it. |
+
+The cause of a failure is at the end of the list. In the dashboard, open the deploy from the **Deploys** page and read the **Why it failed** box.
+
+<Accordions>
+  <Accordion title="If the server stops during a deploy">
+    A deploy does not continue after a restart of `ferryd`. The deploy fails with the error `interrupted by server shutdown` or `interrupted by server restart`. The live version continues to run. When the server is back, deploy again.
+  </Accordion>
+</Accordions>
+
+## Health checks
+
+A <Term id="health-check" /> is the test that a new instance must pass before it gets traffic. Ferry tests each new instance one time each second.
+
+| Service | Test |
+|---|---|
+| Web, private or static, with a health check path | `GET <path>` must answer with a status below 400. |
+| Web, private or static, with no path | The port must accept a TCP connection and keep it open. |
+| Background worker | The process must run for 5 seconds. |
+
+Set a path for a better test. Make an endpoint only for this test. It must answer quickly when the app is ready.
+
+```bash title="Terminal"
+ferry update api --health /healthz
+```
+
+In the dashboard, use **Health check path** in the settings of the service. The path applies at the next deploy.
+
+### When the health check fails
+
+If no good answer comes before the timeout (120 seconds), the deploy gets the status `deploy_failed`. Ferry removes the new instances, and the old instances continue to answer. To find the cause, read the deploy log:
+
+- Each 10 seconds, the log tells you why an instance is not healthy.
+- If an instance stops during the test, the deploy fails immediately. Ferry copies the last 50 lines of its output into the log.
+- If an instance uses too much memory, the error is `instance ab12cd ran out of memory (limit 512 MiB) — raise the service's memory limit`.
+
+A frequent cause is an app that listens on `127.0.0.1` or on a different port. Your app must listen on `0.0.0.0` and on the port in `PORT`. The log shows the port that Ferry chose:
+
+```text title="Deploy log" noCopy
+==> Using port 8000 (EXPOSEd by the image)
+```
+
+To give a slow app more time, start `ferryd` with `--health-check-timeout`. After the deploy, Ferry does not use the health check path again.
+
+## The zero-downtime switch
+
+<Diagram
+  caption="A deploy with zero downtime"
+  nodes={[
+    { id: 'browser', at: [0, 0.5], icon: 'browser', label: 'Browser' },
+    { id: 'proxy', at: [1.25, 0.5], icon: 'route', label: 'Proxy' },
+    { id: 'old', at: [2.5, 0], icon: 'box', label: 'Old instance', note: 'version 1' },
+    { id: 'new', at: [2.5, 1], icon: 'box', label: 'New instance', note: 'version 2' },
+  ]}
+  edges={[
+    { from: 'browser', to: 'proxy' },
+    { from: 'proxy', to: 'old' },
+    { from: 'proxy', to: 'new' },
+  ]}
+  groups={[{ label: 'Your server', around: ['proxy', 'old', 'new'] }]}
+  steps={[
+    {
+      caption: 'The old instance answers the requests.',
+      hide: ['new'],
+      flow: ['browser>proxy', 'proxy>old'],
+    },
+    {
+      caption: 'Ferry builds version 2 and starts a new instance.',
+      cut: ['proxy>new'],
+      flow: ['browser>proxy', 'proxy>old'],
+      tones: { new: 'primary' },
+      notes: { new: 'starts' },
+    },
+    {
+      caption: 'Ferry tests the new instance. This is the health check.',
+      cut: ['proxy>new'],
+      flow: ['browser>proxy', 'proxy>old'],
+      tones: { new: 'warning' },
+      notes: { new: 'health check' },
+    },
+    {
+      caption: 'The test is good. The proxy sends the traffic to the new instance. The deploy is live.',
+      cut: ['proxy>old'],
+      flow: ['browser>proxy', 'proxy>new'],
+      tones: { new: 'success', old: 'muted' },
+      notes: { new: 'live', old: 'no traffic' },
+    },
+    {
+      caption: 'Ferry stops the old instance.',
+      hide: ['old'],
+      flow: ['browser>proxy', 'proxy>new'],
+      tones: { new: 'success' },
+      notes: { new: 'live' },
+    },
+  ]}
+/>
+
+With <Term id="zero-downtime" />, your app answers during the full deploy. The proxy moves the traffic in one step, after all the new instances pass their health check. The previous live deploy becomes `deactivated`.
+
+Then Ferry stops the old instances. For a web service or a static site, Ferry first waits 2 seconds for the requests in progress. Then each old instance has 10 seconds to stop.
+
+<Callout type="warning" title="A service with a disk stops during a deploy">
+A service with a <Term id="disk" /> has one instance. Ferry stops the old instance before it starts the new instance. Thus the service is offline for a short time.
+</Callout>
+
+## Redeploy or restart
+
+To build your code again, run `ferry deploy`. To start new instances from the live image with the current settings and variables, run `ferry restart`. A restart builds nothing, and it also has zero downtime.
+
+```bash title="Terminal"
+ferry restart api --follow
+```
+
+A live deploy keeps a <Term id="snapshot" /> of its settings. Thus a change applies only at the next deploy or restart:
+
+| You change | It applies |
+|---|---|
+| Variables (`ferry env set`, `ferry env unset`) | Immediately: Ferry restarts the service. With `--no-restart`, Ferry only saves them. |
+| Build and deploy settings (`ferry update`) | At the next deploy. If no build is necessary, run `ferry restart`. |
+| Memory and CPU limits | At the next deploy or restart. |
+| The number of instances (`ferry scale`) | Immediately. |
+
+You cannot restart a service that has no live deploy and no deploy in progress. Deploy it first.
+
+## Roll back to a previous deploy
+
+A <Term id="rollback" /> is a new deploy that uses the image of an earlier deploy. Ferry builds nothing.
+
+```bash title="Terminal"
+ferry deploys api                                      # find the id of a good deploy
+ferry rollback api dep-3493c505ea9b4415b359 --follow
+```
+
+In the dashboard, open **Deploys**. In the menu of a deploy, choose **Roll back to this deploy**.
+
+- You can roll back only to a deploy with the status `live` or `deactivated`. A failed or canceled deploy was never live.
+- A rollback gives you the old code. The instances start with the current settings and variables.
+- Ferry keeps the 5 newest images of each service, and the live image. To keep more, start `ferryd` with `--keep-images`.
+
+If Ferry removed the image, the rollback fails and shows the cause. Then deploy from the source again.
+
+## Cancel a deploy
+
+```bash title="Terminal"
+ferry cancel dep-7d2d938ff3614c238ecb
+```
+
+You can cancel a deploy until the proxy sends traffic to the new version. The dashboard has a **Cancel deploy** button on the page of the deploy.
+
+| The deploy is | A cancel |
+|---|---|
+| `queued` | Cancels the deploy immediately. |
+| `building` | Stops the build. |
+| `deploying`, before the switch | Removes the new instances. The old instances continue to answer. |
+| After the switch | Fails. The deploy is live. Roll back to undo it. |
+
+```text title="Deploy log" noCopy
+==> Build canceled
+==> Deploy canceled: canceled by user
+```
+
+```text title="Too late" noCopy
+error: too late to cancel: traffic was already switched to deploy dep-817fc76633764f7181c0 (roll back to undo it) (conflict)
+```
+
+A new deploy also cancels the older deploys of the same service that wait in the queue.

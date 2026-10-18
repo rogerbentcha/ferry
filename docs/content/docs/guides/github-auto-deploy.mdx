@@ -1,0 +1,168 @@
+---
+title: Auto-deploy from GitHub
+description: Connect GitHub to Ferry, then deploy a service each time you push to its branch.
+---
+
+With <Term id="auto-deploy" />, each <Term id="git-push">push</Term> to a <Term id="branch" /> on GitHub deploys the services that track this branch. GitHub sends the push to Ferry through a <Term id="webhook" />. Ferry then builds the exact <Term id="commit" /> of the push.
+
+Connect your GitHub account from the public address of the server. Then you add nothing to your repositories.
+
+## Before you start
+
+GitHub must reach your server from the internet. Start `ferryd` with a <Term id="dashboard-host" /> and with automatic <Term id="https" />:
+
+```bash title="Terminal"
+ferryd --base-domain apps.example.com \
+  --proxy-addr 0.0.0.0:80 --https-addr 0.0.0.0:443 --acme-email you@example.com \
+  --dashboard-host ferry.apps.example.com
+```
+
+The <Term id="proxy" /> then sends the requests for `ferry.apps.example.com` to the dashboard and the API. GitHub sends the pushes to `/hooks/github` at that address. For the DNS records and the certificate, see [Domains and HTTPS](/docs/guides/domains).
+
+<Callout type="warning" title="The dashboard host opens the full API">
+Each API call still needs an <Term id="api-token" /> or a session. But use the dashboard host only with HTTPS. Then the password, the session and the tokens never go on the network in clear text.
+</Callout>
+
+## Connect your GitHub account
+
+1. Open the dashboard at its public address, for example `https://ferry.apps.example.com`.
+2. Open **Server → Connections**. Click **Connect GitHub**.
+3. Click **Continue to GitHub**. GitHub shows a new <Term id="github-app" /> for your server. Click **Create GitHub App**.
+4. Choose **All repositories** or **Only select repositories**. Click **Install**.
+
+GitHub sends you back to Ferry. The account shows `deploys on push`. The app of the account has a webhook: GitHub tells Ferry about each push to the repositories of the app.
+
+For the repositories of an organization, connect the organization too. In the dialog, open **Organization, self-hosted GitHub**. Type the login of the organization. You must be an owner of the organization.
+
+To add or remove repositories later, click **Repositories** next to the account in **Server → Connections**.
+
+## Create a service that deploys on push
+
+<Tabs items={['CLI', 'Dashboard']} groupId="interface" persist>
+<Tab value="CLI">
+
+```bash title="Terminal"
+ferry create api --repo https://github.com/you/api --branch main --follow
+```
+
+</Tab>
+<Tab value="Dashboard">
+
+1. Click **New service**. Type a name.
+2. In **Source**, choose **Git repository**. Then choose **Connected account**.
+3. Choose the repository and the **Branch**.
+4. Keep **Auto-deploy** on. Click **Create and deploy**.
+
+</Tab>
+</Tabs>
+
+Auto-deploy is on by default. The repository URL needs no token: Ferry clones the repository with the connected account.
+
+## Push and see the deploy
+
+Push a commit to the branch. Then list the deploys of the service:
+
+```bash title="Terminal"
+git push
+ferry deploys api
+```
+
+```text title="Output" noCopy
+ID                         STATUS      TRIGGER   COMMIT                   CREATED    DURATION
+dep-c2225fad527c4b919c1b   deploying   webhook   fe41834 Add a comment    just now   1s
+dep-a53de39943a841aca2c3   live        create    d258434 Initial commit   just now   2s
+```
+
+The new deploy has the <Term id="trigger" /> `webhook`. It builds the commit of the push, not the newest commit at build time. The app gets the commit and the branch in the variables `FERRY_GIT_COMMIT` and `FERRY_GIT_BRANCH`.
+
+## Choose the branch
+
+A push deploys each service that obeys all of these conditions:
+
+1. The repository of the service is the repository of the push.
+2. The service tracks the branch of the push.
+3. Auto-deploy is on.
+4. You did not suspend the service.
+
+Ferry compares the URLs with no scheme, no credentials and no `.git`. Thus `git@github.com:you/api.git` matches `https://github.com/you/api`.
+
+To deploy a different branch, change the branch of the service:
+
+```bash title="Terminal"
+ferry update api --branch production
+```
+
+One push can deploy more than one service. For example, create `api` on the branch `main` and `api-staging` on the branch `staging`. A push to `staging` deploys only `api-staging`. In a <Term id="monorepo" />, the services of all the apps can track the same branch. Then one push deploys all of them.
+
+Ferry ignores a push of a tag, a push that deletes a branch and each event that is not `push` or `ping`. If GitHub sends the same push again, Ferry does not deploy it again.
+
+## Turn auto-deploy off
+
+```bash title="Terminal"
+ferry update api --no-auto-deploy   # off
+ferry update api --auto-deploy      # on again
+```
+
+In the dashboard, open the **Settings** page of the service. In **Build & deploy**, turn off **Auto-deploy**.
+
+With auto-deploy off, a push deploys nothing. Deploy with `ferry deploy api`, or with **Manual deploy** in the dashboard.
+
+### Deploy from GitHub Actions after the tests
+
+A <Term id="deploy-hook" /> is a secret URL that deploys one service when you call it. Call it from your <Term id="ci" /> after the tests pass:
+
+```yaml title=".github/workflows/deploy.yml"
+name: deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm test
+      - run: curl -fsS -X POST "$FERRY_DEPLOY_HOOK"
+        env:
+          FERRY_DEPLOY_HOOK: ${{ secrets.FERRY_DEPLOY_HOOK }}
+```
+
+1. Run `ferry deploy-hook show api`. The command prints the URL of the hook. From GitHub, the URL must start with your dashboard host.
+2. Store the URL as the secret `FERRY_DEPLOY_HOOK` of your repository on GitHub.
+3. Add the file above to your repository.
+4. Turn auto-deploy off. If not, each push deploys two times.
+
+If `npm test` fails, the job stops before the `curl` line. To make a new URL, run `ferry deploy-hook rotate api`. The old URL stops immediately.
+
+## Add the webhook by hand
+
+You need this method when you did not connect the GitHub account of the repository. You also need it for an account that you connected with an access token.
+
+1. Make a <Term id="webhook-secret" />: `openssl rand -hex 32`.
+2. Start `ferryd` with `--github-webhook-secret <the secret>`. `ferry info` then shows `GitHub webhook:  enabled`.
+3. In the repository on GitHub, open **Settings → Webhooks → Add webhook**. Enter the values of the table.
+4. Push a commit. Then run `ferry deploys api`.
+
+| Field | Value |
+|---|---|
+| Payload URL | `https://ferry.apps.example.com/hooks/github` |
+| Content type | `application/json` |
+| Secret | the secret that you gave to `ferryd` |
+| Events | the `push` event only |
+
+GitHub sends a `ping` first. Ferry answers `200` with `{"ok":true}`, and the webhook shows a green check.
+
+## Common problems
+
+| Problem | Cause and fix |
+|---|---|
+| The account does not show `deploys on push` | GitHub could not reach the address where you connected the account, for example `localhost`. Open the dashboard at its public address. Click **Connect again** next to the account. Then delete the old app on GitHub. |
+| A push deploys nothing | Run `ferry show api`. Compare the repository URL and the branch with the push. Make sure that auto-deploy is on and that you did not suspend the service. |
+| A push deploys two times | The repository has a webhook by hand, and its account deploys on push. Remove the webhook from the repository. |
+| GitHub shows `401` for the webhook | The secret in GitHub is not the secret of `ferryd`. |
+| GitHub shows `404` for the webhook | No connected account deploys on push, and `ferryd` has no webhook secret. |
+| The dashboard has a new address | GitHub sends the pushes to the old address. Connect the account again from the new address. Then delete the old app on GitHub. |
+| The deploy cannot clone the repository | See [Deploy a private repository](/docs/guides/deploy#deploy-a-private-repository). |
+| The repository is on GitLab | GitLab does not send pushes to Ferry. Call the deploy hook of the service from GitLab CI. |
+
+For more problems and their fixes, see [Troubleshooting](/docs/help/troubleshooting).

@@ -34,9 +34,9 @@ npm run dev          # → http://localhost:3000
 
 ## Write content
 
-**Read [`AUTHORING.md`](AUTHORING.md) first.** The pages are short and picture-first, in Simplified Technical English (ASD-STE100): one idea per page, a figure before the text, 220 words at most, every technical name explained by the glossary. `npm run check-content -- -v <path>` measures a page; `content/docs/concepts/deploys/` is the model.
+**Read [`AUTHORING.md`](AUTHORING.md) first.** One page is one task, from start to end, in Simplified Technical English (ASD-STE100): the essential only (1,500 words at most), few figures, every technical name explained by the glossary. `npm run check-content -- -v <path>` measures a page; `content/docs/guides/deploy.mdx` is the model.
 
-Pages are MDX files in `content/docs/`. The URL follows the path: `content/docs/concepts/deploys/steps.mdx` → `/docs/concepts/deploys/steps/`. A subject with more than one idea is a folder: its `index.mdx` keeps the URL of the subject.
+Pages are MDX files in `content/docs/`. The URL follows the path: `content/docs/guides/domains.mdx` → `/docs/guides/domains/`. A folder's `index.mdx` has the URL of the folder (`content/docs/architecture/index.mdx` → `/docs/architecture/`).
 
 ```mdx
 ---
@@ -49,7 +49,7 @@ Body in Markdown, with the components below.
 
 - **Frontmatter:** `title` (required), `description` (one sentence, shown under the title and in search/Open Graph; plain text, no Markdown), optional `icon` (a [lucide](https://lucide.dev/icons) name) and `full: true` for a full-width page. Don't repeat the title as a `#` heading: the page renders it.
 - **Order and sidebar:** each folder has a `meta.json` (`title`, `icon`, `pages` in order). A top-level folder is a sidebar section with an UPPERCASE label; a page missing from `pages` is still built but not listed. Nested folders are collapsible groups; a folder's `index.mdx` is its link.
-- **Links:** absolute URLs without a trailing slash (`/docs/concepts/deploys`, `/docs/reference/cli#ferry-deploy`) or relative file paths (`./deploys.mdx`). `npm run build` fails on a broken link or anchor.
+- **Links:** absolute URLs without a trailing slash (`/docs/guides/domains`, `/docs/reference/cli#ferry-deploy`) or relative file paths (`./domains.mdx`). `npm run build` fails on a broken link or anchor.
 - **Headings:** `##` and `###` build the "On this page" table of contents; anchors are the slugified heading text (`## Health checks` → `#health-checks`).
 - **Code blocks:** fenced with a language; meta options `title="Terminal"`, `lineNumbers`, `noCopy`. Mark lines with a trailing comment: `# [!code highlight]`, `# [!code ++]` / `# [!code --]`, `# [!code focus]` (use the language's comment syntax).
 - **Components** (available everywhere, no import needed):
@@ -69,7 +69,7 @@ Body in Markdown, with the components below.
 | `<Flow>` | `steps`: `{ title, text, icon, tone }[]` | what happens, in order: one step is lit at a time |
 | `<Terminal>` | `lines`, `title` | a terminal session that plays: `$ ` lines are typed, the others are output |
 | `<Term>` | `id` (from `lib/glossary/`) | a technical name with its definition in a tooltip |
-| `<Glossary>` | — | the list of every term (the `/docs/glossary` page) |
+| `<Glossary>` | — | the list of every term (the `/docs/help/glossary` page) |
 
   Icons for cards: `import { Rocket } from 'lucide-react';` at the top of the MDX file, then `icon={<Rocket />}`.
 
@@ -111,7 +111,7 @@ Build-time settings (environment variables):
 | `FERRY_DOCS_SERVER_URL` | `http://127.0.0.1:7878` | the "Dashboard" link and the server URL in the API request examples (set it for a public site: the default only works on the reader's machine) |
 | `DOCS_GIT_BRANCH` | `dev` | the branch of the "Edit on GitHub" links; it must contain `docs/` |
 
-URLs end with a slash (`/docs/concepts/deploys/` → `out/docs/concepts/deploys/index.html`), which every static server resolves. `out/404.html` is the not-found page.
+URLs end with a slash (`/docs/guides/domains/` → `out/docs/guides/domains/index.html`), which every static server resolves. `out/404.html` is the not-found page.
 
 ## Deploy
 

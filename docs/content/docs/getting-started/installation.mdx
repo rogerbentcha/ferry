@@ -1,0 +1,313 @@
+---
+title: Install Ferry
+description: Install the Ferry server and CLI, create your account and connect the CLI to your server.
+---
+
+Ferry is two programs: <Term id="ferryd" />, the server, and `ferry`, the <Term id="cli" />. On a fresh Ubuntu or Debian server, one command installs the two programs and starts the server.
+
+## Install with one command
+
+Run this command on the server, as <Term id="root" /> or with <Term id="sudo" />.
+
+```bash title="Terminal"
+curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh
+```
+
+The <Term id="install-script" /> works on Ubuntu 22.04 and 24.04, and on Debian 12 and 13, on x86_64. If you are root and the server has no sudo, end the command with `| sh`.
+
+The script does all its checks before the first change. If a check fails, the server stays as it was. If the server has no <Term id="docker" /> or no git, the script installs them. Then it puts `ferryd` and `ferry` in `/usr/local/bin`, and creates the user `ferry` and a <Term id="systemd" /> unit. systemd starts `ferryd` now and at each boot.
+
+```text title="Output (end)" noCopy
+Create your account. On your computer:
+  1. Open an SSH tunnel to this server (use the address you connect to):
+       ssh -N -L 7878:127.0.0.1:7878 root@203.0.113.10
+  2. Open this link in your browser:
+       http://127.0.0.1:7878/setup?code=5b0e…
+```
+
+Do the two steps on your computer. The <Term id="ssh-tunnel" /> brings the <Term id="dashboard" /> to your machine. Then [create your account](#create-your-account).
+
+### Add your domain and HTTPS
+
+```bash title="Terminal"
+curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh -s -- --base-domain apps.example.com --acme-email you@example.com
+```
+
+| Option | Effect |
+|---|---|
+| `--base-domain apps.example.com` | The <Term id="base-domain" />: your apps are at `<name>.apps.example.com`, on port 80. |
+| `--acme-email you@example.com` | HTTPS on port 443, with certificates from <Term id="lets-encrypt" />. It needs a base domain. |
+
+Without options, your apps are at `<name>.localhost:8080`. The script writes the settings in `/etc/ferry/ferryd.env`. After a change in this file, run `sudo systemctl restart ferryd`. Before you use a domain, point its DNS to the server. See [Domains and HTTPS](/docs/guides/domains).
+
+### Upgrade
+
+Run the same command again. The script installs the latest release and restarts `ferryd`. It keeps `/var/lib/ferry` and `/etc/ferry/ferryd.env`. Thus your apps, your data and your settings stay.
+
+For a server on the internet, do the [Production checklist](/docs/guides/production).
+
+<Accordions>
+  <Accordion title="When the script stops">
+    | Case | Message |
+    |---|---|
+    | Another system, or another CPU | The supported systems |
+    | Docker older than 27.3 | How to upgrade Docker |
+    | A bad <Term id="checksum" /> | The script installed nothing |
+  </Accordion>
+  <Accordion title="A unit file of your own">
+    If `/etc/systemd/system/ferryd.service` exists and the script did not write it, the script keeps it. To change the unit of the script, run `sudo systemctl edit ferryd`. A rerun keeps your changes.
+  </Accordion>
+</Accordions>
+
+## Install on another system
+
+Ferry runs on Linux and macOS. On another system, install the two programs yourself.
+
+### What you need
+
+| Tool | Version | Use |
+|---|---|---|
+| Docker | Engine 27.3 or newer, or <Term id="docker-desktop" /> | Runs your apps and the builds |
+| git | A recent version | Clones repositories for git deploys |
+| Rust | 1.89 or newer ([rustup](https://rustup.rs)) | Builds `ferryd` and `ferry`. Only to build. |
+| Node.js | 20.19 or newer, with <Term id="npm" /> | Builds the dashboard. Only to build. |
+
+`ferryd` finds the <Term id="docker-daemon" /> through `DOCKER_HOST`, or through the file `/var/run/docker.sock`. The daemon must run on the same machine as `ferryd`. On macOS, Docker Desktop works with no change. Colima and OrbStack use another <Term id="docker-context" />. Give its socket to `ferryd` before you start it:
+
+```bash title="Terminal"
+export DOCKER_HOST=$(docker context inspect --format '{{.Endpoints.docker.Host}}')
+```
+
+### Download the programs
+
+On Linux x86_64, download the two programs from the latest release. You need no build tools.
+
+```bash title="Terminal"
+curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/ferry-x86_64-unknown-linux-gnu.tar.gz
+curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+sudo tar -xzf ferry-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin ferryd ferry
+```
+
+If the checksum is not correct, do not install the archive. Download it again. The programs need <Term id="glibc" /> 2.35 or newer: Ubuntu 22.04 or newer, Debian 12 or newer.
+
+### Build from source
+
+On macOS or on ARM64, build the two programs from the source.
+
+```bash title="Terminal"
+git clone https://github.com/rogerbentcha/ferry
+cd ferry
+(cd web && npm ci && npm run build)
+cargo build --release
+sudo install -m 0755 target/release/ferryd target/release/ferry /usr/local/bin/
+```
+
+Build the dashboard first. The Rust build puts `web/dist` into `ferryd`. Then <Term id="cargo" /> makes `target/release/ferryd` and `target/release/ferry`. The last command puts them on your <Term id="path-variable" />.
+
+## Start the server
+
+If you used the install script, systemd runs `ferryd` already. Go to [Create your account](#create-your-account).
+
+On another install, run `ferryd` as a user that can use Docker.
+
+```bash title="Terminal"
+ferryd
+```
+
+```text title="Output" noCopy
+  Ferry 0.1.0 is running in the background (pid 48213)
+  Dashboard + API : http://127.0.0.1:7878
+  Dashboard (proxy): http://ferry.localhost:8080
+  Apps            : http://<name>.localhost:8080
+  Docker          : 29.2.0 (8 CPUs, 7.7 GiB)
+  Data            : /home/you/ferry-data
+  Limits          : 512 MiB / 1 CPU per container (default), 1024 pids, logs rotated at 10 MiB × 3
+  Free disk check : deploys need 1 GiB free
+
+  Create your account: http://127.0.0.1:7878/setup?code=5b0e…
+
+  Logs            : ferryd logs -f
+  Stop            : ferryd stop
+```
+
+The server continues to run after you close the terminal. To make sure that it answers, run `curl http://127.0.0.1:7878/healthz`. It prints `ok`.
+
+If Docker does not run, or another program uses a port, `ferryd` prints the error. Then it stops with <Term id="exit-code" /> 1. See [Troubleshooting](/docs/help/troubleshooting).
+
+## Create your account
+
+1. Open the `Create your account` link in a browser.
+2. Enter your email and a password of 8 characters or more. The <Term id="setup-code" /> from the link is in the form already.
+3. Click **Create account**.
+
+Ferry creates the account and signs this browser in to the dashboard. This <Term id="admin-account" /> is the only user of the server. Ferry has no teams and no roles.
+
+If you lost the link, run `ferryd status`. It prints the link again. With the install script, run `sudo ferryd status --data-dir /var/lib/ferry`. If you forget the password, run [`ferryd reset-password`](/docs/reference/server-options#ferryd-reset-password) on the server.
+
+<Callout type="warning" title="The account controls the full server">
+A person who signs in can deploy code and read each environment variable of the server. Do not open the API to the internet without HTTPS. See [Security](/docs/architecture/security).
+</Callout>
+
+## Set up the CLI
+
+The `ferry` command sends each of your commands to the API of `ferryd`. It works on the server, on your laptop or in a <Term id="ci" /> job.
+
+### Install the CLI
+
+The install script, the release archive and the build all give you `ferry`. It is one <Term id="binary" /> with no dependencies. To control Ferry from another machine, copy `ferry` to that machine, for example to `/usr/local/bin`.
+
+```bash title="Terminal"
+ferry --version
+```
+
+### Log in
+
+```bash title="Terminal"
+ferry login --server http://127.0.0.1:7878
+```
+
+```text title="Output" noCopy
+To connect this terminal, open this page and sign in:
+
+  http://127.0.0.1:7878/cli-login?id=d54ce0ee…
+
+Approve the request there if it shows this code:  MRDB-M7EE
+Waiting for the approval... (Ctrl-C to cancel)
+```
+
+The command opens the page in your browser. On a machine with no browser, add `--no-browser` and open the URL yourself. Sign in, and compare the code with the code in your terminal. Then click **Approve**.
+
+```text title="Output" noCopy
+Logged in to http://127.0.0.1:7878 (Ferry 0.1.0)
+Saved to /home/you/.config/ferry/config.json
+```
+
+The terminal now has its own <Term id="api-token" />. A request expires after 10 minutes. To test the connection at a later time, run `ferry info`.
+
+### Reach a remote server
+
+`ferryd` listens on `127.0.0.1` only. On your laptop, open an SSH tunnel to the server. Then log in to the local address.
+
+```bash title="Terminal"
+ssh -N -L 7878:127.0.0.1:7878 you@your-server &
+ferry login --server http://127.0.0.1:7878
+```
+
+### Log in with a token
+
+If no person can approve the login, give a token. Examples: a CI job, a script, a machine with no browser.
+
+```bash title="Terminal"
+ferry login --server http://127.0.0.1:7878 --token <token>
+```
+
+| Token | Where you get it |
+|---|---|
+| A named API token | The dashboard: **Server → Account → API tokens**. The dashboard shows it one time. |
+| The <Term id="server-token" /> | The file `<data-dir>/api_token` on the server, for scripts on the server |
+
+A token starts with `fy_` and can use the full API. Do not commit a token. Revoke each token that you do not use, in **Server → Account**.
+
+### Where the CLI finds the server
+
+`ferry login` saves the server URL and the token in the <Term id="config-file" /> `~/.config/ferry/config.json`. Only your user can read it (mode `0600`). The file keeps one login. A new `ferry login` replaces it.
+
+Each command uses the first value that it finds:
+
+1. The flags `--server` and `--token`.
+2. The variables `FERRY_SERVER` and `FERRY_TOKEN`.
+3. The config file.
+4. The default server `http://127.0.0.1:7878`, with no token.
+
+The saved token goes only to its own server. For another server, give its token too.
+
+### Use the CLI in CI
+
+```bash title="deploy.sh"
+export FERRY_SERVER=https://ferry.apps.example.com
+export FERRY_TOKEN="$FERRY_API_TOKEN"   # from your CI secrets
+
+ferry deploy api --follow   # exits with 1 if the deploy fails
+```
+
+Keep the token in the secrets of your CI, not in the script.
+
+### Output and exit codes
+
+| Item | What to know |
+|---|---|
+| Output | Results go to <Term id="stdout" />. Progress, warnings and errors go to <Term id="stderr" />. |
+| `--json` | Prints the exact <Term id="json" /> answer of the API. A log gives one JSON object on each line. |
+| `--follow`, `-f` | Shows the log until the deploy or the job stops. <kbd>Ctrl</kbd>+<kbd>C</kbd> stops the follow, not the deploy. |
+| `--yes`, `-y` | `ferry delete`, `db rm`, `env-group rm`, `deploy-hook rotate` and `domains disconnect` ask a question first. In a script, they need `--yes`. |
+| Exit codes | `0` success. `1` failure, or a failed deploy with `--follow`. `2` usage error. `130` <kbd>Ctrl</kbd>+<kbd>C</kbd>. |
+| Quotes | Put a value with a `${{…}}` <Term id="reference" /> in single quotes. If not, your <Term id="shell" /> changes it. |
+
+The [CLI reference](/docs/reference/cli) has each command and each option.
+
+## Ports and URLs
+
+| What | Default address | Flag |
+|---|---|---|
+| API and dashboard | `http://127.0.0.1:7878` | `--api-addr` |
+| Public HTTP <Term id="proxy" />, where your apps are | `0.0.0.0:8080` | `--proxy-addr` |
+| Public HTTPS proxy | off | `--https-addr` with `--acme-email` |
+
+With the defaults, your apps are at `http://<name>.localhost:8080`, and the dashboard is also at `http://ferry.localhost:8080`. Browsers send each `*.localhost` name to `127.0.0.1`. Thus you set up no DNS on your machine.
+
+The API documentation of your server is at `http://127.0.0.1:7878/api/docs`. Do not open the API to the public. Use an SSH tunnel.
+
+## The data directory
+
+The <Term id="data-directory" /> has the full state of the server. Make a backup of it. The default is `./ferry-data`, in the folder where you start `ferryd`. The install script uses `/var/lib/ferry`.
+
+```bash title="Terminal"
+ferryd --data-dir /var/lib/ferry
+```
+
+`FERRY_DATA_DIR` does the same. The data of a <Term id="datastore" /> is in a Docker <Term id="volume" />, not in this folder.
+
+| Path | Contents |
+|---|---|
+| `ferry.db` | The database: services, deploys, variables, datastores, the account and its tokens |
+| `api_token` | The server token (mode `0600`) |
+| `setup_code` | The code that creates the account, while there is no account |
+| `ferryd.log` | The output of a server in the background |
+| `logs/` | Deploy logs and job logs |
+| `certs/` | The TLS certificates |
+
+## Run ferryd in the background
+
+From a terminal, `ferryd` starts the server in the <Term id="background" /> and gives the terminal back. From other places, it runs in the <Term id="foreground" />: systemd, a container, a pipe or a script. A <Term id="service-manager" /> needs `ferryd run` in its unit file.
+
+| Command | What it does |
+|---|---|
+| `ferryd start` | Starts the server in the background. It takes the options of `ferryd`. |
+| `ferryd run` | Runs the server in the foreground, with its log in the terminal. |
+| `ferryd status` | Tells you if the server runs and where it listens. The exit code is 0 if it runs, and 3 if not. |
+| `ferryd logs` | Prints the last 100 lines of the server log. `-f` continues with the new lines. |
+| `ferryd stop` | Stops the server. |
+| `ferryd reset-password` | Replaces the password of the account and signs each browser out. |
+
+`stop`, `status`, `logs` and `reset-password` find the server through its data directory. Run them in the folder where you started `ferryd`, or give the same `--data-dir`.
+
+```bash title="Terminal"
+# A server of the install script
+sudo ferryd status --data-dir /var/lib/ferry
+```
+
+Under systemd, the log of `ferryd` goes to the journal. Read it with `sudo journalctl -u ferryd -f`.
+
+## Stop the server
+
+```bash title="Terminal"
+ferryd stop   # stop the server
+ferryd        # start it again
+```
+
+For a server in the foreground, press <kbd>Ctrl</kbd>+<kbd>C</kbd>. Under systemd, run `sudo systemctl stop ferryd`.
+
+When `ferryd` stops, your containers continue to run. But the proxy is a part of `ferryd`, thus the public URLs do not answer. At the next start, `ferryd` puts the routes back.
+
+The stop is a <Term id="graceful-shutdown" />. Open API requests get up to 10 seconds. The engine stops the jobs in progress and records the deploys in progress as interrupted. To stop immediately, run `ferryd stop` a second time.

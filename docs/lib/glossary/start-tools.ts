@@ -32,20 +32,6 @@ export const terms = {
   },
 
   // --- The CLI -------------------------------------------------------------
-  terminal: {
-    term: 'terminal',
-    definition: 'The window where you type commands and read their output.',
-    see: ['cli'],
-  },
-  flag: {
-    term: 'flag',
-    definition: 'An option that you add to a command. It starts with `--`, for example `--json`.',
-  },
-  'shell-variable': {
-    term: 'variable of the shell',
-    definition: 'A value with a name that your shell gives to each command, for example `FERRY_TOKEN`. You set it with `export`.',
-    see: ['env-var'],
-  },
   'config-file': {
     term: 'config file',
     definition: 'The file where `ferry login` saves the server URL and the API token: `~/.config/ferry/config.json`.',

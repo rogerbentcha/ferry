@@ -1,0 +1,236 @@
+---
+title: Quickstart
+description: Start a server, deploy a small Node.js app, then change it, roll it back and clean up.
+---
+
+You deploy `examples/node-hello`, a small Node.js <Term id="web-service" /> from the Ferry repository. Ferry takes it from your disk. You need no git repository and no <Term id="dockerfile" />.
+
+First, install Ferry. See [Install Ferry](/docs/getting-started/installation). The output on this page comes from a real run. Ids, times and ports are different on your machine.
+
+## Start the server
+
+If you used the install script, `ferryd` runs already and you created your account. Go to the next step.
+
+If not, start the server.
+
+```bash title="Terminal"
+ferryd
+```
+
+```text title="Output" noCopy
+  Ferry 0.1.0 is running in the background (pid 48213)
+  Dashboard + API : http://127.0.0.1:7878
+  Dashboard (proxy): http://ferry.localhost:8080
+  Apps            : http://<name>.localhost:8080
+  …
+
+  Create your account: http://127.0.0.1:7878/setup?code=5b0e…
+```
+
+Open the `Create your account` link in your browser. Enter your email and a password of 8 characters or more. Click **Create account**. You are now in the <Term id="dashboard" />.
+
+## Log in with the CLI
+
+```bash title="Terminal"
+ferry login --server http://127.0.0.1:7878
+```
+
+The command opens a page in your browser and shows a code. Make sure that the page shows the code of your terminal. Then click **Approve**.
+
+```text title="Output" noCopy
+Logged in to http://127.0.0.1:7878 (Ferry 0.1.0)
+Saved to /home/you/.config/ferry/config.json
+```
+
+On a server with no browser, add `--no-browser`. Then open the URL on your computer, through the <Term id="ssh-tunnel" /> of the install script.
+
+## Deploy the app
+
+Get the example. If you built Ferry from source, you have it already.
+
+```bash title="Terminal"
+git clone https://github.com/rogerbentcha/ferry
+cd ferry/examples/node-hello
+```
+
+Run [`ferry up`](/docs/reference/cli#ferry-up). It sends the current folder to the server and deploys it.
+
+<Terminal
+  title="Terminal"
+  lines={[
+    '$ ferry up --follow',
+    'Packing /home/you/ferry/examples/node-hello …',
+    'Packed 2 file(s), 576 B',
+    "Created web service 'node-hello' (srv-8593a88388f349feade2)",
+    'Uploading 576 B …',
+    'Deploy dep-3493c505ea9b4415b359 queued (upload), streaming logs…',
+    '09:36:21 ==> Detected Node.js runtime',
+    '09:36:21 ==> Build successful 🎉',
+    '09:36:21 ==> Starting 1 instance(s)',
+    '09:36:23 ==> Health check passed',
+    '09:36:23 ==> Routing traffic to the new instance(s)',
+    '09:36:23 ==> Your service is live 🎉',
+    '09:36:23 ==> Available at http://node-hello.localhost:8080',
+    'Deploy dep-3493c505ea9b4415b359 is live at http://node-hello.localhost:8080',
+  ]}
+/>
+
+`--follow` shows the <Term id="deploy-log" /> until the app is live. The first deploy is slower: Docker downloads the `node:22-alpine` <Term id="base-image" /> one time.
+
+Open the URL of the last line.
+
+```bash title="Terminal"
+curl http://node-hello.localhost:8080
+```
+
+```text title="Output" noCopy
+Hello from Ferry (node)! service=node-hello deploy=dep-3493c505ea9b4415b359
+```
+
+## Read the deploy log
+
+The full log has more lines than the terminal above. These lines tell what Ferry did.
+
+| Line of the log | What Ferry did |
+|---|---|
+| `Created web service 'node-hello'` | `ferry up` created a <Term id="service" /> with the name of the folder. |
+| `Detected Node.js runtime` | Ferry found the <Term id="runtime" /> from `package.json` and wrote a Dockerfile. |
+| `Build successful` | Docker built the <Term id="image" />. |
+| `Using port 10000 (default port)` | The app sets no port. Ferry gives it the default port in the variable `PORT`. |
+| `Limits: 512 MiB memory, 1 CPU per instance` | The default <Term id="resource-limit">limits</Term> of each container |
+| `Health check passed` | The port of the new <Term id="instance" /> accepts connections. |
+| `Routing traffic to the new instance(s)` | The <Term id="proxy" /> sends the requests to the new instance. |
+
+To read the log again, run `ferry logs --deploy dep-3493c505ea9b4415b359`.
+
+## Look at the app
+
+```bash title="Terminal"
+ferry status node-hello
+```
+
+```text title="Output" noCopy
+node-hello: live — 1/1 instance(s) running
+INSTANCE   DEPLOY     STATE     PORT    CPU            MEMORY                 RESTARTS   STARTED
+82e2be     4415b359   running   62694   4.7% / 1 CPU   24.2 MiB / 512.0 MiB   0          8s ago
+```
+
+| Command | Shows |
+|---|---|
+| `ferry services` | The list of your services |
+| `ferry status node-hello` | Each instance, with its CPU and memory use next to its limits |
+| `ferry logs node-hello` | What the app writes. `-f` continues with the new lines. |
+| `ferry open node-hello` | The URL. The command also tries to open it in your browser. |
+
+In the dashboard at `http://127.0.0.1:7878`, open **node-hello**. You do not need to sign in again.
+
+## Deploy a change
+
+Edit the text in `server.js`.
+
+```js title="server.js"
+res.end(`Hello from Ferry (node)! service=…`); // [!code --]
+res.end(`Hello again from Ferry! service=…`); // [!code ++]
+```
+
+Run the same command again.
+
+```bash title="Terminal"
+ferry up --follow
+```
+
+```text title="Output" noCopy
+09:36:41 ==> Health check passed
+09:36:41 ==> Routing traffic to the new instance(s)
+09:36:43 ==> Stopping 1 old instance(s)
+09:36:43 ==> Your service is live 🎉
+```
+
+The service exists already. Thus `ferry up` only uploads and deploys. The old <Term id="container" /> answered until the new container passed its <Term id="health-check" />. Then the proxy moved the traffic, and Ferry stopped the old container. This is a <Term id="blue-green" /> deploy with <Term id="zero-downtime" />.
+
+## Roll back
+
+Ferry keeps each deploy. List the deploys of the service.
+
+```bash title="Terminal"
+ferry deploys node-hello
+```
+
+```text title="Output" noCopy
+ID                         STATUS        TRIGGER   COMMIT   CREATED   DURATION
+dep-ba5a7fce730d4061aaa7   live          upload    -        5s ago    1s
+dep-3493c505ea9b4415b359   deactivated   upload    -        23s ago   2s
+```
+
+Copy the id of the first deploy, on the last line. Then roll back to it.
+
+```bash title="Terminal"
+ferry rollback node-hello dep-3493c505ea9b4415b359 --follow
+```
+
+```text title="Output" noCopy
+09:36:49 ==> Rolling back to deploy dep-3493c505ea9b4415b359 (deploy dep-16d99450e6984bb18843)
+09:36:49 ==> Reusing image ferry/node-hello:dep-3493c505ea9b4415b359 of deploy dep-3493c505ea9b4415b359
+…
+09:36:53 ==> Your service is live 🎉
+```
+
+Ferry uses the image of that deploy again and builds nothing. A <Term id="rollback" /> is a new deploy with the <Term id="trigger" /> `rollback`. You can roll it back too.
+
+## If a deploy fails
+
+Deploy with a start command that crashes.
+
+```bash title="Terminal"
+ferry up --start-cmd "node crash.js" --follow
+```
+
+```text title="Output" noCopy
+09:37:33 [d1c6b8] Error: Cannot find module '/app/crash.js'
+…
+09:37:34 ==> Removing 1 new instance(s)
+09:37:34 ==> Deploy failed: instance d1c6b8 crashed (exit code 1)
+Deploy dep-ca4bc7b5862742959b70 failed (deploy_failed): instance d1c6b8 crashed (exit code 1)
+```
+
+The command stops with <Term id="exit-code" /> 1. Ferry removes the new instance, and the previous deploy continues to answer. If an instance crashes during the health check, the log also shows the last 50 lines of its output.
+
+To repair it, remove the setting and deploy again.
+
+```bash title="Terminal"
+ferry up --start-cmd "" --follow
+```
+
+## Clean up
+
+```bash title="Terminal"
+ferry delete node-hello
+ferryd stop
+```
+
+```text title="Output" noCopy
+Delete service 'node-hello' with all its deploys? [y/N] y
+Deleted service 'node-hello'
+```
+
+Ferry deletes the service with its containers, its images and its deploy history. Add `--yes` to delete with no question. If systemd runs `ferryd`, stop it with `sudo systemctl stop ferryd`.
+
+## Deploy other things
+
+`ferry up` works for each folder that Ferry can build. `ferry create` makes a service from a git <Term id="repository" /> or from an image.
+
+```bash title="Terminal"
+# A static site: nginx serves the folder as it is
+ferry up my-site --dir ./public --type static
+
+# A git repository, with 2 instances and an HTTP health check
+ferry create api --repo https://github.com/you/api --branch main --instances 2 --health /healthz --follow
+
+# A prebuilt image
+ferry create hello --image nginx:alpine --port 80
+
+# A cron job that runs each night at 03:00 UTC
+ferry create nightly --type cron --image busybox:stable --schedule "0 3 * * *" --start-cmd 'echo hello'
+```
+
+See [Deploy an app](/docs/guides/deploy) for the service types, the sources and the build settings.

@@ -1,0 +1,179 @@
+---
+title: The dashboard
+description: A tour of the dashboard of Ferry, with what each page shows and what you can do there.
+---
+
+The <Term id="dashboard" /> is the web interface of your server. It is part of <Term id="ferryd" />, and it does all that the <Term id="cli" /> does. A change from the CLI, the API or another browser tab shows on the screen in about one second.
+
+```text title="Browser"
+http://127.0.0.1:7878
+```
+
+Open this address in your browser. This page shows each area of the dashboard. For the steps of a task, follow the link to its guide.
+
+## Open the dashboard and sign in
+
+| Address | What it is |
+|---|---|
+| `http://127.0.0.1:7878` | The address of the <Term id="api" />. |
+| `http://ferry.localhost:8080` | The public <Term id="proxy" />. It serves the dashboard by default when the base domain is local, for example `localhost`. |
+
+On a remote server, open an <Term id="ssh-tunnel" /> on your machine first. Then open `http://127.0.0.1:7878` in your browser.
+
+```bash title="Terminal"
+ssh -N -L 7878:127.0.0.1:7878 you@your-server
+```
+
+To open the dashboard with no tunnel, give it its own domain with HTTPS. See [Put the dashboard on its own domain](/docs/guides/production#put-the-dashboard-on-its-own-domain).
+
+Enter the email and the password of the account. Then click **Sign in**. A new server has no account: open the `Create your account` link that `ferryd` printed when it started. The browser keeps the <Term id="browser-session" /> until you sign out, or for 30 days with no use.
+
+If you forget the password, run [`ferryd reset-password`](/docs/reference/server-options#ferryd-reset-password) on the server. Give it the same `--data-dir` as the server.
+
+<Callout type="warning" title="The dashboard controls the full server">
+The server has one <Term id="admin-account" />, with no other users and no roles. A person who can sign in controls each app on the server.
+</Callout>
+
+## Find your way
+
+Each screen has the same frame: a top bar, an <Term id="icon-rail" /> on the left, and the page.
+
+| Part | What it has |
+|---|---|
+| Top bar, left | The <Term id="breadcrumb" />: the server, with its default domain and its version. On a service, a switcher to another service, the type and the state. |
+| Top bar, right | **Connect**, **Docs**, the search field, the theme menu, help, **Sign out** and the account menu. |
+| Icon rail | **Services**, **Datastores**, **Env groups**, **Blueprints** and **Server**. On a phone, the rail becomes a menu button. |
+
+**Connect** opens a panel with the `ferry login` command for this server and the API URL. On a service page, it also has the URL, the private address and the <Term id="deploy-hook" /> of the service. Each value has a copy button.
+
+The <Term id="command-palette" /> opens with <kbd>⌘</kbd>+<kbd>K</kbd> or <kbd>Ctrl</kbd>+<kbd>K</kbd>. Type a name to go to a service, a datastore, an env group or a page. It also starts **Manual deploy** or **Restart service** on the current service, and creates a service.
+
+## Services
+
+The **Services** page is the home page. Each service is a card:
+
+| Part of the card | Content |
+|---|---|
+| Name and source | A repository and its branch, an image, or `Upload via ferry up` |
+| Badges | The type, the <Term id="runtime" /> and the number of instances |
+| Address | The public URL, the private address or the cron schedule |
+| Status line | The state of the service and the time of the last deploy |
+| ⋮ menu | Open, deploy, restart, suspend or resume, copy the URL, delete |
+
+Search a service by its name. Filter by status, for example live, failed or suspended. Sort by name or by last deploy, and show a grid or a list. The **Ferry server** panel on the right shows the versions of Ferry and Docker, the address of the proxy and the number of each resource.
+
+If the server has no GitHub or GitLab account, the page starts with **Connect GitHub** and **Connect GitLab**. See [Auto-deploy from GitHub](/docs/guides/github-auto-deploy).
+
+**+ New service** opens one form. It has the service type, the name, the source, the build settings, the domains and the variables. The source is a **Git repository**, a **Docker image** or **Upload later**. **Advanced** has the root directory, the Dockerfile path, the health check path, a disk and the limits. Click **Create and deploy**. See [Deploy an app](/docs/guides/deploy).
+
+## A service page
+
+The header shows the name, the state, the type and the URL of the <Term id="service" />. It has two buttons: **Open** and **Manual deploy**. The arrow next to **Manual deploy** has more actions:
+
+| Item | Use |
+|---|---|
+| **Deploy latest commit**, **Pull & deploy image** or **Redeploy last upload** | A new deploy. The item depends on the source of the service. |
+| **Clear build cache & deploy** | A new build with no cache |
+| **Restart service** | New instances from the live image, with the current settings and variables |
+| **Suspend service** | Stop the service |
+
+A side menu opens the six sections of the service.
+
+### Overview
+
+The info tiles give the status, the instances, the private address (`name:port`), the source, the latest deploy and the domains. A graph shows the env groups, datastores and services that this service uses. **Instances** shows the live CPU and memory of each container next to its limits, with a **Scale** button.
+
+If an instance goes above its memory limit, it gets an **OOM killed** badge. The **Raise the limit** link opens **Settings → Resources**. See [Scaling and limits](/docs/guides/scaling).
+
+### Deploys
+
+The list shows each deploy, the newest first: its status, its <Term id="trigger" />, its source, its image, its duration and its age. The menu of a row has **Roll back to this deploy** for an earlier deploy that went live. It has **Cancel deploy** for a deploy in progress.
+
+Open a deploy to read its **Build & deploy log**, live. If the deploy failed, the **Why it failed** box shows the error. See [Deploys and rollbacks](/docs/guides/rollbacks).
+
+### Logs
+
+The page shows the <Term id="runtime-log" /> of all the instances in one live list. Load the last 100, 500 or 1000 lines, or all the lines. You can pause, search, wrap the long lines, show the timestamps and download the lines. When you scroll up, the list stops. Click **Jump to latest** to start it again. See [Logs](/docs/guides/logs).
+
+### Jobs
+
+The list shows the one-off jobs and the cron runs: status, command, trigger, <Term id="exit-code" /> and duration. Click **Run job**, or **Run now** on a <Term id="cron-job" />. Open a job to read its output, or to cancel it while it runs. On a cron job, a card shows the schedule, with an **Edit schedule** shortcut. See [Jobs](/docs/guides/jobs).
+
+### Environment
+
+| Card | Use |
+|---|---|
+| **Service variables** | Edit each <Term id="env-var" /> of the service. |
+| **Linked environment groups** | Link or unlink an <Term id="env-group" />. |
+| **Effective environment** | The variables of the next deploy or restart, each with its source. **Show Ferry variables** adds the variables that Ferry gives, for example `PORT`. |
+| **Reference syntax** | The <Term id="reference">references</Term> that you can insert for your datastores and services. |
+
+The values stay hidden until you click **Reveal**. Import a `.env` file, or paste `KEY=value` lines into a key field. **Save only** keeps the variables for the next deploy or restart. **Save & restart** applies them immediately. See [Environment variables and secrets](/docs/guides/environment).
+
+### Settings
+
+| Section | What you change |
+|---|---|
+| **General** | Nothing: the name, the id, the type and the private address, with copy buttons |
+| **Build & deploy** | The source, the branch, the runtime, the commands, the port, the health check path and auto-deploy |
+| **Cron schedule** | The schedule of a cron job |
+| **Scaling** | The instances and the mount path of the disk |
+| **Resources** | The memory limit and the CPU limit |
+| **Custom domains** | The domains of the service. See [Domains and HTTPS](/docs/guides/domains). |
+| **Deploy hook** | Copy the secret deploy URL, or make a new one |
+| **Danger zone** | Suspend, resume or delete the service |
+
+If a setting changes in another place while you edit the form, the page shows **These settings changed elsewhere**. Choose to keep your edits or to load the latest values.
+
+## Datastores
+
+Each <Term id="datastore" /> is a card with its version, its private address, its status and its <Term id="host-port" />. Click **New datastore**. Give the name, the kind and the version. For Postgres, you can also give a database name and a user.
+
+The page of a datastore has these parts:
+
+| Part | Content |
+|---|---|
+| **Connection** | The addresses, the <Term id="connection-string">connection strings</Term>, the username, the password and the database, with copy buttons |
+| **Resources** | The memory and CPU limits. **Apply limits** changes the container immediately, with no restart. |
+| **Use in a service** | The reference to paste, for example `DATABASE_URL=${{datastore.app-db.connectionString}}` |
+| **Referenced by** | The services that use the datastore |
+| **Danger zone** | Delete the datastore and its data |
+
+See [Databases](/docs/guides/databases).
+
+## Env groups and blueprints
+
+**Env groups** shows each group with its keys and its linked services. The page of a group has the same variable editor as a service. **Link service** adds a service to the group. There, **Save & restart** restarts the linked services that are live.
+
+**Blueprints** applies a <Term id="blueprint" /> file. Paste or open a `ferry.yaml` or a `render.yaml`, or click **Example**. Click **Dry run** to see what Ferry will create, update or not change. Then click **Apply**.
+
+Ferry deploys the new services and the changed services, and restarts the services with only new variables. **Apply** deletes nothing. See the [Blueprint reference](/docs/reference/blueprint).
+
+## The Server page
+
+Click **Server** in the icon rail. A side menu shows seven sections:
+
+| Section | Content |
+|---|---|
+| **General** | The versions of Ferry and Docker, the default container limits, the default domain, the proxy URL and the dashboard URL |
+| **Monitoring** | The CPU, memory, disk and network of the server, and each container with its CPU and memory. Charts show the last 1 h, 6 h or 24 h, and the requests of each service. See [Monitor the server](/docs/guides/production#monitor-the-server). |
+| **Server logs** | The <Term id="server-log" />: the last 2,000 lines, then each new line, live. Filter by level: **Error**, **Warn**, **Info** or **Debug**. |
+| **Domains** | The domains of the server and their state. **Verify now**, **Make default**, **Disconnect**. The certificate of each hostname. See [Domains and HTTPS](/docs/guides/domains). |
+| **Account** | Your password, the API tokens and the browser sessions. See the next section. |
+| **Connections** | The `ferry login` command, the `FERRY_SERVER` and `FERRY_TOKEN` variables for CI, and the GitHub and GitLab accounts |
+| **API** | The base URL, an example request, and links to the <Term id="swagger-ui" /> at `/api/docs` and to the <Term id="openapi" /> file. See the [API overview](/docs/reference/api-overview). |
+
+## Account and tokens
+
+Open **Server → Account**. The account menu in the top bar opens it too.
+
+**Change password** asks for the current password. Then Ferry signs out each other browser.
+
+**API tokens** lists the tokens of the CLI and of your scripts. An <Term id="api-token" /> shows its name, its last 4 characters, its last use and its expiry. A token from `ferry login` has the name of its terminal, for example `ada@laptop`.
+
+| Button | Effect |
+|---|---|
+| **New token** | You give a name and an expiry: never, 30 days, 90 days or 1 year. The dashboard shows the token one time. |
+| **Revoke** | The token stops immediately. |
+
+**Sessions** lists the browsers that have a session on the account. Each line has a **Sign out** button.

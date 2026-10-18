@@ -1,0 +1,275 @@
+---
+title: Scaling and limits
+description: Run more instances of a service, set its memory and CPU limits, and see what Ferry does after a crash.
+---
+
+A service runs 1 <Term id="instance" /> by default. Each instance can use 512 <Term id="mib" /> of memory and 1 CPU. Change these numbers with three commands:
+
+```bash title="Terminal"
+ferry scale api 3               # run 3 instances
+ferry update api --memory 1G    # give 1 GiB of memory to each instance
+ferry restart api               # apply the new limit
+```
+
+Ferry also repairs your app when it crashes or runs out of memory. This page tells what you see then, and what to do.
+
+## Run more instances
+
+<Tabs items={['CLI', 'Dashboard', 'API']} groupId="interface" persist>
+<Tab value="CLI">
+
+```bash title="Terminal"
+ferry scale api 3
+```
+
+```text noCopy
+Scaled 'api' to 3 instance(s)
+```
+
+To set the number when you create the service, add `--instances`:
+
+```bash title="Terminal"
+ferry create api --repo https://github.com/you/api --instances 2
+```
+
+</Tab>
+<Tab value="Dashboard">
+
+1. Open the **Overview** page of the service.
+2. In **Service availability**, click **Scale instances**.
+3. Type the number of instances.
+4. Click **Scale to 3 instances**.
+
+The field **Instances** in **Settings** → **Scaling** does the same.
+
+</Tab>
+<Tab value="API">
+
+```bash title="Terminal"
+curl -X POST http://127.0.0.1:7878/api/v1/services/api/scale \
+  -H "Authorization: Bearer $FERRY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"instances": 3}'
+```
+
+See the [API reference](/docs/reference/api).
+
+</Tab>
+</Tabs>
+
+<Term id="scaling">Scaling</Term> builds nothing and starts no new <Term id="deploy" />. Ferry starts the new instances from the <Term id="live-deploy" />. A new instance gets traffic when it accepts connections. When you scale down, Ferry stops the extra instances. Each one has 10 seconds to stop. There is no downtime.
+
+`ferry status` shows each instance, with its CPU and memory:
+
+```bash title="Terminal"
+ferry status api
+```
+
+```text noCopy
+api: live — 3/3 instance(s) running
+INSTANCE   DEPLOY     STATE     PORT    CPU            MEMORY                 RESTARTS   STARTED
+6040c7     4a6f817d   running   63295   0.0% / 1 CPU   11.9 MiB / 512.0 MiB   0          16s ago
+8cb56c     4a6f817d   running   63326   0.0% / 1 CPU   11.9 MiB / 512.0 MiB   0          6s ago
+90f134     4a6f817d   running   63325   0.0% / 1 CPU   11.9 MiB / 512.0 MiB   0          6s ago
+```
+
+| Rule | Value |
+|---|---|
+| Number of instances | 1 to 50 |
+| Service types | <Term id="web-service" />, <Term id="static-site" />, <Term id="private-service" />, <Term id="worker" /> |
+| No scaling | A <Term id="cron-job" />: each run has its own container. A service with a <Term id="disk" />: 1 instance only. |
+| Autoscaling | None. You choose the number. |
+
+### How the instances share the work
+
+The <Term id="proxy" /> gives the requests of a web service or a static site to each instance in turn. This is <Term id="round-robin" />. On the <Term id="private-network" />, the name of the service gives the addresses of all its instances. Each instance of a worker runs the same start command.
+
+Two requests of one user can go to two different instances. Keep shared data, for example sessions, in a database and not in the memory of one instance.
+
+## Set memory and CPU limits
+
+A <Term id="resource-limit" /> is the most memory and CPU that one <Term id="container" /> can use. Each instance and each job run of the service gets the limits of the service. Thus 3 instances can use 3 times the limit.
+
+<Tabs items={['CLI', 'Dashboard', 'API', 'Blueprint']} groupId="interface" persist>
+<Tab value="CLI">
+
+```bash title="Terminal"
+ferry update api --memory 2G --cpu 0.5
+ferry restart api --follow
+```
+
+```text noCopy
+Updated 'api'
+Resource limits apply to the next deploy or restart: ferry restart api
+```
+
+`ferry create` and `ferry up` also accept `--memory` and `--cpu`. The value `default` goes back to the server default. `ferry show api` prints the limits of the service.
+
+</Tab>
+<Tab value="Dashboard">
+
+1. Open **Settings** → **Resources** of the service.
+2. Choose a **Memory limit** and a **CPU limit**. With **Custom…**, you can type a size, for example `768M`.
+3. Click **Save changes**.
+4. In the message that shows, click **Restart now**.
+
+For a new service, the two limits are in the **Advanced** card.
+
+</Tab>
+<Tab value="API">
+
+```bash title="Terminal"
+curl -X PATCH http://127.0.0.1:7878/api/v1/services/api \
+  -H "Authorization: Bearer $FERRY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"memory_limit_mb": 2048, "cpu_limit": 0.5}'
+```
+
+`memory_limit_mb` is in MiB. `cpu_limit` is in CPUs. The value `0` goes back to the server default. This request starts no deploy. Restart the service after it.
+
+</Tab>
+<Tab value="Blueprint">
+
+```yaml title="render.yaml"
+services:
+  - type: web
+    name: api
+    plan: standard     # 2 GiB / 1 CPU
+    cpuLimit: 500m     # but only half a core
+```
+
+A Render `plan` gives a memory limit and a CPU limit. The keys `memoryLimit` and `cpuLimit` replace one value of the plan. An apply restarts each live service whose limits changed. See the [Blueprint reference](/docs/reference/blueprint).
+
+</Tab>
+</Tabs>
+
+A new limit applies at the next deploy or <Term id="restart" />. A restart uses the live image again and builds nothing. The deploy log shows the limits of the new instances:
+
+```text noCopy
+==> Limits: 2 GiB memory, 1 CPU per instance
+```
+
+### Write a size
+
+| Limit | You write | Ferry reads | Range |
+|---|---|---|---|
+| Memory | `512`, `512M`, `1G`, `1.5G` | A number with no unit is MiB. `G` is GiB. | 16 MiB to 1 TiB |
+| CPU | `0.5`, `2`, `500m` | `500m` is 500 millicores: half a core. | 0.01 to 512 CPUs |
+
+### Limits of a datastore
+
+A <Term id="datastore" /> gets its new limits immediately, with no restart:
+
+```bash title="Terminal"
+ferry db update app-db --memory 2G --cpu 1
+```
+
+For a Redis datastore, Ferry sets the Redis `maxmemory` to 3/4 of the memory limit. When this part is full, Redis refuses new writes. See [Databases](/docs/guides/databases).
+
+### Change the server defaults
+
+A service or a datastore with no limit of its own gets the server defaults: 512 MiB and 1 CPU. To change them, start <Term id="ferryd" /> with these flags:
+
+```bash title="Terminal"
+ferryd --default-memory-limit 1G --default-cpu-limit 2
+```
+
+The value `0` removes the default limit. `ferry info` shows the defaults and the size of the server. See [Server options](/docs/reference/server-options#ferryd).
+
+On a server with 1 CPU, the default of 1 CPU is the full server. Use `--default-cpu-limit 0.5` there.
+
+## What happens at a limit
+
+| Limit | Default | At the limit |
+|---|---|---|
+| Memory | 512 MiB | The <Term id="kernel" /> stops the process. This is an <Term id="oom" />. Docker starts the container again. |
+| CPU | 1 CPU | The kernel slows the container down. The app continues to run. |
+| Processes and threads | 1024 | The container cannot start one more process. Change the value with `ferryd --pids-limit`. |
+
+A limit is a maximum, not a reservation. Ferry does not check that all the limits together fit on the server. A build has no limit. It can use all the memory and CPU of the server.
+
+## When an app crashes
+
+Docker starts a crashed container again immediately. During that time, the proxy sends the requests to the other instances. If the container disappears, the <Term id="reconciler" /> starts a new instance in about 10 seconds. You do not have to do anything.
+
+The `RESTARTS` column of `ferry status` counts the restarts of each instance. The state of the service is <Term id="degraded" /> while it has fewer instances than you asked for.
+
+<Callout type="warning" title="A service with 1 instance">
+While Docker restarts the only instance, the proxy answers `503`. For an important web service, run 2 instances or more.
+</Callout>
+
+Ferry tests the <Term id="health-check" /> path only during a deploy. After that, the proxy only tests that the instance accepts connections. Thus an app that hangs with an open port continues to get requests. Make your app exit when it cannot serve. Then Docker starts it again.
+
+## When an app runs out of memory
+
+`ferry status` marks an instance that the kernel stopped for memory. The last line tells you what to do:
+
+```text noCopy
+api: degraded — 1/2 instance(s) running
+INSTANCE   DEPLOY     STATE                                    PORT    CPU              MEMORY                  RESTARTS   STARTED
+3f2a1c     7d0e52aa   running                                  63012   2.1% / 0.5 CPU   301.4 MiB / 512.0 MiB   0          12m ago
+9b4e07     7d0e52aa   restarting (OOM killed, exit code 137)   -       -                -                       3          -
+note: instance 9b4e07 was killed for running out of memory (limit 512 MiB). Raise the limit with 'ferry update api --memory <SIZE>', then 'ferry restart api'.
+```
+
+In the dashboard, the card of the instance on the **Overview** page shows an **OOM killed** badge. Its **Raise the limit** link opens **Settings** → **Resources**.
+
+Give the service more memory, then restart it. Or find the memory leak in your app.
+
+```bash title="Terminal"
+ferry update api --memory 1G
+ferry restart api
+```
+
+The result of an out-of-memory kill is different for each type of container:
+
+| Container | Result | Message |
+|---|---|---|
+| Instance of a live service | Docker starts it again. | Server log: `instance a1b2c3 of service 'api' ran out of memory (limit 512 MiB) — raise the service's memory limit` |
+| New instance in a deploy | The deploy fails. | `instance ab12cd ran out of memory (limit 512 MiB) — raise the service's memory limit` |
+| Job run | The run fails. | `the job ran out of memory (limit 64 MiB) — raise the service's memory limit` |
+| Datastore | Docker starts it again. | Server log: `datastore 'app-db' ran out of memory (limit 1 GiB) — raise the datastore's memory limit` |
+
+For a datastore, raise the limit with `ferry db update NAME --memory SIZE`. It needs no restart.
+
+<Accordions>
+  <Accordion title="The OOM killed mark goes away">
+    Docker clears the mark when the container runs again. Thus `ferry status` shows it only while the instance restarts or stays stopped. The server log keeps the old kills. With systemd, read it with `journalctl -u ferryd`.
+  </Accordion>
+  <Accordion title="Exit code 137 with no OOM killed mark">
+    Exit code 137 only means that the process got <Term id="sigkill" />. Ferry reports a memory kill only when Docker marks it. Without the mark, a deploy reports `instance ab12cd crashed (exit code 137: killed by SIGKILL)`.
+  </Accordion>
+</Accordions>
+
+## When the server restarts
+
+If `ferryd` stops, Docker continues to run your containers. Services continue to reach their datastores on the private network. But no public traffic arrives, because the proxy is part of `ferryd`. Deploys stop. Cron jobs skip their runs, and Ferry does not run them later.
+
+When `ferryd` starts again, it does these steps:
+
+1. It marks the interrupted deploys and job runs as failed, with the error `interrupted by server restart`.
+2. It installs the routes of each service. Then the proxy accepts connections.
+3. It starts the instances that are not there, and it restarts the datastores.
+
+Ferry does not try an interrupted deploy again. Start it again yourself:
+
+```bash title="Terminal"
+ferry deploy api
+```
+
+To start `ferryd` again after a crash or a reboot, run it with systemd. See the [Production checklist](/docs/guides/production).
+
+## Common problems
+
+| Problem | Fix |
+|---|---|
+| `instances must be at least 1 (use suspend to stop a service)` | To stop all the instances, run `ferry suspend api`. |
+| `instances must be between 1 and 50` | Use 50 instances at most. |
+| `services with a disk are limited to 1 instance` | Two instances cannot write to one disk. A service with a disk runs 1 instance. |
+| A new limit has no effect | Run `ferry restart api`. A limit applies at the next deploy or restart. |
+| New instances do not have your new variables | A scale uses the live deploy. Run `ferry restart api`. |
+| An instance restarts again and again with `OOM killed` | Raise the memory limit, then restart. Or fix the memory leak. |
+| The app is slow, and the CPU column is at the limit | Raise the limit with `--cpu`, then restart. |
+| `the CPU limit (8 CPUs) is more than the Docker host has: capped at 4 CPUs` | The server has fewer CPUs than the limit. Ferry uses all the CPUs of the server. To remove the warning, set a lower `--cpu`. |
+| After an upgrade of Ferry, an app or a database stops at 512 MiB | Older versions set no limit. Give it more memory with `ferry update` or `ferry db update`. |
+| A deploy fails with `not enough free disk space` | Ferry needs 1 GiB free to build. Run `docker image prune`. |

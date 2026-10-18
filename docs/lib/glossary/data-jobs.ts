@@ -45,11 +45,6 @@ export const terms = {
     term: 'replica',
     definition: 'A second database server that keeps a copy of the data of the first server.',
   },
-  'high-availability': {
-    term: 'high availability',
-    definition: 'A setup that stays online when one container or one machine fails.',
-    see: ['replica'],
-  },
   'connection-pooler': {
     term: 'connection pooler',
     definition: 'A program between your apps and a database. With it, many app connections share a small number of database connections.',
@@ -112,15 +107,5 @@ export const terms = {
     term: 'mount path',
     definition: 'The folder in the container where the disk shows, for example `/data`.',
     see: ['disk'],
-  },
-  suspend: {
-    term: 'suspend',
-    definition: 'To stop all the instances of a service and keep its settings, its deploys and its data.',
-    see: ['resume'],
-  },
-  resume: {
-    term: 'resume',
-    definition: 'To start the instances of a suspended service again, from the live deploy.',
-    see: ['suspend'],
   },
 } satisfies Record<string, GlossaryEntry>;

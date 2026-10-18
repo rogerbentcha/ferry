@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 const LINKS = [
   { icon: <BookOpen />, label: 'Introduction', text: 'What Ferry is and how it works', href: '/docs' },
   { icon: <Rocket />, label: 'Quickstart', text: 'Deploy your first app in a few minutes', href: '/docs/getting-started/quickstart' },
-  { icon: <Wrench />, label: 'Troubleshooting', text: 'Common errors and how to fix them', href: '/docs/guides/troubleshooting' },
+  { icon: <Wrench />, label: 'Troubleshooting', text: 'Common errors and how to fix them', href: '/docs/help/troubleshooting' },
 ];
 
 /**

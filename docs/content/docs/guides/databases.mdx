@@ -1,0 +1,321 @@
+---
+title: Databases
+description: Create a Postgres or Redis datastore, connect your app to it, back up its data and delete it.
+---
+
+A <Term id="datastore" /> is a <Term id="postgres" /> or <Term id="redis" /> database that Ferry runs for you. It is one <Term id="container" />, with its data on one Docker <Term id="volume" />. In this guide, you create a Postgres datastore and connect a small notes app to it.
+
+```bash title="Terminal"
+ferry db create notes-db --wait
+```
+
+## Create a datastore
+
+<Tabs items={['CLI', 'Dashboard', 'API']} groupId="interface" persist>
+<Tab value="CLI">
+
+```bash title="Terminal"
+ferry db create notes-db --wait
+```
+
+```text title="Output" noCopy
+Waiting for postgres 'notes-db' to become available…
+Created postgres datastore 'notes-db' (dbs-be901a454ec7413aa1a2) — available
+Internal URL: postgresql://notes_db:6dd99f93338045919b9e682913c3c6a4@notes-db:5432/notes_db
+```
+
+Without `--wait`, the command returns while the status is `creating`.
+
+</Tab>
+<Tab value="Dashboard">
+
+Click **Datastores** in the icon rail. Click **New datastore**. Type a name and choose Postgres or Redis. Click **Create datastore**.
+
+</Tab>
+<Tab value="API">
+
+```bash title="Terminal"
+curl -X POST http://127.0.0.1:7878/api/v1/datastores \
+  -H "Authorization: Bearer $FERRY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "notes-db", "kind": "postgres", "version": "16"}'
+```
+
+To set the limits, add `memory_limit_mb` (MiB) and `cpu_limit` (CPUs). The answer is `201`, also when the creation fails. Then `status` is `failed`, and `error` gives the cause.
+
+</Tab>
+</Tabs>
+
+You give only a name. Ferry chooses the other values:
+
+| Option | Default |
+|---|---|
+| `--kind` | `postgres`. The other kind is `redis`. |
+| `--version` | `16` for Postgres, `7` for Redis. Ferry pulls the official <Term id="alpine" /> image of that version. |
+| `--database` | The name, with `_` in the place of each `-`: `notes_db`. Postgres only. |
+| `--user` | The name of the database. Redis always uses `default`. |
+| `--memory`, `--cpu` | The limits of the server: 512 MiB and 1 CPU |
+| Password | 32 random hex characters |
+
+A name has 1 to 40 characters: lowercase letters, digits or `-`. The first character is a letter. Services and datastores share one set of names.
+
+The status goes from `creating` to `available`, or to `failed` with an error. `ferry db show notes-db` shows it. If the creation fails, Ferry tries again after 1 minute, then after a longer delay, up to 30 minutes.
+
+## Connect your app
+
+The notes app reads the database URL from the variable `DATABASE_URL`. It listens on the `PORT` that Ferry gives it.
+
+<Files>
+  <Folder name="notes" defaultOpen>
+    <File name="package.json" />
+    <File name="migrate.js" />
+    <File name="server.js" />
+  </Folder>
+</Files>
+
+```json title="package.json"
+{
+  "name": "notes",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "migrate": "node migrate.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}
+```
+
+```js title="server.js"
+const http = require("http");
+const { Pool } = require("pg");
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+const server = http.createServer(async (req, res) => {
+  try {
+    if (req.method === "POST" && req.url === "/notes") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      await pool.query("INSERT INTO notes (body) VALUES ($1)", [body]);
+      res.writeHead(201).end("saved\n");
+      return;
+    }
+    const { rows } = await pool.query("SELECT id, body FROM notes ORDER BY id");
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(rows) + "\n");
+  } catch (err) {
+    console.error(err);
+    res.writeHead(500).end("error\n");
+  }
+});
+
+server.listen(process.env.PORT || 3000, "0.0.0.0");
+```
+
+`migrate.js` creates the table of the app. It is a <Term id="migration" />. You run it after the deploy.
+
+```js title="migrate.js"
+const { Client } = require("pg");
+
+const client = new Client({ connectionString: process.env.DATABASE_URL });
+
+(async () => {
+  await client.connect();
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS notes (
+      id serial PRIMARY KEY,
+      body text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`);
+  console.log("migrations applied");
+  await client.end();
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+```
+
+Deploy the app from the `notes` directory. Give it the URL with a <Term id="reference" />:
+
+```bash title="Terminal"
+ferry up notes -e 'DATABASE_URL=${{datastore.notes-db.connectionString}}' --follow
+```
+
+```text title="Output (excerpt)" noCopy
+==> Detected Node.js runtime
+==> Build successful 🎉
+==> Your service is live 🎉
+==> Available at http://notes.localhost:8080
+```
+
+Ferry replaces the reference each time a container starts. The app gets the <Term id="internal-url" />: `postgresql://notes_db:<password>@notes-db:5432/notes_db`. This URL works only on the <Term id="private-network" />, from your services and jobs.
+
+Keep the single quotes. Without them, your <Term id="shell" /> changes the text before `ferry` gets it. Do not paste the URL in the place of the reference: the reference always gives the current value.
+
+For a service that exists, set the variable. The service restarts with it:
+
+```bash title="Terminal"
+ferry env set api 'DATABASE_URL=${{datastore.notes-db.connectionString}}'
+```
+
+[Environment variables](/docs/guides/environment#connect-to-a-datastore-or-a-service) lists the other properties, for example `host`, `port`, `user` and `password`.
+
+## Create the table
+
+Run `migrate.js` as a <Term id="one-off-job" />. Ferry starts a new container from the live image, with the same variables, then removes it.
+
+```bash title="Terminal"
+ferry run notes --follow -- npm run migrate
+```
+
+```text title="Output" noCopy
+Job job-48dd0201159b41c3bb58 pending, streaming output…
+==> Running `npm run migrate`
+> migrate
+> node migrate.js
+migrations applied
+==> Job succeeded
+Job job-48dd0201159b41c3bb58 succeeded (exit code 0)
+```
+
+Try the app. The first command saves a note. The second command lists the notes.
+
+```bash title="Terminal"
+curl -X POST --data 'hello from Ferry' http://notes.localhost:8080/notes
+curl http://notes.localhost:8080/
+```
+
+```text title="Output" noCopy
+saved
+[{"id":1,"body":"hello from Ferry"}]
+```
+
+<Accordions>
+  <Accordion title="Run the migrations at each deploy">
+    Ferry has no command that runs before a deploy. Use one of these two ways.
+
+    - Run a job after the deploy: `ferry up notes --follow && ferry run notes --follow -- npm run migrate`. If the deploy fails, the job does not start.
+    - Run the migration when the app starts: `ferry update notes --start-cmd 'npm run migrate && npm start'`. Each instance runs it, and two instances can run it at the same time. Thus the migration must be safe to run more than one time.
+  </Accordion>
+</Accordions>
+
+## Connect from your machine
+
+On the server, open <Term id="psql" /> in the container of the datastore. With the default prefix, the name of the container is `ferry-ds-notes-db`.
+
+```bash title="Terminal"
+docker exec -it ferry-ds-notes-db psql -U notes_db notes_db
+```
+
+From your machine, use the <Term id="external-url" />. Its port is open only on `127.0.0.1` of the server. Thus open an <Term id="ssh-tunnel" /> first.
+
+<Steps>
+<Step>
+
+### Get the external URL
+
+```bash title="Terminal"
+ferry db show notes-db
+```
+
+Read the line `External URL`, for example `postgresql://notes_db:…@127.0.0.1:62975/notes_db`. The number after `127.0.0.1:` is the <Term id="host-port" />.
+
+</Step>
+<Step>
+
+### Open the tunnel
+
+```bash title="Terminal"
+ssh -L 62975:127.0.0.1:62975 you@your-server
+```
+
+</Step>
+<Step>
+
+### Connect
+
+In a second terminal, use the external URL:
+
+```bash title="Terminal"
+psql 'postgresql://notes_db:…@127.0.0.1:62975/notes_db'
+```
+
+</Step>
+</Steps>
+
+`ferryd --advertise-host` changes the host that Ferry writes in the external URL. It does not change where the port listens.
+
+## Back up and restore the data
+
+The data stays on the volume `ferry-ds-notes-db-data`. It stays when the container stops, crashes or starts again. The volume has no size limit: it can grow until the disk of the server is full.
+
+<Callout type="warning" title="Ferry does not back up datastores">
+Make each <Term id="backup" /> yourself, on a schedule, for example from a cron entry on the server. If you delete the datastore, you lose its data.
+</Callout>
+
+Write the database into a file with <Term id="pg-dump" />:
+
+```bash title="Terminal"
+docker exec ferry-ds-notes-db pg_dump -U notes_db notes_db > notes-$(date +%F).sql
+```
+
+To restore, send the file to `psql`:
+
+```bash title="Terminal"
+docker exec -i ferry-ds-notes-db psql -U notes_db notes_db < notes-2026-09-27.sql
+```
+
+## Change the memory and CPU limits
+
+```bash title="Terminal"
+ferry db update notes-db --memory 1G
+ferry db update notes-db --cpu default     # back to the server default
+```
+
+The container gets the new limits immediately, with no restart. In the dashboard, use the section **Resources** of the datastore.
+
+If the datastore uses more memory than its limit, the system stops it. The log of `ferryd` then has a line like this:
+
+```text title="Log of ferryd" noCopy
+datastore 'notes-db' ran out of memory (limit 1 GiB) — raise the datastore's memory limit
+```
+
+Ferry starts a stopped datastore again by itself, with the same volume and data. To stop the cause, raise the memory limit. Do not set a limit below the memory that the datastore uses now.
+
+<Accordions>
+  <Accordion title="Redis and its memory limit">
+    Redis gets a `maxmemory` of 3/4 of its memory limit. When Redis is full, it refuses writes. Redis keeps each key in memory. Thus keep the limit well above the size of your data.
+  </Accordion>
+</Accordions>
+
+## Add Redis
+
+A Redis datastore works the same way:
+
+```bash title="Terminal"
+ferry db create cache --kind redis --wait
+ferry env set notes 'REDIS_URL=${{datastore.cache.connectionString}}'
+```
+
+The containers of `notes` get `REDIS_URL=redis://default:<password>@cache:6379`, and `notes` restarts.
+
+## Delete a datastore
+
+```bash title="Terminal"
+ferry db rm notes-db
+```
+
+The command asks you to confirm. Then it removes the container **and its volume**. There is no undo: back up the data first.
+
+If a service has a reference to the datastore, Ferry refuses. The error lists each service and its variables. Remove the references first, or add `--force`. With `--force`, the services that reference the datastore fail at their next deploy or restart.
+
+<Accordions>
+  <Accordion title="What a datastore cannot do">
+    - A datastore is one container. It has no <Term id="replica" /> and no <Term id="connection-pooler" />.
+    - After the creation, you can change only the memory and CPU limits. You cannot change the version, the password or the name.
+    - To upgrade Postgres, create a new datastore with the new version. Then move the data with `pg_dump` and `psql`.
+    - Ferry has only Postgres and Redis. Run another database as a <Term id="private-service" /> with a <Term id="disk" />.
+  </Accordion>
+</Accordions>

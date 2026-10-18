@@ -1,12 +1,11 @@
 {
-  "title": "Reference",
+  "title": "Developers",
   "icon": "Library",
   "pages": [
     "cli",
-    "server-options",
-    "blueprint",
-    "env-references",
     "api-overview",
-    "api"
+    "api",
+    "blueprint",
+    "server-options"
   ]
 }

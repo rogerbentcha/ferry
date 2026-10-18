@@ -1,0 +1,224 @@
+---
+title: Environment variables and secrets
+description: Set the variables of a service, keep secrets safe, share values and point a variable to a database.
+---
+
+Each <Term id="service" /> has its own <Term id="env-var">environment variables</Term>. Your app reads its settings and its secrets from them. Ferry gives them to each <Term id="container" /> when it starts.
+
+```bash title="Terminal"
+ferry env set api LOG_LEVEL=info
+```
+
+## Set and remove variables
+
+<Tabs items={['CLI', 'Dashboard', 'API']} groupId="interface" persist>
+<Tab value="CLI">
+
+```bash title="Terminal"
+ferry env set api LOG_LEVEL=info REGION=eu
+ferry env unset api LOG_LEVEL
+```
+
+```text title="Output (last line)" noCopy
+Saved. Restarting 'api' with the new environment.
+```
+
+`ferry env set` and `ferry env unset` save the change, then <Term id="restart" /> the service. The restart applies the change.
+
+- Add `--no-restart` to save only.
+- Add `--follow` to see the log of the restart.
+
+You can also give variables when you create a service: `ferry create api -e KEY=VALUE` or `ferry up -e KEY=VALUE`.
+
+</Tab>
+<Tab value="Dashboard">
+
+Open the service. Click **Environment**. Edit the list **Service variables**. Click **Save only** or **Save & restart**.
+
+To add many variables, click **Import .env**. Paste the text of a `.env` file.
+
+</Tab>
+<Tab value="API">
+
+```bash title="Terminal"
+curl -X PATCH 'http://127.0.0.1:7878/api/v1/services/api/env?restart=true' \
+  -H "Authorization: Bearer $FERRY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"set": [{"key": "LOG_LEVEL", "value": "info"}], "unset": ["DEBUG"]}'
+```
+
+- `PATCH` adds or replaces the variables in `set` and removes the variables in `unset`.
+- `PUT` with `{"vars": […]}` replaces all the variables of the service.
+- Without `?restart=true`, nothing restarts.
+
+See the [API reference](/docs/reference/api).
+
+</Tab>
+</Tabs>
+
+A key has 256 characters at most, with no `=` and no space. A value has 32 <Term id="kib" /> at most. All the variables of one service have 256 KiB at most.
+
+## See the variables
+
+```bash title="Terminal"
+ferry env api                  # the own variables of the service
+ferry env api --effective      # with the variables of its env groups
+```
+
+The second command shows the <Term id="merged-env" />. Ferry merges three layers, and a later layer wins:
+
+1. the variables that Ferry adds: `PORT` and `FERRY_*`
+2. the variables of the <Term id="env-group">env groups</Term> of the service, in the order of the links
+3. the own variables of the service
+
+Thus an own variable replaces a variable with the same key from a group.
+
+<Accordions>
+  <Accordion title="The variables that Ferry adds">
+    Ferry adds these variables to each container of a service. If you set a variable with the same key, your value wins.
+
+    | Variable | Value |
+    |---|---|
+    | `PORT` | The port where your app must listen. A job does not get it. |
+    | `FERRY` | `true` |
+    | `FERRY_SERVICE_NAME`, `FERRY_SERVICE_ID`, `FERRY_SERVICE_TYPE` | The name, the id and the type of the service |
+    | `FERRY_DEPLOY_ID` | The deploy of the container |
+    | `FERRY_INTERNAL_HOSTNAME` | The name of the service on the private network |
+    | `FERRY_GIT_COMMIT`, `FERRY_GIT_BRANCH` | The commit and the branch, for a deploy from git |
+    | `FERRY_EXTERNAL_HOSTNAME`, `FERRY_EXTERNAL_URL` | The public address, for web services and static sites |
+  </Accordion>
+</Accordions>
+
+## Keep secret values safe
+
+Ferry has no special type for a secret. A password, a token or a key is an environment variable, the same as other settings.
+
+- The dashboard hides the values. Click **Reveal** to see them.
+- `ferry env` and the API show the values to each person who has a session or an <Term id="api-token" />.
+- For the password of a <Term id="datastore" />, use a [reference](#connect-to-a-datastore-or-a-service). Do not copy the password.
+- To make a random secret, use `openssl`:
+
+```bash title="Terminal"
+ferry env set api "SESSION_SECRET=$(openssl rand -hex 32)"
+```
+
+A <Term id="build" /> also gets the variables, as <Term id="build-secret">build secrets</Term>. A Dockerfile that Ferry makes keeps them out of the <Term id="image" />. In your own Dockerfile, mount the secret in the step that needs it:
+
+```dockerfile title="Dockerfile"
+RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN npm ci
+```
+
+Do not put a secret in an `ARG`. Docker records the value of an `ARG` in the history of the image, and each person who has the image can read it.
+
+## Share variables with an env group
+
+An env group is a set of variables with a name. Link it to each service that needs the same values.
+
+```bash title="Terminal"
+ferry env-group create shared LOG_LEVEL=info REGION=eu
+ferry env-group link api shared
+ferry restart api
+```
+
+The name of a group has 1 to 64 characters: letters, digits, `-`, `_` or `.`.
+
+| Command | What restarts |
+|---|---|
+| `ferry env-group link api shared` | Nothing. Run `ferry restart api` to apply it. |
+| `ferry env-group unlink api shared` | Nothing. Run `ferry restart api` to apply it. |
+| `ferry env-group set shared REGION=us` | Each linked live service, if its merged environment changed. Add `--no-restart` to prevent it. |
+| `ferry env-group unset shared REGION` | The same as `set` |
+| `ferry env-group show shared` | Nothing. It shows the variables and the linked services. |
+| `ferry env-group rm shared` | Nothing. Ferry deletes the group, but it refuses while a service has a link to the group. |
+| `ferry env-group rm shared --force --restart` | Ferry also deletes a linked group, and it restarts the linked services. |
+
+In the dashboard, click **Env groups** in the icon rail.
+
+## Connect to a datastore or a service
+
+A value can contain a <Term id="reference" />. Ferry replaces it with the real value each time a container starts. Thus your app always gets the current address and password.
+
+```bash title="Terminal"
+ferry env set api 'DATABASE_URL=${{datastore.app-db.connectionString}}'
+```
+
+The containers of `api` then get `DATABASE_URL=postgresql://app_db:<password>@app-db:5432/app_db`.
+
+<Callout type="warning" title="Use single quotes around ${{…}}">
+Put a value that contains `${{…}}` between single quotes. If not, your <Term id="shell" /> changes the text before `ferry` gets it.
+</Callout>
+
+A reference has three parts between `${{` and `}}`: the kind, the name and the property. The kind is `datastore` (or `db`) or `service` (or `svc`). The name is the name of the datastore or the service. The property is case-sensitive.
+
+| Reference | Value in the container |
+|---|---|
+| `${{datastore.NAME.connectionString}}` | The URL on the <Term id="private-network" />: `postgresql://USER:PASSWORD@NAME:5432/DATABASE` or `redis://default:PASSWORD@NAME:6379` |
+| `${{datastore.NAME.externalConnectionString}}` | The same URL with the port that the datastore publishes on the server |
+| `${{datastore.NAME.host}}` | The name of the datastore |
+| `${{datastore.NAME.port}}` | `5432` for Postgres, `6379` for Redis |
+| `${{datastore.NAME.user}}` | The Postgres user, or `default` for Redis |
+| `${{datastore.NAME.password}}` | The password that Ferry made |
+| `${{datastore.NAME.database}}` | The name of the Postgres database. Redis has none. |
+| `${{service.NAME.host}}` | The name of the service on the private network |
+| `${{service.NAME.port}}` | The port where the service listens |
+| `${{service.NAME.hostport}}` | `NAME:PORT`, for example `api:3000` |
+| `${{service.NAME.internalUrl}}` | `http://NAME:PORT` |
+| `${{service.NAME.url}}` | The public URL. Only web services and static sites have one. |
+
+A value can have text around a reference, or many references:
+
+```bash title="Terminal"
+ferry env set web 'API_URL=${{service.api.internalUrl}}/v1'
+```
+
+To write a literal `${{` in a value, write `$${{`. The value `$${{ name }}` reaches the app as `${{ name }}`.
+
+<Accordions>
+  <Accordion title="References in a build">
+    A build gets the variables with their references resolved. If Ferry cannot resolve a reference yet, it leaves the variable out of the build. The deploy log shows `==> Warning: not available at build time (unresolved references)`.
+  </Accordion>
+  <Accordion title="A reference to the port of a service that never deployed">
+    `port`, `hostport` and `internalUrl` need the port of the target service. Ferry knows it after the first deploy of that service, or when you set it with `--port`. If the first deploy of the target is in progress, your deploy waits for it. If two services reference the port of each other before their first deploy, the deploy fails. Deploy one of them without the reference first.
+  </Accordion>
+</Accordions>
+
+## When a change applies
+
+Ferry freezes the environment of a <Term id="deploy" /> when the deploy starts its containers. This is the <Term id="snapshot" />. A replacement after a crash, a scale up, a resume and a job use the snapshot of the live deploy. Thus a saved change applies only at the next deploy or restart.
+
+```bash title="Terminal"
+ferry restart api --follow
+```
+
+A restart uses the live image again with the current variables. It does not build. The new instances must pass the <Term id="health-check" /> before the old instances stop.
+
+| State of the service | After `ferry env set` |
+|---|---|
+| Live | Ferry restarts it (<Term id="trigger" /> `env_change`). |
+| A deploy in progress | The restart waits behind that deploy. You do not lose the new values. |
+| Never deployed | Nothing restarts. The first deploy uses the new values. |
+| Suspended | Nothing restarts. After `ferry resume`, run `ferry restart NAME`. |
+
+When a datastore or a target service changes, the containers that run keep the old values. Restart the service to get the new values.
+
+## If a reference does not resolve
+
+The CLI checks the syntax before it saves. It also gives a warning for a name that does not exist:
+
+```text title="Terminal" noCopy
+warning: X: reference to unknown datastore 'nope'; deploys fail until it resolves
+```
+
+At the deploy or the restart, Ferry resolves each reference. If one fails, the deploy fails with the status `deploy_failed`, and the previous deploy continues to answer. The deploy log gives the cause:
+
+| Message | Cause |
+|---|---|
+| `reference to unknown datastore 'x'` or `reference to unknown service 'x'` | No datastore or service has that name. |
+| `service 'x' has no known port (deploy it first)` | The target service has no live deploy and no port setting. |
+| `service 'x' has no public URL` | You used `url` on a service that is not a web service or a static site. |
+| `datastore 'x' has no database name` | You used `database` on a Redis datastore. |
+| `datastore 'x' has no external port yet` | You used `externalConnectionString` before the datastore has a published port. |
+
+Fix the variable with `ferry env set`. The restart then uses the new value.
+
+Ferry refuses to delete a datastore or a service that other services reference. The error lists the services and their variables. With `--force`, Ferry deletes it, and the services that reference it fail at their next deploy or restart.

@@ -380,7 +380,7 @@ function cliPage(markdownHelp) {
 This page lists every \`ferry\` command with its arguments and options. It is generated from the CLI's own help (\`ferry markdown-help\`), so it matches the binary built from this repository. In a terminal, \`ferry <command> --help\` prints the same text.
 
 <Callout title="Connecting to a server">
-Every command talks to a Ferry server. \`ferry login --server URL\` opens the dashboard, where you approve the terminal; it then gets an API token of its own, saved with the server in \`~/.config/ferry/config.json\` (\`$XDG_CONFIG_HOME/ferry/config.json\` when that variable is set). With \`--token TOKEN\`, that token is verified and saved instead. The \`--server\` / \`--token\` flags, then the \`FERRY_SERVER\` / \`FERRY_TOKEN\` variables, take precedence over the saved values. See [Set up the CLI](/docs/getting-started/cli).
+Every command talks to a Ferry server. \`ferry login --server URL\` opens the dashboard, where you approve the terminal; it then gets an API token of its own, saved with the server in \`~/.config/ferry/config.json\` (\`$XDG_CONFIG_HOME/ferry/config.json\` when that variable is set). With \`--token TOKEN\`, that token is verified and saved instead. The \`--server\` / \`--token\` flags, then the \`FERRY_SERVER\` / \`FERRY_TOKEN\` variables, take precedence over the saved values. See [Set up the CLI](/docs/getting-started/installation#set-up-the-cli).
 </Callout>
 
 ${optionListsToTables(clapMarkdownToMdx(markdownHelp, { keepOverview: true })).mdx}
@@ -422,12 +422,12 @@ function serverOptionsPage(markdownHelp, help) {
 
 \`ferryd\` is the Ferry server: one process that runs the REST API and the dashboard, the public reverse proxy, the build and deploy engine and the reconciler. This page lists its commands and all of its options. It is generated from \`ferryd --dump-markdown-help\` and \`ferryd --help\`, so it matches the binary built from this repository.
 
-\`ferryd\` alone starts the server: in the background when you run it from a terminal (like \`ferryd start\`), in the foreground otherwise (like \`ferryd run\`). \`ferryd stop\`, \`ferryd status\` and \`ferryd logs\` find that server through its data directory. See [Background and foreground](/docs/getting-started/installation/background).
+\`ferryd\` alone starts the server: in the background when you run it from a terminal (like \`ferryd start\`), in the foreground otherwise (like \`ferryd run\`). \`ferryd stop\`, \`ferryd status\` and \`ferryd logs\` find that server through its data directory. See [Background and foreground](/docs/getting-started/installation#run-ferryd-in-the-background).
 
 ${envSentence} When both are set, the command-line flag wins.
 
 <Callout type="warning" title="One data directory per server">
-Only one \`ferryd\` can use a data directory at a time, and each Docker name prefix (\`--name-prefix\`) belongs to one data directory. A server refuses to start on a prefix that another data directory owns unless you pass \`--take-over\`. A data directory you moved keeps its \`instance_id\` and starts with the same \`--name-prefix\` without \`--take-over\`: the flag is only for a data directory that lost its \`instance_id\`, and never while another server uses the prefix, since the server that takes over removes the other one's containers. See [Multiple servers](/docs/guides/multiple-servers/move).
+Only one \`ferryd\` can use a data directory at a time, and each Docker name prefix (\`--name-prefix\`) belongs to one data directory. A server refuses to start on a prefix that another data directory owns unless you pass \`--take-over\`. A data directory you moved keeps its \`instance_id\` and starts with the same \`--name-prefix\` without \`--take-over\`: the flag is only for a data directory that lost its \`instance_id\`, and never while another server uses the prefix, since the server that takes over removes the other one's containers. See [Multiple servers](/docs/guides/multiple-servers#move-a-server-to-another-data-directory).
 </Callout>
 
 ${body}

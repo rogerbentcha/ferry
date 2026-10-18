@@ -1,11 +1,9 @@
 {
-  "title": "Getting started",
+  "title": "Get started",
   "icon": "Rocket",
   "pages": [
     "installation",
     "quickstart",
-    "dashboard",
-    "cli",
-    "ferry-and-render"
+    "concepts"
   ]
 }
