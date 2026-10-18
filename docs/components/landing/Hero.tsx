@@ -1,8 +1,9 @@
 import { siGithub } from 'simple-icons'
 
-import { githubUrl, links } from '@/components/landing/config'
+import { githubUrl, installCommand, links } from '@/components/landing/config'
 
 import { BrandIcon } from './BrandIcon'
+import { CommandBlock } from './code'
 import { Reveal } from './Reveal'
 
 export function Hero() {
@@ -22,7 +23,7 @@ export function Hero() {
             <HeroActions />
           </Reveal>
         </div>
-        <div className="lg:pt-1.5">
+        <div className="min-w-0 lg:pt-1.5">
           <Reveal immediate delay={0.16}>
             <p className="max-w-[31rem] text-foreground-light sm:text-lg lg:text-base">
               Deploy from a git repo, a folder or a Docker image, with zero downtime. Add Postgres, Redis, cron jobs,
@@ -31,6 +32,12 @@ export function Hero() {
           </Reveal>
           <Reveal immediate delay={0.24} className="mt-8 flex flex-wrap gap-3 lg:hidden">
             <HeroActions />
+          </Reveal>
+          <Reveal immediate delay={0.32} className="mt-8 max-w-[34rem]">
+            <p className="mb-2 text-sm text-foreground-lighter">
+              Install it on a fresh Ubuntu or Debian server with one command:
+            </p>
+            <CommandBlock lines={[installCommand]} label="Copy the install command" />
           </Reveal>
         </div>
       </div>
