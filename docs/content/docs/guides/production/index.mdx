@@ -57,10 +57,12 @@ This guide sets up one Linux server. Your apps answer at `https://<name>.apps.ex
 ## The main command
 
 ```bash title="Terminal"
-sudo systemctl enable --now ferryd
+curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh -s -- --base-domain apps.example.com --acme-email you@example.com
 ```
 
-This command starts `ferryd` now and at each boot. First do the pages of part 1, in order.
+On a fresh Ubuntu or Debian server (x86_64), this command does the pages from [Install Ferry](/docs/guides/production/install) to [Start ferryd](/docs/guides/production/start) for you. Then it prints the link to [create your account](/docs/guides/production/account). See [Install with one command](/docs/getting-started/installation/script).
+
+On another server, do the pages of part 1 in order. At the end, `sudo systemctl enable --now ferryd` starts `ferryd` now and at each boot.
 
 ## The path
 

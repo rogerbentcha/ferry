@@ -2,6 +2,7 @@
   "title": "Installation",
   "icon": "Download",
   "pages": [
+    "script",
     "requirements",
     "docker",
     "macos",

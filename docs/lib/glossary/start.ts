@@ -33,6 +33,17 @@ export const terms = {
     definition: 'Each user has a role, and the role says what the user can do.',
   },
 
+  // --- Install with one command ---------------------------------------------
+  'install-script': {
+    term: 'install script',
+    definition: 'The file install.sh of each release. With one command, it installs Ferry on a server or upgrades it.',
+    see: ['github-release'],
+  },
+  'apt-repository': {
+    term: 'apt repository',
+    definition: 'A server that gives software packages to apt, the tool that installs software on Ubuntu and Debian.',
+  },
+
   // --- Download Ferry ------------------------------------------------------
   'github-release': {
     term: 'release',

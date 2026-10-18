@@ -29,16 +29,29 @@ ferry up                      # deploy the current directory → http://my-app.l
 
 ## Quick start
 
-Requirements: Docker (Docker Desktop on macOS works) and git.
+On a fresh Ubuntu 22.04/24.04 or Debian 12/13 server (x86_64), one command installs Docker and git
+when they are missing, the latest `ferryd` and `ferry`, and a systemd service, then prints the link
+that creates your account:
 
-On a Linux x86_64 server, download `ferryd` and `ferry` from the
-[latest release](https://github.com/rogerbentcha/ferry/releases/latest) (glibc 2.35+: Ubuntu 22.04+,
-Debian 12+). No Rust or Node.js needed:
+```bash
+curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh
+# with your domain and HTTPS:
+curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh -s -- \
+  --base-domain apps.example.com --acme-email you@example.com
+```
+
+The dashboard listens on the server's `127.0.0.1:7878`: open the SSH tunnel the script prints
+(`ssh -N -L 7878:127.0.0.1:7878 you@your-server`), then the setup link. Running the command again
+upgrades to the latest release and keeps `/var/lib/ferry` and `/etc/ferry/ferryd.env`.
+
+Anywhere else, you need Docker (Docker Desktop on macOS works) and git. On Linux x86_64, download
+`ferryd` and `ferry` from the [latest release](https://github.com/rogerbentcha/ferry/releases/latest)
+(glibc 2.35+: Ubuntu 22.04+, Debian 12+). No Rust or Node.js needed:
 
 ```bash
 curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/ferry-x86_64-unknown-linux-gnu.tar.gz
 curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/SHA256SUMS
-sha256sum -c SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
 sudo tar -xzf ferry-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin ferryd ferry
 ferryd                                  # starts the server in the background; prints the dashboard URL and the link that creates your account
 ```
@@ -103,6 +116,11 @@ ferry db update app-db --memory 1G                   # datastores: applied right
 ```
 
 ## Production setup
+
+On Ubuntu 22.04/24.04 or Debian 12/13 (x86_64), the install command of [Quick start](#quick-start),
+with `--base-domain apps.example.com --acme-email you@example.com`, does the software of step 1 and
+step 2 for you: Docker, a `ferry` user in the `docker` group, `/var/lib/ferry`, the settings in
+`/etc/ferry/ferryd.env`, and a unit like the one below, started at boot. Point the DNS first.
 
 1. A Linux VM with Docker, reachable on ports 80 and 443. Point a wildcard DNS
    record `*.apps.example.com` (and your custom domains) at it — or start
@@ -389,13 +407,15 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 CI (`.github/workflows/ci.yml`) runs the same checks on Linux for every pull request and every push to
 `main`/`dev`: fmt, clippy and tests, the Docker end-to-end suites (`FERRY_E2E=1`), the web dashboard's
-typecheck, lint, tests and build, and the documentation site (generated references in sync, typecheck, build
-with link check).
+typecheck, lint, tests and build, ShellCheck on `install.sh`, and the documentation site (generated
+references in sync, typecheck, build with link check).
 
 Releases (`.github/workflows/release.yml`): every push to `main` with a `feat`, `fix` or breaking commit since
 the last `vX.Y.Z` tag publishes the next version (`fix` → patch, `feat` → minor, breaking → major, minor while
-on 0.x), with `ferry-x86_64-unknown-linux-gnu.tar.gz` (`ferryd`, `ferry`, built on Ubuntu 22.04) and
-`SHA256SUMS`. The version is set in the release build only: `Cargo.toml` keeps `0.1.0`.
+on 0.x), with `ferry-x86_64-unknown-linux-gnu.tar.gz` (`ferryd`, `ferry`, built on Ubuntu 22.04),
+`install.sh` and `SHA256SUMS`. Before it publishes, a job runs `install.sh` with the new assets on a fresh
+Ubuntu 22.04 runner (`.github/scripts/install.test.sh`): the cases that must stop, a first install, a rerun
+and an upgrade. The version is set in the release build only: `Cargo.toml` keeps `0.1.0`.
 
 Crates: `ferry-core` (models, store, contracts) · `ferry-docker` · `ferry-build` ·
 `ferry-proxy` · `ferry-tls` · `ferry-engine` · `ferry-api` (REST + SSE + OpenAPI) ·
