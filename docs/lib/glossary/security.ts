@@ -3,19 +3,9 @@ import type { GlossaryEntry } from './types';
 /** Terms of this section. An id must not exist in another file of this folder. */
 export const terms = {
   // --- Who you are ---------------------------------------------------------
-  authentication: {
-    term: 'authentication',
-    definition: 'The test of who sends a request. Ferry accepts a session cookie or an API token as the proof.',
-    see: ['session-cookie', 'api-token'],
-  },
-  cookie: {
-    term: 'cookie',
-    definition: 'A small value that a site gives to a browser. The browser sends it back with each request to that site.',
-  },
   'session-cookie': {
     term: 'session cookie',
     definition: 'The cookie that proves that a browser signed in to the dashboard. Its name is `ferry_session_<port>`.',
-    see: ['cookie'],
   },
   origin: {
     term: 'origin',
@@ -61,14 +51,6 @@ export const terms = {
     definition: 'A signature that the sender calculates from a message and a shared secret. The receiver calculates it again and compares.',
     see: ['webhook'],
   },
-  'constant-time': {
-    term: 'constant-time comparison',
-    definition: 'A comparison that always takes the same time. The time tells an attacker nothing about the secret.',
-  },
-  replay: {
-    term: 'replay',
-    definition: 'An attack that sends a copy of an old valid request one more time.',
-  },
   'private-key': {
     term: 'private key',
     definition: 'The secret half of a pair of keys. The program that has it can prove its identity or read encrypted data.',
@@ -80,25 +62,12 @@ export const terms = {
     definition: 'Data with no encryption. Each machine on the network path can read it.',
     see: ['https'],
   },
-  'encryption-at-rest': {
-    term: 'encryption at rest',
-    definition: 'Encryption of the data on a disk. Without it, each person who can read the file can read the data.',
-  },
   'dashboard-host': {
     term: 'dashboard host',
     definition: 'The hostname on which the proxy serves the dashboard and the API. It comes from `ferryd --dashboard-host`.',
   },
-  redact: {
-    term: 'redact',
-    definition: 'To replace a secret with `***` before a text goes into a log or an answer.',
-  },
 
   // --- Limits --------------------------------------------------------------
-  'oom-killer': {
-    term: 'OOM killer',
-    definition: 'The part of the Linux kernel that stops a process when the machine has no free memory.',
-    see: ['oom'],
-  },
   quota: {
     term: 'quota',
     definition: 'A limit on the disk space that one container or one volume can use. Ferry sets none.',

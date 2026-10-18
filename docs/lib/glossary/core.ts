@@ -205,11 +205,6 @@ export const terms = {
   proxy: {
     term: 'proxy',
     definition: 'The part of Ferry that receives each HTTP request and sends it to an instance of the correct service.',
-    see: ['load-balancing'],
-  },
-  'load-balancing': {
-    term: 'load balancing',
-    definition: 'The proxy gives each new request to the next instance, in turn. All instances share the work.',
   },
   port: {
     term: 'port',
@@ -223,19 +218,9 @@ export const terms = {
     term: 'hostname',
     definition: 'The name of a machine or a site on a network, for example `api.example.com`.',
   },
-  domain: {
-    term: 'domain',
-    definition: 'A name that you own on the internet, for example `example.com`.',
-    see: ['dns'],
-  },
   dns: {
     term: 'DNS',
     definition: 'Domain Name System: the directory of the internet. It gives the IP address of a server for a domain name.',
-    see: ['dns-record'],
-  },
-  'dns-record': {
-    term: 'DNS record',
-    definition: 'One line in the DNS of your domain. An A record gives an IP address. A CNAME record points to another name.',
   },
   https: {
     term: 'HTTPS',
@@ -260,10 +245,6 @@ export const terms = {
   log: {
     term: 'log',
     definition: 'The lines of text that a program writes while it runs. You read them to know what occurred.',
-  },
-  event: {
-    term: 'event',
-    definition: 'A record of something that occurred on the server, for example "deploy live" or "instance crashed".',
   },
   systemd: {
     term: 'systemd',

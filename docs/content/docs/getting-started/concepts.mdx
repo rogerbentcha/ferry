@@ -1,0 +1,119 @@
+---
+title: Core concepts
+description: The main names of Ferry, from services and deploys to logs and self-healing, each with its guide.
+---
+
+Ferry is a <Term id="self-hosted" /> alternative to <Term id="render" />. It runs your apps on one server that you control. It has the same service types as Render and reads the same <Term id="blueprint" /> file, `render.yaml`. Ferry v1 has no <Term id="autoscaling" />, no pull request previews and no teams.
+
+This page gives each main name of Ferry in a few sentences, with a link to the guide of the task.
+
+## Services
+
+A <Term id="service" /> is one app that Ferry builds and runs as one or more Docker <Term id="container">containers</Term>. Each service has a unique name, a type, a <Term id="source" />, settings and <Term id="env-var">environment variables</Term>. The source is a git repository, a Docker image or a folder that you upload. The type tells who can reach the service.
+
+<Diagram
+  nodes={[
+    { id: 'browser', at: [0, 0.5], icon: 'browser', label: 'Browser' },
+    { id: 'proxy', at: [1.15, 0.5], icon: 'route', label: 'Proxy' },
+    { id: 'web', at: [2.3, 0], icon: 'globe', label: 'Web service' },
+    { id: 'site', at: [2.3, 1], icon: 'file', label: 'Static site' },
+    { id: 'worker', at: [2.3, 2], icon: 'repeat', label: 'Worker' },
+    { id: 'cron', at: [2.3, 3], icon: 'clock', label: 'Cron job' },
+    { id: 'pserv', at: [3.45, 1], icon: 'lock', label: 'Private service' },
+    { id: 'db', at: [3.45, 2], icon: 'database', label: 'Datastore' },
+  ]}
+  groups={[{ label: 'Private network', from: [2.3, 0], to: [3.45, 3] }]}
+  edges={[
+    { from: 'browser', to: 'proxy' },
+    { from: 'proxy', to: 'web' },
+    { from: 'proxy', to: 'site' },
+    { from: 'web', to: 'pserv' },
+    { from: 'web', to: 'db' },
+    { from: 'worker', to: 'db' },
+    { from: 'cron', to: 'pserv' },
+  ]}
+  steps={[
+    {
+      caption: 'A browser reaches a web service or a static site through the proxy.',
+      flow: ['browser>proxy', 'proxy>web', 'proxy>site'],
+      tones: { web: 'success', site: 'success' },
+      notes: { web: 'public URL', site: 'public URL' },
+    },
+    {
+      caption: 'A private service and a datastore have no public URL. Only the private network reaches them.',
+      flow: ['web>pserv', 'web>db'],
+      tones: { pserv: 'primary', db: 'primary' },
+      notes: { pserv: 'no public URL', db: 'no public URL' },
+    },
+    {
+      caption: 'A background worker and a cron job call other services. Nothing calls them.',
+      flow: ['worker>db', 'cron>pserv'],
+      tones: { worker: 'primary', cron: 'primary' },
+      notes: { worker: 'no port', cron: 'no port' },
+    },
+  ]}
+/>
+
+| Type | `--type` | Who can reach it |
+|---|---|---|
+| <Term id="web-service" /> | `web` | Each browser, through the proxy |
+| <Term id="static-site" /> | `static` | Each browser, through the proxy |
+| <Term id="private-service" /> | `pserv` | Only your other services |
+| <Term id="worker" /> | `worker` | Nothing: it has no port |
+| <Term id="cron-job" /> | `cron` | Nothing: it runs on a schedule |
+
+See [Deploy an app](/docs/guides/deploy).
+
+## Deploys
+
+A <Term id="deploy" /> is one release of a service. Ferry starts the new version next to the old version and tests it with a <Term id="health-check" />. Then the proxy moves the traffic, and Ferry stops the old version. If the new version fails, Ferry removes it, and the old version stays online. Ferry keeps each deploy, thus a <Term id="rollback" /> can bring an earlier version back.
+
+See [Deploys and rollbacks](/docs/guides/rollbacks) and [Auto-deploy from GitHub](/docs/guides/github-auto-deploy).
+
+## Builds
+
+A <Term id="build" /> makes a Docker <Term id="image" /> from your code. It is the first step of each deploy from git or from an upload. Ferry finds the <Term id="runtime" /> of your code: Node.js, Python, Go, Rust, Ruby or static files. Then it writes the <Term id="dockerfile" /> for you. If your code has its own Dockerfile, Ferry uses it.
+
+A service from a prebuilt image has no build. See [Deploy an app](/docs/guides/deploy).
+
+## Networking and domains
+
+Each server runs one <Term id="proxy" />. The proxy receives all the public traffic and sends each request to a container of the correct service. Behind the proxy, the containers share a <Term id="private-network" />. There, a service calls another service by its name and port, for example `api:3000`. Each web service and static site gets a URL. You can add your own domain with automatic HTTPS.
+
+See [Domains and HTTPS](/docs/guides/domains).
+
+## Environment variables
+
+Each service has its own environment variables. To share variables, put them in an <Term id="env-group" /> and link the group to your services. A value can be a <Term id="reference" /> to a datastore or to another service, in the form `${{…}}`. Ferry puts the real value there when the service starts. `ferry env set` restarts the service to apply a change.
+
+See [Environment variables and secrets](/docs/guides/environment).
+
+## Datastores
+
+A <Term id="datastore" /> is a <Term id="postgres" /> or <Term id="redis" /> server that Ferry runs for you. It is one container, with its data on one Docker <Term id="volume" />. Your services reach it by its name on the private network: this is its <Term id="internal-url" />. Ferry makes no backup of a datastore. Make your backups yourself.
+
+See [Databases](/docs/guides/databases).
+
+## Jobs
+
+A <Term id="job-run" /> is one container that runs one command, then stops. You start a <Term id="one-off-job" /> with `ferry run`, for example for a database migration. A cron job starts on its <Term id="cron-schedule" />, for example each day at 03:00 UTC. Each run ends as `succeeded`, `failed` or `canceled`, and has its own log.
+
+See [Jobs](/docs/guides/jobs).
+
+## Scaling and limits
+
+A service can run more than one <Term id="instance" />, and the proxy shares the requests between them. `ferry scale api 3` changes the number of instances, with no new build. `ferry suspend` stops all the instances, and `ferry resume` starts them again. Each container also has a <Term id="resource-limit" /> of memory and CPU, by default 512 MiB and 1 CPU. Thus an app with a bug cannot stop the server, `ferryd` or your databases.
+
+See [Scaling and limits](/docs/guides/scaling).
+
+## Logs
+
+Ferry keeps three logs. The <Term id="deploy-log" /> has the build output and the steps of one deploy. The <Term id="runtime-log" /> has what your instances write while they run. The <Term id="job-log" /> has the output of one job run. You can read a log when it is complete, or follow it live with `-f`.
+
+See [Logs](/docs/guides/logs).
+
+## Self-healing
+
+Ferry keeps the <Term id="desired-state" /> in its database: the services, their live deploys, their number of instances and the datastores. Each 10 seconds, the <Term id="reconciler" /> compares it with the <Term id="actual-state" /> in Docker and repairs each difference. Thus you do not restart a crashed app, and you do not remove old containers. If `ferryd` stops, your containers continue to run.
+
+See [Architecture](/docs/architecture).

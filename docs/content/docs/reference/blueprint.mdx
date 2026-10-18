@@ -1,0 +1,343 @@
+---
+title: Blueprint reference
+description: The keys of a ferry.yaml or render.yaml blueprint, and the commands that apply it.
+---
+
+A <Term id="blueprint" /> is one <Term id="yaml" /> file that describes your <Term id="env-group">env groups</Term>, your <Term id="datastore">datastores</Term> and your <Term id="service">services</Term>. Ferry reads the `render.yaml` format of <Term id="render" />, with its <Term id="camel-case" /> keys, and adds a few keys of its own.
+
+An <Term id="apply" /> creates what is not there and updates what changed. It never deletes.
+
+## An example
+
+```yaml title="examples/blueprint/ferry.yaml"
+envVarGroups:
+  - name: shared-settings
+    envVars:
+      - key: APP_ENV
+        value: production
+
+databases:
+  - name: app-db
+    postgresMajorVersion: "16"
+    databaseName: app
+    user: app
+    plan: basic-256mb        # 256 MiB of memory
+
+services:
+  - type: redis
+    name: cache
+    plan: starter            # 256 MiB of memory
+
+  - type: web
+    name: hello
+    runtime: image
+    image:
+      url: nginx:alpine
+    port: 80
+    healthCheckPath: /
+    numInstances: 2
+    plan: starter            # 512 MiB / 0.5 CPU per instance
+    envVars:
+      - fromGroup: shared-settings
+      - key: DATABASE_URL
+        fromDatabase:
+          name: app-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: cache
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+
+  - type: cron
+    name: nightly
+    runtime: image
+    image:
+      url: busybox:stable
+    schedule: "0 3 * * *"
+    startCommand: echo "nightly job ran at $(date)"
+    memoryLimit: 64M         # per run
+    cpuLimit: 250m
+```
+
+This file describes one env group, one <Term id="postgres" /> database, one <Term id="redis" /> datastore, one <Term id="web-service" /> with two instances and one <Term id="cron-job" />. The web service gets the URLs of the two datastores and a random secret.
+
+## Apply a blueprint
+
+Do a <Term id="dry-run" /> first. It shows the changes and writes nothing.
+
+<Tabs items={['CLI', 'API', 'Dashboard']} groupId="interface" persist>
+<Tab value="CLI">
+
+```bash title="Terminal"
+ferry blueprint apply --dry-run   # show what would change
+ferry blueprint apply             # apply ./ferry.yaml, else ./render.yaml
+ferry blueprint apply infra/render.yaml
+```
+
+Without a file name, the CLI looks for `./ferry.yaml`, then for `./render.yaml`. To get the raw JSON result, run `ferry --json blueprint apply`. See [`ferry blueprint apply`](/docs/reference/cli#ferry-blueprint-apply).
+
+</Tab>
+<Tab value="API">
+
+```bash title="Terminal"
+curl -X POST "http://127.0.0.1:7878/api/v1/blueprints/apply?dry_run=true" \
+  -H "Authorization: Bearer $FERRY_TOKEN" \
+  -H "Content-Type: application/yaml" \
+  --data-binary @ferry.yaml
+```
+
+Send the file with a YAML content type. To apply, remove `?dry_run=true`. You can also send JSON: `{"yaml": "<the file>", "dry_run": true}`. The answer gives the actions, the deploys in the queue and the warnings. See the [API reference](/docs/reference/api).
+
+</Tab>
+<Tab value="Dashboard">
+
+Open **Blueprints** in the dashboard. Paste the YAML. Click **Dry run** and read the plan. Then click **Apply**.
+
+</Tab>
+</Tabs>
+
+The first apply of the example creates each resource. Then it puts a deploy in the queue for each service that has a source:
+
+```text title="ferry blueprint apply examples/blueprint/ferry.yaml" noCopy
+Applied blueprint examples/blueprint/ferry.yaml
+
+Created:
+  + env group shared-settings
+  + datastore app-db
+  + datastore cache
+  + service hello
+  + service nightly
+
+Queued deploys:
+  dep-3271cdfd1415400d9a5e  hello (blueprint, queued)
+  dep-0fe672f0b3a4486991a9  nightly (blueprint, queued)
+
+Follow a deploy with: ferry logs --deploy <id> -f
+```
+
+### What an apply changes
+
+- Ferry checks the full file before it writes. If one entry is not valid, the apply stops with an error and the server does not change.
+- Ferry writes the env groups, then the datastores, then the services.
+- Ferry deletes nothing. A resource or a variable that you remove from the file stays on the server.
+- A second apply of the same file changes nothing. Ferry keeps each generated secret.
+- Ferry runs one apply at a time. An apply continues to its end when the client disconnects.
+
+| Change | Result |
+|---|---|
+| A new service with a `repo` or an `image` | A deploy with the trigger `blueprint` |
+| A new service with no `repo` and no `image` | No deploy. Run `ferry up NAME` to deploy it. |
+| `type`, the source, a build key, `port`, `healthCheckPath` or `disk` | A `blueprint` deploy |
+| Only the `startCommand` of a cron job | A restart |
+| Only `plan`, `memoryLimit` or `cpuLimit` | A restart of the live service, with no build |
+| Only variables or links to env groups | A restart of the live service (trigger `env_change`) |
+| `numInstances`, `domains`, `schedule`, `autoDeploy` | No deploy. Ferry scales, changes the routes or saves the value. |
+| The limits of a datastore | New limits in place, with no restart |
+
+A service that is not in the file restarts too when it links to an env group that the apply changed. Ferry does not deploy or restart a suspended service. The apply gives a warning: resume the service to apply the changes.
+
+<Callout type="warning" title="A key that you remove goes back to its default">
+The file gives the full settings of a service. When you remove a key, the next apply puts back its default. Only four things stay: `numInstances`, `domains`, the limits and the source (`repo` with `branch`, or `image`).
+</Callout>
+
+## Top-level keys
+
+| Key | Contains |
+|---|---|
+| `envVarGroups` | [Env groups](#env-vars-and-env-groups) |
+| `databases` | [Postgres databases](#postgres) |
+| `services` | [Services](#services), and [Redis datastores](#redis) with `type: redis` or `keyvalue` |
+| `projects` | The projects of Render. Ferry applies the `services`, `databases` and `envVarGroups` of each entry of `environments` to this server, with a warning. |
+
+Ferry ignores each other top-level key with a warning. This includes the `x-` keys that hold a <Term id="yaml-anchor" />. The anchor continues to work.
+
+Ferry keeps each value as you wrote it: `3.10` stays `3.10` and `0123` stays `0123`. A boolean is `true`, `false`, `yes`, `no`, `on`, `off`, `1` or `0`. The same key two times in one block is an error.
+
+## Services
+
+Each entry of `services` needs a `type` and a `name`. All other keys are optional.
+
+| `type` | Also accepted | Result |
+|---|---|---|
+| `web` | `web_service` | A web service. With `runtime: static`, a static site. |
+| `pserv` | `private_service`, `private` | A <Term id="private-service" /> |
+| `worker` | `background_worker` | A <Term id="worker" /> |
+| `cron` | `cron_job` | A cron job |
+| `static` | `static_site` | A <Term id="static-site" /> |
+| `redis`, `keyvalue` | `key_value` | A [Redis datastore](#redis), not a service |
+
+### Keys of a service
+
+| Key | Default | Value |
+|---|---|---|
+| `name` | required | 1 to 40 lowercase letters, digits or `-`. It starts with a letter and does not end with `-`. It is also the hostname on the private network. |
+| `runtime` | see below | `docker`, `image`, `node`, `python`, `go`, `rust`, `ruby`, `static` or `auto`. Also `nodejs`, `javascript`, `bun`, `python3`, `golang`. The old key `env` also works. |
+| `repo` | none | A git URL (`https://`, `ssh://`, `git://`, `file://`, `git@host:path`) or an absolute path on the server |
+| `branch` | `main` | The <Term id="branch" /> to build and to follow |
+| `image` | none | An <Term id="image" />: `nginx:alpine` or `{ url: nginx:alpine }`. Set `repo` or `image`, not the two. |
+| `rootDir` | repository root | The <Term id="root-directory" />, a relative path |
+| `dockerContext` | none | The root directory, when the entry has no `rootDir` |
+| `dockerfilePath` | `Dockerfile` | Relative to the root directory |
+| `buildCommand` | none | The build command of a native runtime |
+| `startCommand` | none | The command that starts the app. `dockerCommand` is the same key. |
+| `staticPublishPath` | none | The folder that a static site serves |
+| `port` | detected | A <Term id="ferry-extension" />: the port of the app, 1 to 65535 |
+| `healthCheckPath` | TCP check | An HTTP path. The answer must be below 400 before a deploy goes live. |
+| `numInstances` | `1` | 1 to 50. Ferry ignores it on a cron job. |
+| `autoDeploy` | `true` | A deploy at each push to `branch` |
+| `autoDeployTrigger` | none | `commit` (on), `off`, or `checksPass` (on, with a warning). It wins over `autoDeploy`. |
+| `schedule` | none | Required for a cron job: a <Term id="cron-expression" /> of 5 fields in UTC, or `@hourly` |
+| `disk.mountPath` | none | The <Term id="mount-path" /> of a <Term id="disk" />: an absolute path, not `/` |
+| `domains` | none | A list of custom domains |
+| `plan`, `memoryLimit`, `cpuLimit` | none | See [Plans and limits](#plans-and-limits). |
+| `envVars` | none | See [Env vars and env groups](#env-vars-and-env-groups). |
+
+The default `runtime` is `image` when the entry has an `image`, and `static` for a static site. For other entries, Ferry finds the runtime from your files. If the CLI runs on the server, `repo` can also be a path relative to the blueprint file, such as `./api`. The CLI changes it into an absolute path.
+
+Some keys work only on some types:
+
+- `healthCheckPath`: web services, private services and static sites.
+- `schedule`: cron jobs only.
+- `disk`: web services, private services and workers, with 1 instance. Ferry accepts `disk.name` and `disk.sizeGB` and does not use them.
+- `domains`: web services and static sites.
+
+## Datastores
+
+### Postgres
+
+Each entry of `databases` creates one Postgres datastore with the image `postgres:<version>-alpine`.
+
+| Key | Default | Value |
+|---|---|---|
+| `name` | required | The same rules as the name of a service. A service and a datastore cannot have the same name. |
+| `postgresMajorVersion` | `16` | Digits and dots only |
+| `databaseName` | `name`, with `_` for `-` | 1 to 63 letters, digits or `_`. The first character is not a digit. |
+| `user` | `databaseName` | The same rules as `databaseName` |
+| `plan`, `memoryLimit`, `cpuLimit` | none | See [Plans and limits](#plans-and-limits). |
+
+### Redis
+
+An entry of `services` with `type: redis` or `type: keyvalue` creates a Redis datastore. Render calls it a <Term id="key-value-store" />. Ferry reads only `type`, `name`, `plan`, `memoryLimit` and `cpuLimit`.
+
+Ferry runs `redis:7-alpine` with a password, append-only persistence and a `maxmemory` of 3/4 of the memory limit.
+
+### A datastore that exists
+
+After the first apply, an apply changes only the limits of a datastore. If `postgresMajorVersion`, `databaseName` or `user` is different, the apply continues with a warning:
+
+```text noCopy
+database 'app-db': postgresMajorVersion '17' differs from the existing '16'; datastores are not changed in place (ignored)
+```
+
+## Plans and limits
+
+Each container gets a <Term id="memory-limit" /> and a <Term id="cpu-limit" />. A `plan` gives them. The <Term id="ferry-extension">Ferry keys</Term> `memoryLimit` and `cpuLimit` replace the values of the plan, one key at a time.
+
+| `plan` of a service | Memory | CPU |
+|---|---|---|
+| `free`, `starter` | 512 MiB | 0.5 |
+| `standard` | 2 GiB | 1 |
+| `pro` | 4 GiB | 2 |
+| `pro plus` | 8 GiB | 4 |
+| `pro max` | 16 GiB | 4 |
+| `pro ultra` | 32 GiB | 8 |
+
+The limits apply to each instance and to each run of a cron job. A static site has no plans: Ferry ignores its `plan` with no warning, but `memoryLimit` and `cpuLimit` apply.
+
+The plan of a datastore sets the memory only:
+
+| `plan` of a datastore | Postgres | Redis |
+|---|---|---|
+| `basic-<size>`, `pro-<size>`, `accelerated-<size>` | The size in the name, such as `basic-256mb` or `pro-4gb` | Unknown plan |
+| `free`, `starter` | 256 MiB | 256 MiB |
+| `standard` | 1 GiB | 1 GiB |
+| `pro` | 4 GiB | 5 GiB |
+| `pro plus` | 8 GiB | 10 GiB |
+
+Ferry ignores the case and the separator of a plan name: `pro plus`, `Pro_Plus` and `pro-plus` are the same plan. An unknown plan sets nothing and gives a warning.
+
+| Key | Values | Range |
+|---|---|---|
+| `memoryLimit` | A size: `512M`, `1G`, `1.5G`, `2GiB`. A plain number is <Term id="mib" />: `768`. | 16 MiB to 1 TiB |
+| `cpuLimit` | A number of CPUs: `0.5`, `2`. Or <Term id="millicore">millicores</Term>: `250m` is 0.25 CPU. | 0.01 to 512 |
+
+The value `0` gives the server default. A value that Ferry cannot read, or a value out of the range, stops the apply.
+
+With no plan and no key, a new resource gets the server defaults: `--default-memory-limit` and `--default-cpu-limit` of [`ferryd`](/docs/reference/server-options#ferryd). A resource that exists keeps its limits.
+
+## Env vars and env groups
+
+`envVars` is a list. Each entry has one form only:
+
+| Entry | Result |
+|---|---|
+| `{ key, value }` | A literal value. A null value becomes an empty string. |
+| `{ key, generateValue: true }` | A <Term id="generated-secret" /> of 64 hex characters. A new apply never changes it. |
+| `{ key, sync: false }` | Ferry sets nothing. Each apply gives a warning until you set the variable. |
+| `{ key, fromDatabase: { name, property } }` | A <Term id="reference" /> to a Postgres database: `${{datastore.NAME.PROPERTY}}` |
+| `{ key, fromService: { type, name, property } }` | A reference to a service: `${{service.NAME.PROPERTY}}`. With `type: redis` or `keyvalue`, a reference to a Redis datastore. |
+| `{ key, fromService: { type, name, envVarKey } }` | A copy of a variable of a different service. Ferry copies the value at each apply. |
+| `{ fromGroup: NAME }` | A link to the env group `NAME`. Services only. |
+
+An entry with two sources is an error. If a key is two times in the list, the last entry wins, with a warning. One value has 32 KiB at most. The variables of one service or group have 256 KiB at most together. Without a `type`, `fromService` looks for the name in the services and in the datastores.
+
+### Reference properties
+
+| `property` | Target | Value |
+|---|---|---|
+| `connectionString` (or `url`, `internalUrl`) | Datastore | The URL on the private network, such as `postgresql://app:…@app-db:5432/app` |
+| `externalConnectionString` (or `externalUrl`) | Datastore | The same URL through the port that the server publishes |
+| `host` (or `hostname`) | Datastore, service | The name on the private network: `app-db` |
+| `port`, `hostport` | Datastore, service with a port | `5432` and `app-db:5432` |
+| `user` (or `username`), `password` | Datastore | The credentials |
+| `database` (or `databaseName`) | Postgres | The name of the database |
+| `internalUrl` | Service with a port | `http://NAME:PORT` |
+| `url` (or `externalUrl`) | Web service, static site | The public URL |
+
+Web services, private services and static sites have a port.
+
+### envVarGroups
+
+Each entry of `envVarGroups` creates one env group. A service links to it with `fromGroup`.
+
+| Key | Default | Value |
+|---|---|---|
+| `name` | required | 1 to 64 letters, digits, `-`, `_` or `.` |
+| `envVars` | none | The same entries as a service, but not `fromGroup` |
+
+The own variables of a service win over the variables of its groups. A group with a later link wins over a group with an earlier link.
+
+## Differences from render.yaml
+
+Most `render.yaml` files apply with no change. A key that Ferry does not support is never an error: Ferry ignores it with a warning, such as `service 'api': ignoring unsupported key 'region'`.
+
+| Key or feature | On Ferry |
+|---|---|
+| `region`, `scaling`, `previews`, `preDeployCommand` | Ignored, with a warning |
+| `ipAllowList`, `diskSizeGB`, `maxmemoryPolicy` on a datastore | Ignored, with a warning |
+| `previewValue` and other Render keys of `envVars` | Ignored, with a warning |
+| `image.creds` | Ignored, with a warning. Docker must pull the image with no credentials. |
+| Projects and environments | Ferry has none. It puts their resources on this server. |
+| An entry with no `repo` | Render uses the repository of the blueprint. Ferry has no default: set `repo`, or run `ferry up NAME`. |
+| `autoDeployTrigger: checksPass` | A deploy at each commit, with a warning. Ferry does not wait for checks. |
+| A runtime that Ferry cannot build, such as `elixir` | A warning. Ferry finds the runtime from your files: add a `Dockerfile`. |
+| The plan `free` | 0.5 CPU, not 0.1 |
+| <Term id="secret-file">Secret files</Term> | Not supported. Use environment variables. |
+| `port` | A Ferry key. Render has no such key. |
+
+<Accordions>
+  <Accordion title="Common errors">
+    An error stops the apply with the status 400 or 409. The message gives the name of the entry. Examples:
+
+    - `services[0]: 'name' is required`: an entry has no `name`.
+    - `service 'x': unsupported service type 'nope' (expected web, pserv, worker, cron, static, redis or keyvalue)`
+    - `service 'api': env var 'DB': references unknown database 'nope'`: the target is not on the server and not in the file.
+    - `service 'api': fromGroup references unknown env group 'shared'`
+    - `service 'api': 'memoryLimit': invalid memory size 'lots' (examples: 512M, 1G, 1.5G)`
+    - `name 'api' is used by more than one blueprint entry`
+    - 409 `service 'cache': the name is already used by a datastore`: a resource of the other kind has this name.
+  </Accordion>
+</Accordions>

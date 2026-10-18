@@ -28,7 +28,7 @@ const FEATURES: { icon: ReactNode; title: string; text: ReactNode; href: string 
     icon: <Rocket />,
     title: 'Zero-downtime deploys',
     text: 'Blue/green deploys with health checks, deploy history, one-click rollbacks and cancel.',
-    href: '/docs/concepts/deploys',
+    href: '/docs/guides/rollbacks',
   },
   {
     icon: <GitBranch />,
@@ -39,19 +39,19 @@ const FEATURES: { icon: ReactNode; title: string; text: ReactNode; href: string 
         folder, or a prebuilt Docker image.
       </>
     ),
-    href: '/docs/concepts/builds',
+    href: '/docs/guides/deploy',
   },
   {
     icon: <Globe />,
     title: 'Networking & HTTPS',
     text: 'A built-in reverse proxy, a URL per service, custom domains with Let’s Encrypt and a private network.',
-    href: '/docs/concepts/networking',
+    href: '/docs/guides/domains',
   },
   {
     icon: <Database />,
     title: 'Managed datastores',
     text: 'Postgres and Redis with persistent volumes, wired into services with env var references.',
-    href: '/docs/concepts/datastores',
+    href: '/docs/guides/databases',
   },
   {
     icon: <CalendarClock />,
@@ -61,7 +61,7 @@ const FEATURES: { icon: ReactNode; title: string; text: ReactNode; href: string 
         Cron jobs on a schedule, and <code>ferry run</code> for one-off commands such as migrations.
       </>
     ),
-    href: '/docs/concepts/jobs',
+    href: '/docs/guides/jobs',
   },
   {
     icon: <FileCode />,
@@ -77,7 +77,7 @@ const FEATURES: { icon: ReactNode; title: string; text: ReactNode; href: string 
     icon: <HeartPulse />,
     title: 'Self-healing',
     text: 'A reconciler replaces crashed containers, enforces instance counts and keeps routes current.',
-    href: '/docs/concepts/self-healing',
+    href: '/docs/guides/scaling',
   },
   {
     icon: <LayoutDashboard />,
@@ -87,19 +87,19 @@ const FEATURES: { icon: ReactNode; title: string; text: ReactNode; href: string 
         A web dashboard, the <code>ferry</code> CLI and a REST API described by OpenAPI 3.1.
       </>
     ),
-    href: '/docs/getting-started/dashboard',
+    href: '/docs/guides/dashboard',
   },
 ];
 
 const SECTIONS = [
   {
     icon: <BookOpen />,
-    label: 'Getting started',
+    label: 'Get started',
     title: 'Install Ferry and deploy your first app',
     href: '/docs/getting-started/installation',
   },
-  { icon: <Wrench />, label: 'Guides', title: 'Auto-deploy from GitHub, run Postgres, go to production', href: '/docs/guides/github-auto-deploy' },
-  { icon: <Terminal />, label: 'Reference', title: 'CLI, server options, blueprint spec', href: '/docs/reference/cli' },
+  { icon: <Wrench />, label: 'Guides', title: 'Deploy an app, add a database, go to production', href: '/docs/guides/deploy' },
+  { icon: <Terminal />, label: 'Developers', title: 'CLI, server options, blueprint spec', href: '/docs/reference/cli' },
   { icon: <Braces />, label: 'API', title: 'Every endpoint of the REST API', href: '/docs/reference/api' },
 ];
 

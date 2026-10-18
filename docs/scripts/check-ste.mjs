@@ -4,13 +4,13 @@
 // AUTHORING.md.
 //
 //   node scripts/check-ste.mjs                      every hand-written page
-//   node scripts/check-ste.mjs content/docs/concepts/deploys
+//   node scripts/check-ste.mjs content/docs/guides/deploy.mdx
 //   node scripts/check-ste.mjs -v <path>            also print each sentence that fails
 //   node scripts/check-ste.mjs --strict <path>      exit 1 when a page is below the targets
 //
 // A page passes when at least 80% of its sentences obey every rule below, when
-// it has a picture or a script, when it stays inside the word budget, and when
-// its figures are correct (scripts/check-figures.mjs).
+// it stays inside the word budget, when it has one figure (<Diagram>, <Flow> or
+// a mermaid chart) at most, and when its figures are correct (scripts/check-figures.mjs).
 //
 // This is a heuristic, not the STE standard: it knows the sentence rules and a
 // short list of words that STE does not approve. It does not have the STE
@@ -27,9 +27,10 @@ const strict = args.includes('--strict');
 const targets = args.filter((a) => !a.startsWith('-'));
 
 export const TARGET = 0.8; // share of sentences that must pass
-export const MAX_WORDS = 220; // words a reader sees in sentences (accordions excluded)
-export const MAX_TABLE_WORDS = 260; // words in tables
-export const MAX_HIDDEN_WORDS = 260; // words in closed accordions (details)
+export const MAX_WORDS = 1500; // words a reader sees in sentences (accordions excluded)
+export const MAX_TABLE_WORDS = 1200; // words in tables
+export const MAX_HIDDEN_WORDS = 400; // words in closed accordions (details)
+export const MAX_FIGURES = 1; // <Diagram>, <Flow> and mermaid charts per page
 const MAX_DESCRIPTIVE = 25; // STE rule 6.1
 const MAX_INSTRUCTION = 20; // STE rule 5.1
 const MAX_PARAGRAPH = 6; // STE rule 6.3 (sentences)
@@ -106,10 +107,7 @@ export function extract(source) {
   const description = front ? /^description:\s*["']?(.*?)["']?\s*$/m.exec(front[1])?.[1] : undefined;
   if (front) text = text.slice(front[0].length);
 
-  const pictures =
-    (text.match(/<(Diagram|Flow|Terminal|Mermaid)\b/g)?.length ?? 0) +
-    (text.match(/^```/gm)?.length ?? 0) / 2 +
-    (text.match(/!\[[^\]]*\]\(/g)?.length ?? 0);
+  const figures = (text.match(/<(Diagram|Flow)\b/g)?.length ?? 0) + (text.match(/^```mermaid\b/gm)?.length ?? 0);
 
   // Sentences inside figures (captions, step texts): they count as reading.
   const figureTexts = [];
@@ -185,7 +183,7 @@ export function extract(source) {
     paragraphs: paragraphs.filter((p) => p.length),
     hiddenParagraphs: hiddenParagraphs.filter((p) => p.length),
     cells,
-    pictures,
+    figures,
     headings,
   };
 }
@@ -224,7 +222,7 @@ export function check(sentence) {
 }
 
 export function measure(source) {
-  const { paragraphs, hiddenParagraphs, cells, pictures } = extract(source);
+  const { paragraphs, hiddenParagraphs, cells, figures } = extract(source);
   const failures = [];
   let total = 0;
   let passed = 0;
@@ -262,9 +260,7 @@ export function measure(source) {
       else passed += 1;
     }
   }
-  // The glossary is a list of definitions: it needs no picture.
-  const exempt = /<Glossary\b/.test(source);
-  return { score: total ? passed / total : 1, total, readingWords, tableWords, hiddenWords, pictures, exempt, failures };
+  return { score: total ? passed / total : 1, total, readingWords, tableWords, hiddenWords, figures, failures };
 }
 
 async function main() {
@@ -286,7 +282,7 @@ async function main() {
     if (result.readingWords > MAX_WORDS) notes.push(`${result.readingWords} words > ${MAX_WORDS}`);
     if (result.tableWords > MAX_TABLE_WORDS) notes.push(`${result.tableWords} table words > ${MAX_TABLE_WORDS}`);
     if (result.hiddenWords > MAX_HIDDEN_WORDS) notes.push(`${result.hiddenWords} words in accordions > ${MAX_HIDDEN_WORDS}`);
-    if (!result.pictures && !result.exempt) notes.push('no picture or script');
+    if (result.figures > MAX_FIGURES) notes.push(`${result.figures} figures > ${MAX_FIGURES}`);
     const figures = await validate(file);
     if (figures.length) notes.push(`${figures.length} figure problem${figures.length > 1 ? 's' : ''}`);
     if (notes.length) below += 1;

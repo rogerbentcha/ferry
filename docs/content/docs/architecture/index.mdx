@@ -1,0 +1,242 @@
+---
+title: Architecture
+description: "Learn how Ferry works: its parts, a deploy, the reconciler, the network and where your data lives."
+---
+
+Ferry is one server program, <Term id="ferryd" />, and one command-line client, `ferry` (the <Term id="cli" />). This page shows how the parts of `ferryd` work together.
+
+For the code-level details, read [`DESIGN.md`](https://github.com/rogerbentcha/ferry/blob/main/DESIGN.md) in the repository.
+
+<Diagram
+  caption="The parts of ferryd"
+  nodes={[
+    { id: 'browser', at: [0, 0], icon: 'browser', label: 'Browser', note: 'or curl' },
+    { id: 'tools', at: [0, 1], icon: 'terminal', label: 'CLI', note: 'or dashboard' },
+    { id: 'api', at: [1.15, 1], icon: 'plug', label: 'API', note: ':7878' },
+    { id: 'proxy', at: [2.3, 0], icon: 'route', label: 'Proxy', note: ':8080 / :443' },
+    { id: 'engine', at: [2.3, 1], icon: 'workflow', label: 'Engine' },
+    { id: 'store', at: [2.3, 2], icon: 'database', label: 'Store', note: 'SQLite ferry.db' },
+    { id: 'apps', at: [3.45, 0], icon: 'box', label: 'Containers', note: 'apps, datastores' },
+    { id: 'docker', at: [3.45, 1], icon: 'container', label: 'Docker' },
+  ]}
+  edges={[
+    { from: 'browser', to: 'proxy' },
+    { from: 'proxy', to: 'apps' },
+    { from: 'tools', to: 'api' },
+    { from: 'api', to: 'engine' },
+    { from: 'api', to: 'store' },
+    { from: 'engine', to: 'store' },
+    { from: 'engine', to: 'proxy' },
+    { from: 'engine', to: 'docker' },
+    { from: 'docker', to: 'apps' },
+  ]}
+  groups={[{ label: 'ferryd: one process', around: ['api', 'proxy', 'engine', 'store'] }]}
+  steps={[
+    {
+      caption: 'A browser sends a request to the proxy. The proxy sends it to a container.',
+      flow: ['browser>proxy', 'proxy>apps'],
+      tones: { proxy: 'primary' },
+    },
+    {
+      caption: 'The CLI and the dashboard call the API.',
+      flow: ['tools>api'],
+      tones: { api: 'primary' },
+    },
+    {
+      caption: 'The API writes to the store. For work on containers, it calls the engine.',
+      flow: ['api>store', 'api>engine'],
+      tones: { api: 'primary' },
+    },
+    {
+      caption: 'The engine reads the store. It tells Docker what to build and what to run.',
+      flow: ['engine>store', 'engine>docker', 'docker>apps'],
+      tones: { engine: 'primary' },
+    },
+    {
+      caption: 'The engine gives the route table to the proxy.',
+      flow: ['engine>proxy'],
+      tones: { engine: 'primary', proxy: 'primary' },
+    },
+  ]}
+/>
+
+## The parts
+
+| Part | What it does | <Term id="crate">Crate</Term> |
+|---|---|---|
+| `ferryd` | The server program. It runs the API, the engine, the store and the proxy in one process. | `ferryd` |
+| CLI and dashboard | The clients. They call the API. | `ferry-cli`, `web/` |
+| API | It checks who you are, writes to the store and calls the engine. It listens on `127.0.0.1:7878`. | `ferry-api` |
+| Engine | It runs the deploys, the reconciler, the cron jobs and the datastores. | `ferry-engine` |
+| Store | It reads and writes `ferry.db`, a <Term id="sqlite" /> database. | `ferry-core` |
+| Proxy | It sends each public request to an instance. It listens on `0.0.0.0:8080`, and on `--https-addr` for HTTPS. | `ferry-proxy`, `ferry-tls` |
+| Docker | It builds the images and runs the containers. Ferry does not run your apps itself. | `ferry-build`, `ferry-docker` |
+
+The <Term id="store" /> has the <Term id="desired-state" />: which deploy is live for each service, how many instances it wants, and which datastores exist. <Term id="docker" /> has the <Term id="actual-state" />: what runs now. The <Term id="engine" /> makes Docker agree with the store.
+
+The <Term id="api" /> does not wait for long work. For a deploy, it puts the deploy in the queue and answers `202`. The client then follows the log of the deploy as a stream.
+
+The <Term id="proxy" /> never reads the database for a request. It reads the <Term id="route-table" /> in memory, which gives the instances of each hostname. The engine updates this table after each deploy and each pass of the reconciler.
+
+When `ferryd` starts, it reads its [options](/docs/reference/server-options#ferryd) and locks the data directory. Then it claims the Docker name prefix. Then it starts the engine, the proxy and the API, in this order.
+
+## What happens during a deploy
+
+A <Term id="deploy" /> changes a source into instances behind the proxy. The source is a git commit, an uploaded folder, an image, or the image of an earlier deploy.
+
+```bash title="Terminal"
+ferry deploy api --follow
+```
+
+The engine runs the deploy in the background, in these steps:
+
+1. **Queue.** The deploy gets the status `queued`. Each service has one <Term id="deploy-worker" />, which runs the deploys of the service one at a time, in order. A new deploy cancels the older deploys of the same service that wait in the queue.
+2. **Build.** The engine gets an <Term id="image" />. For a git commit or an upload, it runs `docker build`. For a service that runs an image, it pulls the image. A restart or a rollback builds nothing: it uses the image of the live deploy or of an earlier deploy. The server builds 2 images at a time (`--build-concurrency`).
+3. **Snapshot.** The engine fixes the environment, the port, the command, the disk, the image and the limits. It saves them with the deploy as the <Term id="snapshot" />. Later instances of this deploy start from it too, for example after a crash. Thus a change of settings, limits or variables applies only at the next deploy or restart.
+4. **Start.** The engine starts the new <Term id="instance">instances</Term> next to the old instances. This is a <Term id="blue-green" /> deploy. A service with a <Term id="disk" /> uses <Term id="recreate" />: the old instance stops first, and the service is not available for a short time.
+5. **Health check.** Each new instance must pass a <Term id="health-check" /> in 120 seconds or less (`--health-check-timeout`). The test is an HTTP request to the health check path. If the service has no path, the test is a TCP connection to its port. A background worker passes when its process still runs after 5 seconds.
+6. **Switch.** The routes change to the new instances in one step, and the deploy becomes `live`. The engine waits 2 seconds for the requests in progress on the old instances. Then each old instance has 10 seconds to stop.
+7. **Clean up.** The engine keeps the 5 newest images of the service (`--keep-images`) and deletes the older images. A rollback needs an image that still exists.
+
+The deploy log shows each step. The lines that start with `==> ` come from Ferry:
+
+```text title="Deploy log" noCopy
+09:38:58 ==> Starting deploy dep-3271cdfd1415400d9a5e (trigger: blueprint)
+09:38:58 ==> Using image nginx:alpine (already present)
+09:38:58 ==> Using port 80 (service setting)
+09:38:58 ==> Limits: 512 MiB memory, 1 CPU per instance
+09:38:58 ==> Starting 2 instance(s)
+09:38:58 ==> Started instance 9c5087 (port 80, published on 127.0.0.1:63120)
+09:38:58 ==> Started instance 77122e (port 80, published on 127.0.0.1:63121)
+09:38:59 ==> Health check passed
+09:38:59 ==> Routing traffic to the new instance(s)
+09:38:59 ==> Your service is live 🎉
+```
+
+### If a deploy fails
+
+A failed deploy never changes what is live. The engine removes the new instances, and the old instances continue to answer. A failure before the image is ready gives the status `build_failed`. A failure at the start or at the health check gives `deploy_failed`.
+
+You can cancel a deploy with `ferry cancel` until the switch. After the switch, [roll back](/docs/guides/rollbacks) to undo it. If `ferryd` stops during a deploy, the deploy fails with the error `interrupted by server shutdown` or `interrupted by server restart`. The live deploy stays live.
+
+## The reconciler
+
+The <Term id="reconciler" /> compares the store with Docker and repairs the difference. Thus an app that crashed comes back with no action from you.
+
+| Difference | What the reconciler does |
+|---|---|
+| An instance exited or crashed | It removes the container. It starts a new instance from the snapshot of the live deploy. |
+| The instance count changed | It starts or removes instances. |
+| A datastore container stopped or is not there | It starts the container or creates it again, with the same volume. The data stays. |
+| A container has no service or datastore in the store | It removes this <Term id="orphan" />. |
+| A deploy did not end before the server stopped | At boot, the deploy fails. The reconciler removes its containers. |
+
+In each pass, the reconciler also writes the routes again from the instances that run and accept connections.
+
+### When it runs
+
+| Pass | When |
+|---|---|
+| Boot | At startup, before the proxy accepts traffic. The proxy serves the live instances from its first request. |
+| Periodic | Each 10 seconds. The first one comes 2 seconds after boot. |
+| On demand | After each deploy, and on scale, suspend and resume. |
+
+Two passes never run at the same time.
+
+A deploy holds the <Term id="service-lock" /> while it starts its instances. The reconciler does not wait for this lock. It skips a busy service until its next pass.
+
+### What it never does
+
+The reconciler never changes your settings, variables or instance counts. It never deletes a <Term id="volume" />. It never touches the containers of another name prefix.
+
+### The two watchers
+
+Two tasks run between the passes:
+
+- The <Term id="route-watcher" /> checks the host ports of the instances each second. When Docker restarts a container, the port can change, and the routes follow it.
+- The <Term id="oom-watcher" /> writes a warning in the server log when the kernel kills a container because of its memory limit.
+
+```text title="Server log" noCopy
+instance a1b2c3 of service 'web' ran out of memory (limit 512 MiB) — raise the service's memory limit
+```
+
+## The networking model
+
+Containers talk to each other on a private Docker network. The outside reaches the public services only through the proxy.
+
+### The private network
+
+Each server creates one <Term id="bridge-network" />. Its name is the name prefix of the server: `ferry` by default. Each service container, datastore and job run joins it. On this network, the <Term id="alias">DNS alias</Term> of a container is its name.
+
+| To reach | From a container, use |
+|---|---|
+| A service | `http://NAME:PORT`, for example `http://api:8000` |
+| A datastore | `NAME:5432` for Postgres, `NAME:6379` for Redis |
+
+Do not write these addresses by hand. Use [references](/docs/guides/environment) such as `${{service.api.internalUrl}}` and `${{datastore.app-db.connectionString}}`.
+
+### The ports
+
+Each container that listens publishes its port on `127.0.0.1`, with a random host port. The proxy and the health checks connect to this address, never to the IP address of the container. There are three reasons for this:
+
+- It works on <Term id="docker-desktop" />. On macOS and Windows, the host cannot reach the IP addresses of the containers.
+- Nothing is open by accident. Only the host can reach these ports.
+- No port conflict. The old and the new instances of a blue-green deploy use the same container port.
+
+| Address | Who listens | Default |
+|---|---|---|
+| `--api-addr` | The API and the dashboard | `127.0.0.1:7878` |
+| `--proxy-addr` | The proxy, for HTTP | `0.0.0.0:8080` |
+| `--https-addr` | The proxy, for HTTPS | None |
+| `127.0.0.1:<host port>` | Each instance of a web service, private service or static site | Docker chooses a port at each start. |
+| `127.0.0.1:<host port>` | Each datastore | Ferry chooses a port one time, when you create the datastore. |
+
+Background workers and cron jobs publish no port. Your app must listen on the port in `$PORT`, on `0.0.0.0`. An app that listens on `127.0.0.1` in its container fails the health check.
+
+### The proxy
+
+The proxy finds the service from the <Term id="host-header" /> of each request.
+
+| Hostname | Goes to |
+|---|---|
+| `<name>.<domain>` | The web service or static site `<name>`. The domain is the base domain (`localhost` by default) or a connected domain. |
+| A custom domain | The service that claimed it |
+| `ferry.<base-domain>` | The API and the dashboard. This route is on by default only for a local base domain. |
+
+The proxy sends the requests to the instances of a service in turn (<Term id="round-robin" />). It supports HTTP/1.1, HTTP/2 and websockets. With `--https-addr` and `--acme-email`, it gets a <Term id="certificate" /> from <Term id="lets-encrypt" /> for each public hostname, and renews it. Local hostnames, such as `*.localhost`, stay on HTTP.
+
+When the proxy answers by itself, the response has the <Term id="ferry-error-header" />. Thus you know that the answer did not come from your app.
+
+| Status | `x-ferry-error` | Cause |
+|---|---|---|
+| 404 | `not_found` | No service has this hostname. |
+| 503 | `suspended` | You suspended the service. |
+| 503 | `no_upstreams` | No instance accepts connections yet: a first deploy, or a crash. |
+| 502 | `bad_gateway` | The instance refused the connection, or failed during the request. |
+
+## Where the data lives
+
+The files of `ferryd` are in its <Term id="data-directory" />. The option is `--data-dir`, and the default is `./ferry-data`. Only one `ferryd` can use a data directory at a time.
+
+| Path | Contents |
+|---|---|
+| `ferry.db` | The store: services, deploys, datastores, variables, settings, the account and the API tokens |
+| `api_token` | The server token |
+| `instance_id` | The owner id of the Docker name prefix |
+| `ferryd.lock` | A lock that `ferryd` holds while it runs |
+| `ferryd.log` | The log of a server that runs in the background |
+| `logs/` | The log of each deploy and of each job |
+| `repos/` | A git mirror for each service |
+| `uploads/` | The source archives from `ferry up` |
+| `builds/` | Temporary build folders. Ferry deletes them after each build. |
+| `certs/` | The ACME account, the certificates and their keys |
+
+Docker has the images, the containers, the private network and the volumes. Ferry finds its own resources by the <Term id="name-prefix" /> (`--name-prefix`, default `ferry`). Each container also has the label `ferry.instance`, with the prefix as its value. Thus many Ferry servers can share one Docker daemon. See [Multiple servers](/docs/guides/multiple-servers).
+
+| Resource | Name in Docker |
+|---|---|
+| Network | `<prefix>` |
+| Image | `<prefix>/<service>:<deploy id>` |
+| Service container | `<prefix>-<service>-<deploy short id>-<random>` |
+| Datastore container and volume | `<prefix>-ds-<name>` and `<prefix>-ds-<name>-data` |
+| Service disk | `<prefix>-svc-<service id>-disk` |

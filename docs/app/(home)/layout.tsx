@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { FerryLogo } from '@/components/ferry-logo';
 import { SiteHeader } from '@/components/layout/site-header';
-import { githubUrl } from '@/lib/shared';
+import { gitConfig, githubUrl } from '@/lib/shared';
 
 export default function Layout({ children }: LayoutProps<'/'>) {
   return (
@@ -27,9 +27,14 @@ export default function Layout({ children }: LayoutProps<'/'>) {
             <Link className="hover:text-foreground" href="/docs/reference/api">
               API reference
             </Link>
-            <Link className="hover:text-foreground" href="/docs/contributing/development">
+            <a
+              className="hover:text-foreground"
+              href={`${githubUrl}/blob/${gitConfig.branch}/CONTRIBUTING.md`}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
               Contributing
-            </Link>
+            </a>
             <a className="hover:text-foreground" href={githubUrl} target="_blank" rel="noreferrer noopener">
               GitHub
             </a>

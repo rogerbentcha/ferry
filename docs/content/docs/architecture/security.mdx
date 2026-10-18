@@ -1,0 +1,201 @@
+---
+title: Security
+description: What Ferry protects on your server, and what you must do to run it safely.
+---
+
+Ferry is for one team that runs its own server. One <Term id="admin-account" /> controls the full server, and only the <Term id="proxy" /> is open to the internet. Each part below tells what Ferry does, and what you do.
+
+On a production server, keep the dashboard and the <Term id="api" /> on <Term id="localhost" />. Reach them from your machine through an <Term id="ssh-tunnel" />. Keep the first command open. Run the second command in another terminal.
+
+```bash title="Terminal"
+ssh -L 7878:127.0.0.1:7878 you@your-server
+ferry login --server http://127.0.0.1:7878
+```
+
+The dashboard is then at `http://127.0.0.1:7878` in your browser.
+
+## The account and the dashboard sign-in
+
+A server has one account: an email and a password of 8 characters or more. The server keeps an <Term id="argon2id" /> <Term id="password-hash" />, never the password.
+
+A new server has no account. To create it, you need the <Term id="setup-code" />. The banner of `ferryd` and the output of `ferryd status` end with a link that contains the code. The code is also in the file `<data-dir>/setup_code`, and only the owner of the file can read it. Thus only a person with access to the server can create the account.
+
+After you sign in, a <Term id="session-cookie" /> proves who you are. The JavaScript of the page cannot read it, and the browser sends it only with requests from the same site. A session ends 30 days after its last use, or when you sign out. When you change the password, the session of each other browser ends.
+
+After 10 failed sign-ins in 5 minutes, the server refuses each sign-in for a short time. This limit is for the full server, not for each address. Thus another person who can reach the API can delay your sign-in.
+
+**What you do**
+
+- In **Server → Account**, look at the list of sessions. Sign out each browser that you do not know.
+- If you forget the password, run the command below on the server. It signs each browser out. The API tokens continue to work.
+
+```bash title="Terminal"
+ferryd reset-password
+```
+
+## API tokens and the CLI login
+
+The <Term id="cli" />, scripts and <Term id="ci" /> prove their identity with an <Term id="api-token" />. A token is `fy_` and then 40 <Term id="hex">hex characters</Term>. The server keeps only a <Term id="sha-256" /> hash of each token.
+
+`ferry login` gets a token for one terminal. It prints the address of a page and a code. You open the page in the dashboard and approve the request. The request expires after 10 minutes. The CLI saves the server and the token in `~/.config/ferry/config.json`, with the mode `0600`.
+
+For CI and scripts, create a token in **Server → Account → New token**. The dashboard shows the token one time. Send it in a header:
+
+```bash title="Terminal"
+curl -H "Authorization: Bearer $FERRY_TOKEN" http://127.0.0.1:7878/api/v1/services
+```
+
+Each token has full access. A person with one token can read each variable and each datastore password, deploy any code and delete each service. A token cannot use the <Term id="account-endpoint">account endpoints</Term>: the password, the sessions, the tokens and the approval of a `ferry login`. Thus a stolen token cannot change the password or make more tokens.
+
+Two more secrets give access to the server:
+
+| Secret | What it can do | If it leaks |
+|---|---|---|
+| The <Term id="server-token" />, in `<data-dir>/api_token` | The same as an API token. It is for scripts on the server itself. | Stop `ferryd`. Delete the file. Start `ferryd`: it makes a new token. |
+| The URL of a <Term id="deploy-hook" />, with its `?key=` | Start deploys of one service, and nothing else | `ferry deploy-hook rotate NAME` |
+
+**What you do**
+
+- Keep each token as secret as a root password.
+- Approve a `ferry login` only if the page shows the code of your terminal and your `user@host`. If not, deny the request.
+- In **Server → Account**, revoke each token that you do not use. The server refuses it immediately.
+
+## Who can reach the dashboard
+
+| Listener | Default address | Who can reach it |
+|---|---|---|
+| Dashboard and API (`--api-addr`) | `127.0.0.1:7878` | The server only |
+| Proxy (`--proxy-addr`, `--https-addr`) | `0.0.0.0:8080` | Everybody: this is the public edge |
+| App containers | `127.0.0.1:<random>` | The server only. The public goes through the proxy. |
+| Datastores | `127.0.0.1:<fixed port>` | The server only |
+
+The proxy can also serve the dashboard and the API on a hostname: the <Term id="dashboard-host" />. The option `--dashboard-host` sets it.
+
+| <Term id="base-domain">Base domain</Term> | Dashboard on the proxy |
+|---|---|
+| Local: `localhost`, `.local`, `.internal`, `.test`, an IP address | On, at `ferry.<base-domain>` |
+| A public domain | Off, until you set `--dashboard-host` |
+
+<Callout type="warning" title="A public server with no --base-domain">
+The base domain is then `localhost`, and the dashboard is at `ferry.localhost` on the public proxy. Each person can get it: they send that `Host` header. Start such a server with `--dashboard-host none`, or with a hostname of your own and HTTPS.
+</Callout>
+
+**What you do**
+
+- Keep `--api-addr` on `127.0.0.1`. Use the SSH tunnel at the top of this page.
+- If you put the dashboard on a hostname, use HTTPS: set `--https-addr` and `--acme-email`.
+- If you do not need the dashboard on the proxy, turn it off:
+
+```bash title="Terminal"
+ferryd --dashboard-host none
+```
+
+The [production checklist](/docs/guides/production) gives a complete setup.
+
+<Accordions>
+  <Accordion title="The one request to a third party">
+    A server behind <Term id="nat" /> does not know its public address. After you add a domain that is not local, Ferry asks a public service for its IPv4 address. This is the only request that Ferry makes to a third party on its own. To prevent it, start `ferryd` with `--public-ip <IP>`.
+  </Accordion>
+</Accordions>
+
+## Cross-site protection
+
+A change (`POST`, `PUT`, `PATCH` or `DELETE`) with the session cookie must come from the <Term id="origin" /> of the dashboard. This rule protects you when you open a bad page while your browser has a session. The server refuses a change from another origin with the status 403 and the code `cross_site_request`.
+
+`ferryd` sends no <Term id="cors" /> headers. Thus a page of another origin cannot call the API from a browser.
+
+You have nothing to set. The protection is always on.
+
+## Secrets in builds and logs
+
+Ferry gives the variables of a service to `docker build` as BuildKit secrets. A <Term id="build-secret" /> exists only during one build step. A <Term id="dockerfile" /> that Ferry generates never declares a variable as `ARG`. Thus the values do not go into the <Term id="image" /> or its <Term id="image-history">history</Term>.
+
+In your own Dockerfile, mount the secrets the same way:
+
+```dockerfile title="Dockerfile"
+RUN --mount=type=secret,id=KEY,env=KEY …
+```
+
+Do not put a secret in an `ARG`. For each `ARG` that your Dockerfile declares, Ferry also gives `--build-arg KEY`. BuildKit records that value in the image history. Build secrets need Docker Engine 27.3 or newer: see [Builds fail on an old Docker Engine](/docs/help/troubleshooting#builds-fail-on-an-old-docker-engine).
+
+Ferry also keeps secrets out of logs and error messages. A datastore password never shows there. If a repository URL contains a token, Ferry writes `***` in its place. A <Term id="git-connection" /> has read access only, and the API never returns its secret.
+
+But the API returns the variable values and the datastore passwords to each caller with the session or an API token. The dashboard shows them, so that you can copy a <Term id="connection-string" />.
+
+## How containers are contained
+
+Each container that Ferry starts has limits: service instances, jobs, cron runs and datastores. Thus an app with a bug cannot stop the full server. Builds do not have these limits.
+
+| When an app… | What happens | Default and option |
+|---|---|---|
+| Uses too much memory | The <Term id="kernel" /> stops the container at its limit. Docker restarts it. | 512 MiB, `--default-memory-limit` |
+| Uses all the CPU | Docker slows it down at its limit. The other cores stay free. | 1 CPU, `--default-cpu-limit` |
+| Starts processes with no end | `fork` fails in the container | 1024, `--pids-limit` |
+| Writes logs with no end | Docker rotates the log | 10 MiB × 3 files, `--log-max-size` |
+| Deploys onto a full disk | The deploy fails before the build | 1 GiB free, `--min-free-disk` |
+
+Each person who can deploy can run any code on the server. The limits protect the server from a bug, not from an attack. Ferry does not contain these parts:
+
+- Builds have no memory limit and no CPU limit. Only `--build-concurrency` (default 2) limits them.
+- Disks have no <Term id="quota">quotas</Term>. A service that writes to its disk can fill the disk of the host.
+- Disk and network I/O have no limit.
+- All services and datastores share one <Term id="private-network" />. Each container can reach each datastore by name. Only the password protects a datastore.
+
+**What you do**
+
+- Deploy only code that you trust.
+- Make sure that the limits fit the memory and the CPUs of the host. On a host with 1 CPU, lower `--default-cpu-limit`.
+- Do not set a limit to `0`. The value `0` turns that guard off.
+- Remove old images and the build cache from time to time:
+
+```bash title="Terminal"
+docker image prune
+docker builder prune
+```
+
+[Scaling and limits](/docs/guides/scaling) tells how to change the limits of one service.
+
+## The data directory and its secret files
+
+`--data-dir` sets the <Term id="data-directory" />. The default is `./ferry-data`. The directory holds all that Ferry knows, and that includes secrets.
+
+```text title="<data-dir>" noCopy
+ferry-data/                 0700
+├── api_token               0600
+├── setup_code              0600
+├── instance_id             0600
+├── ferry.db
+├── certs/
+│   ├── <host>/key.pem      0600
+│   └── accounts/*.json     0600
+├── logs/
+├── repos/
+├── uploads/
+└── builds/
+```
+
+| File | Secret part |
+|---|---|
+| `ferry.db` | Variable values, datastore passwords, repository URLs with their credentials, the secrets of connected git accounts |
+| `api_token` | The server token |
+| `setup_code` | The setup code, only while the server has no account |
+| `certs/` | TLS <Term id="private-key">private keys</Term> and the ACME account |
+
+Ferry does not encrypt `ferry.db`. The secrets in it are in <Term id="clear-text" />. Only the permissions of the directory protect them. Each person who can read the directory, or its backups, can read each secret.
+
+**What you do**
+
+- Do not give other users access to the directory or to the machine.
+- Encrypt the backups of the directory.
+- Give each server its own `--data-dir` and its own <Term id="name-prefix" /> (`--name-prefix`). See [Multiple servers](/docs/guides/multiple-servers).
+- Do not use `--take-over` while another server uses the prefix. The server that takes over removes the containers of the other server.
+
+## What Ferry does not have
+
+Read this list before you put a server on the internet.
+
+- **One account only.** No other users, teams, roles or audit log exist. Each API token has the same full access.
+- **No encryption at rest.** Ferry keeps the secrets in clear text in `ferry.db`.
+- **No IP allow lists.** The only rate limits are the connection limits of the proxy and the limit on failed sign-ins.
+- **Gaps in the limits.** Builds, disks, I/O and the private network have no limit.
+- **No private registry.** Docker must pull each image with no login.

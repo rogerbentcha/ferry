@@ -1,0 +1,333 @@
+---
+title: Troubleshooting
+description: Find the message that you see, then read its cause and the fix.
+---
+
+Find the message that you see on this page. Each problem gives the message, its cause and the fix. A `…` replaces the parts of a message that change with your setup.
+
+When a deploy fails, the full story is in its <Term id="deploy-log" />. The page of the deploy in the dashboard shows the same log.
+
+```bash title="Terminal"
+ferry logs --deploy DEPLOY_ID
+```
+
+## When ferryd starts
+
+<Term id="ferryd" /> tests its data directory, its addresses and Docker before it starts. If a test fails, it stops with an `Error:` line and its cause.
+
+### ferryd cannot connect to Docker
+
+```text title="ferryd" noCopy
+Error: cannot connect to Docker — is the Docker daemon running?
+
+Caused by:
+    docker error: cannot connect to the Docker daemon (unix:///var/run/docker.sock: …)
+```
+
+`ferryd` cannot open the <Term id="docker-socket" />.
+
+| Cause | Fix |
+|---|---|
+| Docker does not run | Start Docker. |
+| The socket is in another place: Colima, OrbStack, rootless Docker | Set `DOCKER_HOST` to the correct socket. |
+| Your user cannot open the socket (Linux) | Run `ferryd` as a user in the `docker` group. |
+
+### A port is in use
+
+```text title="ferryd" noCopy
+Error: cannot listen on 0.0.0.0:80 (proxy address)
+
+Caused by:
+    Address already in use (os error 98)
+```
+
+Another program, frequently a web server, listens on that address. The error number is `98` on Linux and `48` on macOS. Find the program:
+
+```bash title="Terminal"
+sudo ss -ltnp 'sport = :80'            # Linux
+sudo lsof -nP -iTCP:80 -sTCP:LISTEN    # macOS
+```
+
+Stop that program. Or give `ferryd` another address with `--proxy-addr`, `--https-addr` or `--api-addr`.
+
+### Permission denied on port 80 or 443
+
+```text title="ferryd" noCopy
+Error: cannot listen on 0.0.0.0:80 (proxy address)
+
+Caused by:
+    Permission denied (os error 13)
+```
+
+On Linux, a program needs the <Term id="capability" /> `CAP_NET_BIND_SERVICE` to listen on a port below 1024. Do not run `ferryd` as <Term id="root" />. Add this line to the <Term id="systemd-unit" /> of `ferryd`:
+
+```ini title="systemd unit"
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+```
+
+Or set the capability on the program file. After each upgrade of `ferryd`, do it again.
+
+```bash title="Terminal"
+sudo setcap cap_net_bind_service=+ep /usr/local/bin/ferryd
+```
+
+### Another ferryd uses the data directory
+
+```text title="ferryd" noCopy
+Error: another ferryd is already running with data directory /var/lib/ferry
+```
+
+Only one `ferryd` can use a <Term id="data-directory" /> at a time. Stop the other process. Or give this `ferryd` its own `--data-dir`.
+
+### The Docker prefix belongs to another server
+
+```text title="ferryd" noCopy
+Error: Docker resources with prefix 'ferry' belong to another Ferry server (data dir /var/lib/ferry). Run this server with a different --name-prefix, stop the other server, or pass --take-over to adopt the resources (…)
+```
+
+Each Docker <Term id="name-prefix" /> belongs to one data directory, and this `ferryd` uses another one. Frequently, `ferryd` started from another folder with the default `./ferry-data`. Start `ferryd` with the data directory that the message names. Or give this server its own `--name-prefix`.
+
+<Callout type="warning" title="Do not use --take-over for this">
+The server that takes over removes the containers of the other server. Use `--take-over` only for a data directory that lost its file `instance_id`.
+</Callout>
+
+## When you sign in to the dashboard
+
+### The dashboard asks for a setup code
+
+The dashboard opens on **Create your account**, with an empty **Setup code** field. Or it refuses the code:
+
+```text title="Dashboard" noCopy
+This is not the setup code of this server.
+```
+
+The server has no account, and you opened the dashboard without the link that `ferryd` printed. On the server, run `ferryd status` with the same `--data-dir` as the server. Open the link at the end of its output.
+
+```bash title="Terminal"
+ferryd status
+```
+
+```text title="ferryd status" noCopy
+  Create your account: http://127.0.0.1:7878/setup?code=5b0e…
+```
+
+The code is also in the file `<data-dir>/setup_code`.
+
+### You forgot the password
+
+You cannot sign in, because you do not know the password. Nobody can read it: the server keeps only its <Term id="password-hash" />. Set a new password on the server. Run the command as the user that runs `ferryd`, with the data directory of the server:
+
+```bash title="Terminal"
+sudo -u ferry ferryd reset-password --data-dir /var/lib/ferry
+```
+
+The command asks for the new password two times. It signs each browser out. The API tokens continue to work.
+
+### Too many failed attempts
+
+```text title="Dashboard" noCopy
+too many failed attempts: try again in 4 minutes
+```
+
+10 sign-ins failed in 5 minutes. The limit is for the full server, not for each address, so the failures are possibly not yours. Wait for the time in the message.
+
+If it occurs again and again, another person tries to sign in. Keep the API on `127.0.0.1`. Reach it through an <Term id="ssh-tunnel" />. See [Who can reach the dashboard](/docs/architecture/security#who-can-reach-the-dashboard).
+
+## When you use the CLI
+
+### The CLI cannot reach the server
+
+```text title="ferry" noCopy
+Error: cannot reach Ferry server at http://127.0.0.1:7878 — is ferryd running?
+```
+
+Nothing answers the <Term id="cli" /> at that address.
+
+| Cause | Fix |
+|---|---|
+| `ferryd` does not run | Start `ferryd`. |
+| The URL is wrong | Check `--server` or `FERRY_SERVER`. |
+| The server is remote, and the SSH tunnel does not run | Open the tunnel with the command below. |
+
+```bash title="Terminal"
+ssh -N -L 7878:127.0.0.1:7878 you@your-server
+```
+
+### Not logged in, or the token is wrong
+
+```text title="ferry" noCopy
+error: not logged in: run 'ferry login --server <URL>' first (or set FERRY_SERVER and FERRY_TOKEN)
+```
+
+```text title="ferry" noCopy
+error: invalid API token (unauthorized)
+hint: the token was refused (revoked or expired?): log in again with 'ferry login --server <URL>'
+```
+
+The CLI has no <Term id="api-token" />, or the server refuses it. The server refuses a token that you revoked, that expired, or that belongs to another server. Log in again. Then approve the request in the dashboard:
+
+```bash title="Terminal"
+ferry login --server <URL>
+```
+
+For CI and scripts, create a new API token in **Server → Account**. Put it in `FERRY_TOKEN`.
+
+### ferry login does not finish
+
+```text title="ferry" noCopy
+error: the login request expired before it was approved: run 'ferry login' again
+```
+
+Nobody approved the request in the dashboard in 10 minutes. Run `ferry login` again. Open the page that it prints. Sign in. If the page shows the code of your terminal, click **Approve**.
+
+On a new server, `ferry login` stops immediately with `this server has no account yet`. Create the account first: see [The dashboard asks for a setup code](/docs/help/troubleshooting#the-dashboard-asks-for-a-setup-code).
+
+## During a build
+
+The deploy gets the status `build_failed`. The live deploy continues to answer.
+
+### Ferry cannot detect the runtime
+
+```text title="Deploy log" noCopy
+could not detect the runtime: add a Dockerfile, or a package.json, requirements.txt, pyproject.toml, Pipfile, go.mod, Cargo.toml, Gemfile or index.html, or set the runtime explicitly
+```
+
+The <Term id="build-context" /> has no file that tells Ferry how to build the app.
+
+| Case | Fix |
+|---|---|
+| The file is not there | Add a Dockerfile, or the project file of your language. |
+| The app is in a subdirectory | `ferry update NAME --root-dir DIR` |
+| You know the runtime | `ferry update NAME --runtime node` |
+
+### Builds fail on an old Docker Engine
+
+```text title="Deploy log" noCopy
+… (secret env mounts need Docker Engine 27.3 or newer: upgrade Docker on the Ferry server)
+```
+
+The variables of the service go to the build as <Term id="build-secret">build secrets</Term>, and these need Docker Engine 27.3 or newer. Upgrade Docker on the server.
+
+### ferryd cannot find the docker CLI
+
+```text title="Deploy log" noCopy
+the docker CLI ('docker') was not found: install Docker on the Ferry server
+```
+
+No `docker` command is on the <Term id="path-variable" /> of `ferryd`. A <Term id="service-manager" /> sometimes starts `ferryd` with a short `PATH`. Install the Docker CLI on the server. Or give its full path to `ferryd` with `--docker-bin`.
+
+### The disk is almost full
+
+```text title="Deploy log" noCopy
+==> Build failed: not enough free disk space on /var/lib/ferry: 812 MiB free, Ferry needs at least 1 GiB (free some space, e.g. remove unused Docker images with `docker image prune`, or change the threshold with `ferryd --min-free-disk`, 0 = off)
+```
+
+The disk of the data directory, or of the <Term id="docker-root" />, has less free space than `--min-free-disk`: 1 GiB by default. A new datastore fails with the same message. Remove the images and the build cache that nothing uses:
+
+```bash title="Terminal"
+docker image prune
+docker builder prune
+```
+
+To change the limit, start `ferryd` with `--min-free-disk`. The value `0` turns the test off.
+
+## During a deploy
+
+The deploy gets the status `deploy_failed`. The previous deploy continues to answer.
+
+### The health check times out
+
+```text title="Deploy log" noCopy
+==> Deploy failed: health check timed out after 120s: nothing accepts connections on container port 10000 (published as 127.0.0.1:…) yet: does the app listen on $PORT (10000) on 0.0.0.0? An app listening on 127.0.0.1 (localhost) inside its container can't be reached
+```
+
+Nothing answers on the <Term id="port" /> of the new <Term id="instance" />: the app listens on the wrong address or the wrong port. Make the app listen on `0.0.0.0` and on the port in `$PORT`. Or tell Ferry the port of your app:
+
+```bash title="Terminal"
+ferry update NAME --port N
+```
+
+If the app needs more time to start, start `ferryd` with a longer `--health-check-timeout`.
+
+### The health check path answers with an error
+
+```text title="Deploy log" noCopy
+==> Deploy failed: health check timed out after 120s: GET /healthz returned HTTP 404
+```
+
+The path of the <Term id="health-check" /> does not exist in the app, or the app answers with a status of 400 or more. Correct the path, or remove it:
+
+```bash title="Terminal"
+ferry update NAME --health /path
+ferry update NAME --health ""
+```
+
+### The app crashes
+
+```text title="Deploy log" noCopy
+==> Deploy failed: instance d1c6b8 crashed (exit code 1)
+```
+
+The app stopped with an error before its health check passed. Ferry copies the last lines of its output into the deploy log, immediately above the error. Read them. Correct the cause. Then deploy again.
+
+### The app exits immediately
+
+```text title="Deploy log" noCopy
+==> Deploy failed: instance 2e58a7 exited with code 0: its command `node ./dist/index.js` ended without an error, but a web service must keep running and listen on port 10000
+```
+
+The command ended with no error, but it did not start a server. A web service must continue to run.
+
+| Where the command comes from | Fix |
+|---|---|
+| The project, because the service has no <Term id="start-command" /> | If the project only builds files, create it as a static site. If not, set the start command of its server. |
+| The start command, which only builds or starts a program in the <Term id="background" /> | Put the build steps in the build command. Start the server in the <Term id="foreground" />. |
+| The image | Set a start command on the service. |
+
+A task that runs and ends belongs in a [job](/docs/guides/jobs).
+
+### The app runs out of memory
+
+```text title="Deploy log" noCopy
+==> Deploy failed: instance d1c6b8 ran out of memory (limit 512 MiB) — raise the service's memory limit
+```
+
+The new instance used more memory than its <Term id="memory-limit" />, and the <Term id="kernel" /> stopped it. Increase the limit. Then deploy again:
+
+```bash title="Terminal"
+ferry update NAME --memory 1G
+ferry deploy NAME
+```
+
+A live instance can also stop for this reason. Then `ferry status NAME` shows `restarting (OOM killed, exit code 137)`. Increase the limit. Then run `ferry restart NAME`. Ferry builds nothing.
+
+## When you open the app
+
+### The proxy answers with an error
+
+The browser shows an error page with the status `404`, `502` or `503`. The <Term id="proxy" /> adds the <Term id="ferry-error-header" /> header to its own error pages. Read it:
+
+```bash title="Terminal"
+curl -sI http://shop.localhost:8080/ | grep -i x-ferry-error
+```
+
+| Status and `x-ferry-error` | Cause | Fix |
+|---|---|---|
+| `404` `not_found` | No service has this hostname. | Get the URL with `ferry open NAME`. For custom domains, run `ferry domains NAME`. |
+| `503` `no_upstreams` | The service has no instance that runs. | Run `ferry deploys NAME` and `ferry status NAME`. Then read the log of the failed deploy. |
+| `503` `suspended` | You suspended the service. | `ferry resume NAME` |
+| `502` `bad_gateway` | The app does not answer, or its answer is not valid. | Read the <Term id="runtime-log">runtime logs</Term>: `ferry logs NAME`. |
+
+<Accordions>
+  <Accordion title="The causes of 404 not_found">
+    - An error in the name.
+    - A domain that is not a domain of the server, or that waits for its DNS.
+    - A request to an IP address.
+    - A worker or a private service: they have no public URL.
+    - A <Term id="reverse-proxy" /> in front of Ferry that does not pass the <Term id="host-header" />.
+  </Accordion>
+</Accordions>
+
+### A domain does not work
+
+A domain stays on **Waiting for DNS**, or a custom domain gets no certificate. See [Domains and HTTPS](/docs/guides/domains).

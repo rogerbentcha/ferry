@@ -6,11 +6,7 @@ export const terms = {
   'git-connection': {
     term: 'git connection',
     definition: 'A GitHub or GitLab account that gave your Ferry server the permission to read its repositories.',
-    see: ['git-provider', 'repository'],
-  },
-  'git-provider': {
-    term: 'provider',
-    definition: 'The site that keeps your git repositories: GitHub or GitLab.',
+    see: ['repository'],
   },
   'github-app': {
     term: 'GitHub App',
@@ -20,25 +16,11 @@ export const terms = {
   'oauth-app': {
     term: 'OAuth application',
     definition: 'An application that you create on GitLab for your server. After you authorize it, Ferry can read your repositories. Ferry never gets your password.',
-    see: ['redirect-uri', 'scope'],
-  },
-  'access-token': {
-    term: 'access token',
-    definition: 'A secret text that you create on GitHub or GitLab. A program that has it can read your repositories.',
-    see: ['scope'],
-  },
-  scope: {
-    term: 'scope',
-    definition: 'One permission of a token or of an application, for example `read_repository`.',
+    see: ['redirect-uri'],
   },
   'redirect-uri': {
     term: 'redirect URI',
     definition: 'The address that the provider sends your browser back to after you authorize.',
-  },
-  clone: {
-    term: 'clone',
-    definition: 'To download a copy of a git repository. Ferry clones your repository before each build.',
-    see: ['repository'],
   },
 
   // --- Auto-deploy ---------------------------------------------------------
@@ -50,12 +32,7 @@ export const terms = {
   'webhook-secret': {
     term: 'webhook secret',
     definition: 'A secret text that GitHub and `ferryd` share. GitHub signs each webhook with it.',
-    see: ['webhook', 'webhook-signature'],
-  },
-  'webhook-signature': {
-    term: 'signature',
-    definition: 'A code that GitHub computes from the request and the webhook secret. It proves that the request comes from GitHub.',
-    see: ['webhook-secret'],
+    see: ['webhook'],
   },
   ci: {
     term: 'CI',
