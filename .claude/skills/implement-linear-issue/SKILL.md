@@ -86,7 +86,6 @@ continue from where it stands: `git log origin/dev..HEAD`,
    | `crates/` | `cargo fmt --all`, `cargo clippy --workspace --tests -- -D warnings`, `cargo test --workspace` |
    | `web/` | `npm run typecheck`, `npm run lint`, `npm test` (in `web/`) |
    | `docs/` | `npm run generate:check`, `npm run typecheck`, `npm run check-content -- --strict` (in `docs/`) |
-   | `landing/` | `npm run typecheck` (in `landing/`) |
 
    Docker end-to-end tests (`FERRY_E2E=1 cargo test --workspace`) when Docker
    paths changed and Docker is running; otherwise say so in the pull request.

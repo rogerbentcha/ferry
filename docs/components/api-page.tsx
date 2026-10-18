@@ -7,6 +7,7 @@ import {
 } from 'fumadocs-openapi/requests/generators';
 import { registerDefault } from 'fumadocs-openapi/requests/generators/all';
 import { createOpenAPIPage } from 'fumadocs-openapi/ui';
+import { codeThemes } from '@/lib/code-theme';
 
 function text(body: unknown): string {
   return typeof body === 'string' ? body : JSON.stringify(body, null, 2);
@@ -91,6 +92,7 @@ function codeUsagesWithToken(): CodeUsageGeneratorRegistry {
 export const OpenAPIPage = createOpenAPIPage({
   playground: { enabled: false },
   storageKeyPrefix: 'ferry-docs-openapi-',
+  shikiOptions: { themes: codeThemes },
   codeUsages: codeUsagesWithToken(),
   mediaAdapters: {
     'application/yaml': yaml,

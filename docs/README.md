@@ -1,10 +1,11 @@
 # Ferry docs
 
-The documentation site of Ferry: [Fumadocs](https://fumadocs.dev) on Next.js 16 (App Router, React 19, TypeScript strict, Tailwind CSS v4), exported as a static site. It lives in its own folder with its own toolchain, like the web dashboard in `../web`.
+The website of Ferry: the landing page at `/` and the documentation at `/docs`. [Fumadocs](https://fumadocs.dev) on Next.js 16 (App Router, React 19, TypeScript strict, Tailwind CSS v4), exported as a static site. It lives in its own folder with its own toolchain, like the web dashboard in `../web`.
 
 | | |
 |---|---|
 | Content | MDX in `content/docs/` (one `meta.json` per folder for titles, order and icons) |
+| Landing page | `/`: React components in `components/landing/` (Motion, ferry-shaders, simple-icons), styles in `app/landing.css` scoped to `.landing`; Manrope for its headings |
 | Design | the Ferry design tokens from `../web/src/styles/tokens.css` (shared with the dashboard), mapped onto Fumadocs in `app/global.css`; Inter + Source Code Pro |
 | Layout | Fumadocs "notebook" layout with a custom 48px header (`components/layout/site-header.tsx`) and sidebar (`components/layout/sidebar.tsx`) |
 | Generated references | CLI, server options and the API reference, from the Rust binaries (`scripts/generate.mjs`) |
@@ -103,12 +104,13 @@ npm run build     # → out/ (static HTML, the search index, Open Graph images),
 npm start         # preview out/ on http://localhost:3000
 ```
 
-Build-time settings (environment variables):
+Build-time settings: environment variables, or lines in `.env`. Next.js reads `.env` (committed, the defaults) and `.env.local` (not committed, your values); the build environment wins over both.
 
 | Variable | Default | Used for |
 |---|---|---|
 | `DOCS_SITE_URL` | `http://localhost:3000` | the public URL of the site: canonical and Open Graph URLs |
-| `FERRY_DOCS_SERVER_URL` | `http://127.0.0.1:7878` | the "Dashboard" link and the server URL in the API request examples (set it for a public site: the default only works on the reader's machine) |
+| `DOCS_DASHBOARD_URL` | `http://127.0.0.1:7878` (in `.env`) | the "Dashboard" link of the docs header (set it for a public site: the default only works on the reader's machine) |
+| `FERRY_DOCS_SERVER_URL` | `http://127.0.0.1:7878` | the server URL in the API request examples |
 | `DOCS_GIT_BRANCH` | `dev` | the branch of the "Edit on GitHub" links; it must contain `docs/` |
 
 URLs end with a slash (`/docs/guides/domains/` → `out/docs/guides/domains/index.html`), which every static server resolves. `out/404.html` is the not-found page.
@@ -143,24 +145,27 @@ ferry create ferry-docs --type static \
 
 ```
 app/
-  (home)/                 landing page (/) and its layout
+  (home)/page.tsx         the landing page (/): components/landing/
   docs/                   docs layout (notebook, top nav) and [[...slug]] page
   not-found.tsx           404 page (exported as out/404.html)
   api/search/             static search index
   og/docs/                Open Graph images, one per page
   llms.txt, llms-full.txt, llms.mdx/   Markdown versions of the pages for LLMs
   global.css              Tailwind + Fumadocs presets, tokens → Fumadocs theme, prose tweaks
+  landing.css             the landing page's styles (imported by global.css, scoped to .landing)
   icon.svg                favicon (the Ferry logo in a square)
 components/
+  landing/                the landing page: landing-page.tsx (root), one file per section, deploy/ (the demo), config.ts (links, install command)
   layout/                 site header (theme menu), docs header slot, sidebar, site nav (drawer links)
   mdx/                    Callout, Card(s), Badge, Mermaid, and the figures: Diagram, Flow, Terminal, Term (figure.tsx: frame + playback, icons.ts: icon names)
   mdx.tsx                 the MDX component map
   api-page.tsx            OpenAPI page renderer (playground off, YAML/gzip bodies, bearer token in samples)
   search.tsx              search dialog (static index, pages ranked by title/heading match)
 content/docs/             the pages
-lib/                      source loader, OpenAPI loader, shared settings, glossary/ (the terms)
+lib/                      source loader, OpenAPI loader, shared settings, code-theme.ts (the code colors), glossary/ (the terms)
 openapi/ferry.json        GENERATED
 public/logo.svg           the Ferry logo (header, footer, Open Graph images)
+public/hairline-kernel.js the engine of the landing page's harbor figure (@lucasmarkes/hairline, MIT)
 scripts/                  generate.mjs, check-links.mjs, check-ste.mjs + check-figures.mjs (npm run check-content)
 AUTHORING.md              how to write a page
 ```

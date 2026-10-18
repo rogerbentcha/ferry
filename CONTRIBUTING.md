@@ -18,13 +18,12 @@ This guide is for people who change the code, the dashboard or the docs of Ferry
 | `crates/ferry-cli` | The `ferry` CLI |
 | `crates/ferryd` | The server binary. It wires the crates together. |
 | `web/` | The dashboard: React, TypeScript, Vite ([web/README.md](web/README.md)) |
-| `docs/` | The docs site: Fumadocs on Next.js ([docs/README.md](docs/README.md)) |
-| `landing/` | The landing page: React, TypeScript, Vite ([landing/README.md](landing/README.md)) |
+| `docs/` | The website: the landing page at `/` and the docs at `/docs`, with Fumadocs on Next.js ([docs/README.md](docs/README.md)) |
 | `examples/` | Example apps. The end-to-end tests use them as fixtures. |
 | `install.sh`, `.github/` | The install script, and the CI and release workflows |
 
-`web/`, `docs/` and `landing/` each have their own `package.json`. The Rust build never runs Node.
-The three share the colors and fonts of `web/src/styles/tokens.css`.
+`web/` and `docs/` each have their own `package.json`. The Rust build never runs Node.
+The two share the colors and fonts of `web/src/styles/tokens.css`.
 
 ## Set up your tools
 
@@ -33,7 +32,7 @@ The three share the colors and fonts of `web/src/styles/tokens.css`.
 | Rust | 1.89 or newer (CI uses 1.95.0) | `ferryd`, `ferry` and each crate |
 | Docker | The daemon. Docker Desktop on macOS works. | Running `ferryd` and the end-to-end tests |
 | `git` and `docker` CLIs | On your `PATH` | Builds: `ferry-build` runs them |
-| Node.js and npm | 20.19 or newer (CI uses 22) | `web/`, `docs/` and `landing/` |
+| Node.js and npm | 20.19 or newer (CI uses 22) | `web/` and `docs/` |
 | `openssl` CLI | Optional | The GitHub App tests of `ferry-api`. Without it, they are skipped. |
 
 ## Build and run Ferry locally
@@ -116,7 +115,7 @@ Where the code is, in `web/src/`:
 | `components/` | `ui/` (the shadcn primitives), `shell/` and `patterns/` |
 | `lib/api/` | The API client, the types, the endpoints, the query keys, the hooks (`queries/`), SSE |
 | `stores/` | The Zustand stores: `auth.ts` and `ui.ts` |
-| `styles/tokens.css` | The design tokens, shared with `docs/` and `landing/` |
+| `styles/tokens.css` | The design tokens, shared with `docs/` |
 
 When the API changes, update these files in this order:
 
@@ -128,10 +127,9 @@ When the API changes, update these files in this order:
 To try a production build without a Rust compile, run `npm run build` in `web/`. Then run `FERRY_UI_DIR=web/dist ./target/debug/ferryd` in the repository root.
 [web/README.md](web/README.md) explains the stack, the npm scripts and how `ferryd` serves the app.
 
-## Work on the docs site or the landing page
+## Work on the website
 
-- The docs site: [docs/README.md](docs/README.md) tells how to run, generate and build it. Read [docs/AUTHORING.md](docs/AUTHORING.md) before you write a page.
-- The landing page: read [landing/README.md](landing/README.md).
+[docs/README.md](docs/README.md) tells how to run, generate and build it. The landing page is `docs/components/landing/`, with its styles in `docs/app/landing.css`. Read [docs/AUTHORING.md](docs/AUTHORING.md) before you write a docs page.
 
 ## Code rules
 
@@ -148,21 +146,20 @@ To try a production build without a Rust compile, run `npm run build` in `web/`.
 
 ## Run the checks before a pull request
 
-CI (`.github/workflows/ci.yml`) runs these checks on Linux for each pull request. Only the `landing/` check is not in CI. Run the checks of each area that you changed, until they pass:
+CI (`.github/workflows/ci.yml`) runs these checks on Linux for each pull request. Run the checks of each area that you changed, until they pass:
 
 | Area | Run in | Commands |
 |---|---|---|
 | `crates/` | the repository root | `cargo fmt --all`, `cargo clippy --workspace --tests -- -D warnings`, `cargo test --workspace` |
 | `web/` | `web/` | `npm run typecheck`, `npm run lint`, `npm test`, `npm run build` |
 | `docs/` | `docs/` | `npm run generate:check`, `npm run typecheck`, `npm run check-content -- --strict`, `npm run build` |
-| `landing/` | `landing/` | `npm run typecheck` |
 | `install.sh` | the repository root | `shellcheck install.sh .github/scripts/install.test.sh` |
 | `.github/scripts/` | the repository root | `node --test .github/scripts/release.test.mjs` |
 
 - `cargo fmt --all` fixes the format. CI runs `cargo fmt --all --check`, which only reports a difference.
 - `-D warnings` turns each clippy warning into an error.
 - `npm run generate:check` needs `cargo`. Run `npm ci` once in each npm folder first.
-- After a change to `web/src/styles/tokens.css`, build `web/`, `docs/` and `landing/` again.
+- After a change to `web/src/styles/tokens.css`, build `web/` and `docs/` again.
 
 ### Docker end-to-end tests
 
@@ -214,7 +211,7 @@ One issue is one branch and one pull request.
 Ferry uses [Conventional Commits 1.0](https://www.conventionalcommits.org/en/v1.0.0/): `<type>(<scope>)!: <description>`, then an optional body and footer.
 
 - **Type:** `feat` (a new capability for users), `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `style`, `chore` or `revert`.
-- **Scope:** the part of the repository. Use `api`, `core`, `engine`, `build`, `docker`, `proxy`, `scm` or `tls` for `crates/ferry-<scope>`. Use `ferryd`, `cli`, `web`, `docs`, `landing`, `examples`, `ci`, `deps` or `claude` for the rest.
+- **Scope:** the part of the repository. Use `api`, `core`, `engine`, `build`, `docker`, `proxy`, `scm` or `tls` for `crates/ferry-<scope>`. Use `ferryd`, `cli`, `web`, `docs`, `examples`, `ci`, `deps` or `claude` for the rest.
 - **Description:** imperative mood, lowercase first letter, no final period. Keep the first line to 72 characters at most, 50 when possible. Example: `fix(proxy): keep the connection when an instance restarts mid-request`.
 - **Breaking change:** add `!` after the scope and a `BREAKING CHANGE:` footer. Examples: a public signature in `crates/*/src/lib.rs`, an API route or its JSON, a CLI flag, the `render.yaml` schema, the data on disk.
 - **Footer:** `Refs: FER-12` for a Linear issue. Do not write `Closes` in a commit: the pull request closes the issue.
