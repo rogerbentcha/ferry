@@ -88,6 +88,20 @@ jobs:
       # The version and notes of a release (.github/workflows/release.yml).
       - run: node --test .github/scripts/release.test.mjs
 
+  install-script:
+    name: Install script — ShellCheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # install.sh runs with the sh of the server (dash on Ubuntu and Debian):
+      # its shebang makes ShellCheck check it as POSIX sh. The release workflow
+      # runs it on Ubuntu 22.04 (.github/scripts/install.test.sh).
+      - name: Install ShellCheck if the runner has none
+        run: command -v shellcheck > /dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck)
+      - run: shellcheck --version
+      - run: shellcheck install.sh .github/scripts/install.test.sh
+
   docs:
     name: Documentation site
     runs-on: ubuntu-latest

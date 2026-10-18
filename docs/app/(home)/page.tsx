@@ -159,17 +159,19 @@ export default function HomePage() {
           </div>
           <pre className="overflow-x-auto bg-surface-75 px-4 py-4 font-mono text-[12.5px] leading-[1.75] text-foreground">
             <code>
-              <Comment>get the code, build the dashboard, then the server and the CLI</Comment>
+              <Comment>on a fresh Ubuntu or Debian server (x86_64)</Comment>
+              <Prompt>
+                curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh
+              </Prompt>
+              <div>&nbsp;</div>
+              <Comment>on your computer: the tunnel it printed, then open its setup link</Comment>
+              <Prompt>ssh -N -L 7878:127.0.0.1:7878 root@your-server</Prompt>
+              <div>&nbsp;</div>
+              <Comment>or build it on your own machine: the dashboard, then the server and the CLI</Comment>
               <Prompt>git clone https://github.com/rogerbentcha/ferry &amp;&amp; cd ferry</Prompt>
               <Prompt>(cd web &amp;&amp; npm ci &amp;&amp; npm run build)</Prompt>
               <Prompt>cargo build --release</Prompt>
               <Prompt>./target/release/ferryd</Prompt>
-              <div>&nbsp;</div>
-              <Comment>in another terminal, with the token ferryd printed</Comment>
-              <Prompt>export PATH=&quot;$PWD/target/release:$PATH&quot;</Prompt>
-              <Prompt>ferry login --server http://127.0.0.1:7878 --token &lt;token&gt;</Prompt>
-              <Prompt>cd examples/node-hello &amp;&amp; ferry up --follow</Prompt>
-              <Prompt>curl http://node-hello.localhost:8080</Prompt>
             </code>
           </pre>
         </div>

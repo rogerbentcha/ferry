@@ -1,45 +1,40 @@
 ---
 title: Installation
-description: You download or build two programs, ferryd and ferry, then you start the server.
+description: One command installs Ferry on a Linux server, or you download or build the two programs.
 icon: Download
 ---
 
 <Diagram
   nodes={[
-    { id: 'repo', at: [0, 0.5], icon: 'repo', label: 'Ferry source', note: 'one repository' },
-    { id: 'web', at: [1.25, 0], icon: 'monitor', label: 'Dashboard', note: 'web/dist' },
-    { id: 'ferryd', at: [2.5, 0], icon: 'server', label: 'ferryd', note: 'the server' },
-    { id: 'ferry', at: [2.5, 1], icon: 'terminal', label: 'ferry', note: 'the CLI' },
+    { id: 'release', at: [0, 0], icon: 'tag', label: 'Latest release', note: 'install, binaries' },
+    { id: 'script', at: [1.25, 0], icon: 'terminal', label: 'install.sh', note: 'one command' },
+    { id: 'server', at: [2.5, 0], icon: 'server', label: 'Linux server', note: 'ferryd, systemd' },
+    { id: 'repo', at: [0, 1], icon: 'repo', label: 'Ferry source', note: 'one repository' },
+    { id: 'build', at: [1.25, 1], icon: 'hammer', label: 'npm, cargo', note: 'the build' },
+    { id: 'ferryd', at: [2.5, 1], icon: 'ship', label: 'ferryd, ferry', note: 'any machine' },
   ]}
   edges={[
-    { from: 'repo', to: 'web' },
-    { from: 'web', to: 'ferryd' },
-    { from: 'repo', to: 'ferry' },
-    { from: 'ferry', to: 'ferryd', label: 'REST API' },
+    { from: 'release', to: 'script' },
+    { from: 'script', to: 'server' },
+    { from: 'repo', to: 'build' },
+    { from: 'build', to: 'ferryd' },
   ]}
   steps={[
     {
-      caption: 'One repository has the code of the server, the CLI and the dashboard.',
-      hide: ['web', 'ferryd', 'ferry'],
-      tones: { repo: 'primary' },
+      caption: 'On a Linux x86_64 server, one command gets the install script of the latest release.',
+      flow: ['release>script'],
+      tones: { script: 'primary', repo: 'muted', build: 'muted', ferryd: 'muted' },
     },
     {
-      caption: 'First, npm builds the dashboard.',
-      hide: ['ferryd', 'ferry'],
-      flow: ['repo>web'],
-      tones: { web: 'primary' },
+      caption: 'The script installs Docker, git and the two programs. systemd starts ferryd.',
+      flow: ['script>server'],
+      tones: { server: 'success', repo: 'muted', build: 'muted', ferryd: 'muted' },
+      notes: { server: 'runs' },
     },
     {
-      caption: 'Then cargo builds ferryd and ferry. The dashboard is inside ferryd.',
-      cut: ['ferry>ferryd'],
-      flow: ['web>ferryd', 'repo>ferry'],
-      tones: { ferryd: 'primary', ferry: 'primary' },
-    },
-    {
-      caption: 'You start ferryd. The ferry command talks to it through the REST API.',
-      flow: ['ferry>ferryd'],
-      tones: { ferryd: 'success' },
-      notes: { ferryd: 'runs' },
+      caption: 'On another machine, npm builds the dashboard. Then cargo builds ferryd and ferry.',
+      flow: ['repo>build', 'build>ferryd'],
+      tones: { ferryd: 'primary', release: 'muted', script: 'muted', server: 'muted' },
     },
   ]}
 />
@@ -53,14 +48,22 @@ Ferry is one <Term id="rust" /> workspace that builds two <Term id="binary">bina
 
 The dashboard is a separate React app in `web/`. The build puts it into `ferryd`. Thus you have nothing more to deploy.
 
+## Install with one command
+
+On a fresh Ubuntu or Debian server (x86_64), this command installs Ferry and starts it with <Term id="systemd" />. Then it prints the link that creates your account.
+
+```bash title="Terminal"
+curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh
+```
+
 ## Download Ferry
 
-On a Linux x86_64 server, download the two programs from the latest release. You need no build tools.
+On another Linux x86_64 machine, download the two programs from the latest release. You need no build tools.
 
 ```bash title="Terminal"
 curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/ferry-x86_64-unknown-linux-gnu.tar.gz
 curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/SHA256SUMS
-sha256sum -c SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
 sudo tar -xzf ferry-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin ferryd ferry
 ```
 
@@ -78,8 +81,8 @@ cargo build --release
 ## In this section
 
 <Cards>
+  <Card title="Install with one command" href="/docs/getting-started/installation/script" description="A fresh Ubuntu or Debian server, to the setup link." />
   <Card title="Download a binary" href="/docs/getting-started/installation/download" description="Linux x86_64, with no build tools." />
   <Card title="Build from source" href="/docs/getting-started/installation/build" description="Four steps, from the code to the two programs." />
-  <Card title="Start the server" href="/docs/getting-started/installation/start" description="Run ferryd and read what it prints." />
   <Card title="Create your account" href="/docs/getting-started/installation/account" description="The one administrator of your server." />
 </Cards>

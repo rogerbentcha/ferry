@@ -12,7 +12,9 @@ description: On a Linux x86_64 server, you download ferryd and ferry from a rele
   ]}
 />
 
-Each merge into the branch `main` that has a feature or a fix publishes a new <Term id="github-release" /> on GitHub. A release has the two <Term id="binary">binaries</Term> for Linux x86_64. The dashboard is inside `ferryd`. With them, your server needs only Docker and git: no Rust, no Node.js and no C compiler.
+Each merge into the branch `main` that has a feature or a fix publishes a new <Term id="github-release" /> on GitHub. A release has the two <Term id="binary">binaries</Term> for Linux x86_64. The dashboard is inside `ferryd`. With them, your server needs only [Docker](/docs/getting-started/installation/requirements) and git: no Rust, no Node.js and no C compiler.
+
+On a fresh Ubuntu or Debian server, [one command](/docs/getting-started/installation/script) does the steps of this page for you, and starts Ferry.
 
 ## Download and install
 
@@ -32,11 +34,11 @@ curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/SHA25
 ### Check the archive
 
 ```bash title="Terminal"
-sha256sum -c SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
 # ferry-x86_64-unknown-linux-gnu.tar.gz: OK
 ```
 
-If the <Term id="checksum" /> is not correct, do not install the archive. Download it again.
+`--ignore-missing` skips `install.sh`, because you did not download it. If the <Term id="checksum" /> is not correct, do not install the archive. Download it again.
 
 </Step>
 <Step>
@@ -58,7 +60,8 @@ You do not need the next page. Go to [Start the server](/docs/getting-started/in
 | File | Content |
 |---|---|
 | `ferry-x86_64-unknown-linux-gnu.tar.gz` | `ferryd`, `ferry` and `LICENSE` |
-| `SHA256SUMS` | The <Term id="sha-256" /> checksum of the archive |
+| `install.sh` | The [install script](/docs/getting-started/installation/script) |
+| `SHA256SUMS` | The <Term id="sha-256" /> checksums of the archive and of `install.sh` |
 
 The names stay the same from one release to the next. Thus the `latest/download` links always give the newest release.
 

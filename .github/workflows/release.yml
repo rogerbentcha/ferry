@@ -1,8 +1,9 @@
 # Ships a version on every push to main that holds a feature, a fix or a
 # breaking change. The version comes from the Conventional Commits since the
 # last `vX.Y.Z` tag (.github/scripts/release.mjs). The build makes ferryd (the
-# dashboard inside) and ferry for Linux x86_64. The last job tags and publishes
-# the release, only after every asset is built and checked.
+# dashboard inside) and ferry for Linux x86_64, and install.sh installs them on
+# a fresh Ubuntu 22.04. The last job tags and publishes the release, only after
+# every asset is built and checked.
 name: Release
 
 on:
@@ -13,6 +14,8 @@ on:
     paths:
       - .github/workflows/release.yml
       - .github/scripts/release.mjs
+      - .github/scripts/install.test.sh
+      - install.sh
   workflow_dispatch:
 
 # One release at a time, in push order: each run reads the tag of the one before.
@@ -176,7 +179,8 @@ jobs:
           # runner's uid can be a login user on a server.
           tar --owner=0 --group=0 --numeric-owner -czf "dist/$ARCHIVE" \
             -C target/release ferryd ferry -C "$GITHUB_WORKSPACE" LICENSE
-          (cd dist && sha256sum "$ARCHIVE" > SHA256SUMS && cat SHA256SUMS)
+          cp install.sh dist/
+          (cd dist && sha256sum "$ARCHIVE" install.sh > SHA256SUMS && cat SHA256SUMS)
           tar -tzvf "dist/$ARCHIVE" --numeric-owner
           if tar -tzvf "dist/$ARCHIVE" --numeric-owner | awk '$2 != "0/0" { bad = 1 } END { exit !bad }'; then
             echo "::error::$ARCHIVE has files not owned by 0/0"
@@ -188,9 +192,27 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # A runner of its own: the build already ran a ferryd there, and its Docker
+  # resources would block a second server.
+  install:
+    name: Install — Ubuntu 22.04
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - run: .github/scripts/install.test.sh dist
+      - name: ferryd's log
+        if: failure()
+        run: sudo journalctl -u ferryd --no-pager -n 100 || true
+
   publish:
     name: Tag and publish
-    needs: [plan, build]
+    needs: [plan, build, install]
     if: github.event_name == 'push' && needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -210,7 +232,8 @@ jobs:
         run: |
           gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
             --notes-file artifacts/release-notes/notes.md \
-            "artifacts/release-assets/$ARCHIVE" artifacts/release-assets/SHA256SUMS
+            "artifacts/release-assets/$ARCHIVE" artifacts/release-assets/install.sh \
+            artifacts/release-assets/SHA256SUMS
           gh release edit "$TAG" --draft=false --latest
           echo "Published $GITHUB_SERVER_URL/$GH_REPO/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: Remove the draft
