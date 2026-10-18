@@ -7,8 +7,8 @@
 #   curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh
 #   curl -fsSL .../install.sh | sudo sh -s -- --base-domain apps.example.com --acme-email you@example.com
 #
-# Ubuntu 22.04 / 24.04 and Debian 12 / 13, x86_64. Every check runs before
-# the first change: a server the script refuses is left as it was.
+# Ubuntu 22.04 / 24.04 and Debian 12 / 13, x86_64 and arm64. Every check runs
+# before the first change: a server the script refuses is left as it was.
 #
 # FERRY_RELEASE_URL replaces the release it downloads from (the release
 # workflow points it at the assets it just built, with file://).
@@ -18,8 +18,7 @@ PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
 
 INSTALL_URL=https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh
 RELEASE_URL=${FERRY_RELEASE_URL:-https://github.com/rogerbentcha/ferry/releases/latest/download}
-ARCHIVE=ferry-x86_64-unknown-linux-gnu.tar.gz
-SUPPORTED='Ubuntu 22.04 and 24.04, Debian 12 and 13, on x86_64'
+SUPPORTED='Ubuntu 22.04 and 24.04, Debian 12 and 13, on x86_64 and arm64 (aarch64)'
 BIN_DIR=/usr/local/bin
 DATA_DIR=/var/lib/ferry
 CONFIG_DIR=/etc/ferry
@@ -103,10 +102,18 @@ check_system() {
     os_codename=$(os_field VERSION_CODENAME)
     os_name=$(os_field PRETTY_NAME)
   fi
-  case "$os_id $os_version $arch" in
-    "ubuntu 22.04 x86_64" | "ubuntu 24.04 x86_64" | "debian 12 x86_64" | "debian 13 x86_64") ;;
-    *) fail "Ferry installs on $SUPPORTED." "This server runs $os_name on $arch. The script changed nothing." ;;
+  # The CPU, as the names of the release archives give it.
+  case $arch in
+    x86_64) cpu=x86_64 ;;
+    aarch64 | arm64) cpu=aarch64 ;;
+    *) cpu= ;;
   esac
+  case "$os_id $os_version" in
+    "ubuntu 22.04" | "ubuntu 24.04" | "debian 12" | "debian 13") ;;
+    *) cpu= ;;
+  esac
+  [ -n "$cpu" ] || fail "Ferry installs on $SUPPORTED." "This server runs $os_name on $arch. The script changed nothing."
+  archive=ferry-$cpu-unknown-linux-gnu.tar.gz
   [ "$(id -u)" = 0 ] || fail "run the script as root, or with sudo:" "curl -fsSL $INSTALL_URL | sudo sh"
   [ -d /run/systemd/system ] || fail "Ferry runs as a systemd service, and systemd does not run on this server."
   for tool in curl tar sha256sum; do
@@ -166,16 +173,16 @@ download() {
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
   trap 'exit 1' HUP INT TERM
-  fetch "$RELEASE_URL/$ARCHIVE" "$tmp/$ARCHIVE"
+  fetch "$RELEASE_URL/$archive" "$tmp/$archive"
   fetch "$RELEASE_URL/SHA256SUMS" "$tmp/SHA256SUMS"
-  # SHA256SUMS also lists install.sh: check the archive only.
-  awk -v f="$ARCHIVE" '$2 == f || $2 == "*" f' "$tmp/SHA256SUMS" > "$tmp/archive.sha256"
-  [ -s "$tmp/archive.sha256" ] || fail "SHA256SUMS has no checksum for $ARCHIVE. The script installed nothing."
+  # SHA256SUMS also lists install.sh and the other archives: check this one only.
+  awk -v f="$archive" '$2 == f || $2 == "*" f' "$tmp/SHA256SUMS" > "$tmp/archive.sha256"
+  [ -s "$tmp/archive.sha256" ] || fail "SHA256SUMS has no checksum for $archive. The script installed nothing."
   (cd "$tmp" && sha256sum -c --status archive.sha256) ||
-    fail "$ARCHIVE does not match its checksum in SHA256SUMS. The script installed nothing." \
+    fail "$archive does not match its checksum in SHA256SUMS. The script installed nothing." \
       "Run the script again to download it again."
-  tar -xzf "$tmp/$ARCHIVE" -C "$tmp" ferryd ferry
-  say "$ARCHIVE: checksum OK"
+  tar -xzf "$tmp/$archive" -C "$tmp" ferryd ferry
+  say "$archive: checksum OK"
 }
 
 # apt_get ARGS...: no question, and a wait of up to 5 minutes for the lock of

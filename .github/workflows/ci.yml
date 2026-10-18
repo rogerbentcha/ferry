@@ -96,7 +96,7 @@ jobs:
       - uses: actions/checkout@v4
       # install.sh runs with the sh of the server (dash on Ubuntu and Debian):
       # its shebang makes ShellCheck check it as POSIX sh. The release workflow
-      # runs it on Ubuntu 22.04 (.github/scripts/install.test.sh).
+      # runs it on Ubuntu 22.04, x86_64 and arm64 (.github/scripts/install.test.sh).
       - name: Install ShellCheck if the runner has none
         run: command -v shellcheck > /dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck)
       - run: shellcheck --version

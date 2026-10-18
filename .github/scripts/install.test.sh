@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Tests of install.sh on this machine: a CI runner (Ubuntu 22.04, with Docker
-# and systemd, and sudo without a password), against the release assets in
-# DIR (.github/workflows/release.yml). It changes the machine: run it only
-# on a runner that is thrown away after the job.
+# Tests of install.sh on this machine: a CI runner (Ubuntu 22.04, x86_64 or
+# arm64, with Docker and systemd, and sudo without a password), against the
+# release assets in DIR (.github/workflows/release.yml). It changes the
+# machine: run it only on a runner that is thrown away after the job.
 #
 #   .github/scripts/install.test.sh DIR
 #
-# 1. The cases that must stop before any change.
+# 1. The cases that must stop before any change, and the archive of each CPU.
 # 2. A first install, next to a container that must keep running.
 # 3. A rerun, which changes nothing.
 # 4. An upgrade, which keeps the account and the settings.
@@ -15,8 +15,10 @@ set -euo pipefail
 
 dist=$(cd "$1" && pwd)
 script=$dist/install.sh
-archive=ferry-x86_64-unknown-linux-gnu.tar.gz
+# The archive of this runner's CPU: uname -m gives x86_64 or aarch64, as the names do.
+archive=ferry-$(uname -m)-unknown-linux-gnu.tar.gz
 work=$(mktemp -d)
+supported='Ferry installs on Ubuntu 22.04 and 24.04, Debian 12 and 13, on x86_64 and arm64 (aarch64).'
 api=http://127.0.0.1:7878
 
 fail() {
@@ -66,6 +68,19 @@ expect_success() {
   [ "$(systemctl show -p MainPID --value docker)" = "$docker_pid" ] || fail "Docker restarted"
 }
 
+# fake_uname CPU: a folder with a uname that says CPU to `uname -m`, to put
+# first in PATH.
+fake_uname() {
+  mkdir -p "$work/uname-$1"
+  cat > "$work/uname-$1/uname" << EOF
+#!/bin/sh
+[ "\$1" = -m ] && { echo $1; exit 0; }
+exec /usr/bin/uname "\$@"
+EOF
+  chmod 755 "$work/uname-$1/uname"
+  echo "$work/uname-$1"
+}
+
 # mode PATH: "owner mode" of a file.
 mode() { sudo stat -c '%U %a' "$1"; }
 
@@ -77,34 +92,43 @@ tar -xzf "$dist/$archive" -C "$work/release"
 echo "## 1. The cases that must stop"
 
 out=$(docker run --rm -v "$script:/install.sh:ro" fedora:41 sh /install.sh 2>&1) && fail "the script ran on Fedora"
-grep -qF 'Ferry installs on Ubuntu 22.04 and 24.04, Debian 12 and 13, on x86_64.' <<< "$out" ||
+grep -qF "$supported" <<< "$out" ||
   fail "on Fedora, the output names no supported system: $out"
 ok "Fedora: stops and names the supported systems"
 
-# An arm64 server, and a server with Docker 24: commands that say so first in PATH.
-mkdir "$work/arm64" "$work/old-docker"
-cat > "$work/arm64/uname" << 'EOF'
-#!/bin/sh
-[ "$1" = -m ] && { echo aarch64; exit 0; }
-exec /usr/bin/uname "$@"
-EOF
-cat > "$work/old-docker/docker" << 'EOF'
-#!/bin/sh
-[ "$1" = version ] && { echo 24.0.7; exit 0; }
-exec /usr/bin/docker "$@"
-EOF
-chmod 755 "$work/arm64/uname" "$work/old-docker/docker"
+# A 32-bit ARM server and a RISC-V server.
+for cpu in armv7l riscv64; do
+  run_install "PATH=$(fake_uname "$cpu"):$PATH"
+  expect_stop "$supported"
+  has "This server runs Ubuntu 22.04"
+  has "on $cpu. The script changed nothing."
+  ok "$cpu: stops, names the supported systems and changes nothing"
+done
 
-run_install "PATH=$work/arm64:$PATH"
-expect_stop "This server runs Ubuntu 22.04"
-has "on aarch64"
-ok "arm64: stops and changes nothing"
+# The archive of each CPU name: from a release with no files, the script
+# stops at its first download, and the error names the archive.
+mkdir "$work/empty"
+for pair in x86_64:x86_64 aarch64:aarch64 arm64:aarch64; do
+  name=${pair%%:*}
+  want=ferry-${pair#*:}-unknown-linux-gnu.tar.gz
+  run_install "PATH=$(fake_uname "$name"):$PATH" "FERRY_RELEASE_URL=file://$work/empty"
+  expect_stop "cannot download file://$work/empty/$want"
+  ok "uname -m $name: picks $want"
+done
 
 code=0
 sh "$script" > "$work/out" 2>&1 || code=$?
 expect_stop "run the script as root, or with sudo"
 ok "without root: stops and changes nothing"
 
+# A server with Docker 24: a docker that says so, first in PATH.
+mkdir "$work/old-docker"
+cat > "$work/old-docker/docker" << 'EOF'
+#!/bin/sh
+[ "$1" = version ] && { echo 24.0.7; exit 0; }
+exec /usr/bin/docker "$@"
+EOF
+chmod 755 "$work/old-docker/docker"
 run_install "PATH=$work/old-docker:$PATH"
 expect_stop "Ferry needs Docker 27.3 or newer. This server has Docker 24.0.7."
 ok "Docker 24: stops and changes nothing"

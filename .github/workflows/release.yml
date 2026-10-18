@@ -1,9 +1,10 @@
 # Ships a version on every push to main that holds a feature, a fix or a
 # breaking change. The version comes from the Conventional Commits since the
-# last `vX.Y.Z` tag (.github/scripts/release.mjs). The build makes ferryd (the
-# dashboard inside) and ferry for Linux x86_64, and install.sh installs them on
-# a fresh Ubuntu 22.04. The last job tags and publishes the release, only after
-# every asset is built and checked.
+# last `vX.Y.Z` tag (.github/scripts/release.mjs). The builds make ferryd (the
+# dashboard inside) and ferry for Linux x86_64 and arm64, and install.sh
+# installs them on a fresh Ubuntu 22.04 of each CPU. The last job tags and
+# publishes the release, only after every asset is built and checked: a
+# release has the archives of all the CPUs, or there is no release.
 name: Release
 
 on:
@@ -36,8 +37,11 @@ env:
   CARGO_INCREMENTAL: 0
   # Same toolchain as ci.yml.
   RUST_TOOLCHAIN: "1.95.0"
-  # Asset names carry no version, so releases/latest/download/<name> always works.
-  ARCHIVE: ferry-x86_64-unknown-linux-gnu.tar.gz
+  # One archive per build of the matrix below. Asset names carry no version,
+  # so releases/latest/download/<name> always works.
+  ARCHIVES: >-
+    ferry-x86_64-unknown-linux-gnu.tar.gz
+    ferry-aarch64-unknown-linux-gnu.tar.gz
 
 jobs:
   plan:
@@ -80,15 +84,29 @@ jobs:
           if-no-files-found: error
 
   build:
-    name: Build — Linux x86_64
+    name: Build — Linux ${{ matrix.cpu }}
     needs: plan
     # Pull requests and manual runs always build: that is what they check.
     if: needs.plan.outputs.release == 'true' || github.event_name != 'push'
+    strategy:
+      # Each build reports, even when the other one fails. Either failure stops the release.
+      fail-fast: false
+      matrix:
+        include:
+          - cpu: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - cpu: arm64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
     # glibc 2.35: the binaries also run on Ubuntu 22.04 and Debian 12 (glibc 2.36).
-    runs-on: ubuntu-22.04
+    # Each CPU builds on a runner of that CPU.
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
       VERSION: ${{ needs.plan.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      ARCHIVE: ferry-${{ matrix.target }}.tar.gz
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -109,17 +127,19 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release
+          key: release-${{ matrix.target }}
       # In this checkout only: the repository keeps its version, nothing is committed back.
       - name: Set the version
         run: |
           node .github/scripts/release.mjs set-version "$VERSION"
           cargo update --workspace
+      # --target: on a runner of another CPU, the build fails. It never puts
+      # binaries of one CPU in the archive of another.
       - name: Build ferryd and ferry
-        run: cargo build --release --locked -p ferryd -p ferry-cli
+        run: cargo build --release --locked --target "$TARGET" -p ferryd -p ferry-cli
 
       - name: Check the version and glibc
-        working-directory: target/release
+        working-directory: target/${{ matrix.target }}/release
         run: |
           for bin in ferryd ferry; do
             printed=$(./$bin --version)
@@ -134,17 +154,18 @@ jobs:
               exit 1
             fi
           done
+      # Docker pulls the images of the runner's CPU.
       - name: Run on Ubuntu 22.04 and Debian 12
         run: |
           for image in ubuntu:22.04 debian:12; do
             for bin in ferryd ferry; do
-              docker run --rm -v "$PWD/target/release:/ferry:ro" "$image" "/ferry/$bin" --version
+              docker run --rm -v "$PWD/target/$TARGET/release:/ferry:ro" "$image" "/ferry/$bin" --version
             done
           done
       - name: Serve the dashboard
         run: |
           data="$RUNNER_TEMP/ferry-data"
-          ./target/release/ferryd run --data-dir "$data" > "$RUNNER_TEMP/ferryd.out" 2>&1 &
+          "./target/$TARGET/release/ferryd" run --data-dir "$data" > "$RUNNER_TEMP/ferryd.out" 2>&1 &
           pid=$!
           trap 'kill $pid 2>/dev/null; wait $pid 2>/dev/null; echo "--- ferryd output"; cat "$RUNNER_TEMP/ferryd.out"' EXIT
           for _ in $(seq 60); do
@@ -178,14 +199,45 @@ jobs:
           # Owned by root: `sudo tar -x` keeps the owner of the archive, and the
           # runner's uid can be a login user on a server.
           tar --owner=0 --group=0 --numeric-owner -czf "dist/$ARCHIVE" \
-            -C target/release ferryd ferry -C "$GITHUB_WORKSPACE" LICENSE
-          cp install.sh dist/
-          (cd dist && sha256sum "$ARCHIVE" install.sh > SHA256SUMS && cat SHA256SUMS)
+            -C "target/$TARGET/release" ferryd ferry -C "$GITHUB_WORKSPACE" LICENSE
           tar -tzvf "dist/$ARCHIVE" --numeric-owner
           if tar -tzvf "dist/$ARCHIVE" --numeric-owner | awk '$2 != "0/0" { bad = 1 } END { exit !bad }'; then
             echo "::error::$ARCHIVE has files not owned by 0/0"
             exit 1
           fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
+  # SHA256SUMS covers every archive: it waits for all the builds.
+  assets:
+    name: Checksums
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: dist
+      - name: Write SHA256SUMS
+        run: |
+          for archive in $ARCHIVES; do
+            [ -f "dist/$archive" ] || { echo "::error::$archive is missing"; exit 1; }
+          done
+          for file in dist/*; do
+            case " $ARCHIVES " in
+              *" ${file#dist/} "*) ;;
+              *) echo "::error::${file#dist/} is not in ARCHIVES"; exit 1 ;;
+            esac
+          done
+          cp install.sh dist/
+          # shellcheck disable=SC2086 # one word per archive
+          (cd dist && sha256sum $ARCHIVES install.sh > SHA256SUMS && cat SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: release-assets
@@ -195,9 +247,17 @@ jobs:
   # A runner of its own: the build already ran a ferryd there, and its Docker
   # resources would block a second server.
   install:
-    name: Install — Ubuntu 22.04
-    needs: build
-    runs-on: ubuntu-22.04
+    name: Install — Ubuntu 22.04 ${{ matrix.cpu }}
+    needs: assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cpu: x86_64
+            runner: ubuntu-22.04
+          - cpu: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -212,7 +272,7 @@ jobs:
 
   publish:
     name: Tag and publish
-    needs: [plan, build, install]
+    needs: [plan, build, assets, install]
     if: github.event_name == 'push' && needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -229,11 +289,11 @@ jobs:
       # A draft gets its tag only when it is published: a failed upload
       # leaves no tag and no release with missing files.
       - name: Publish ${{ needs.plan.outputs.tag }}
+        working-directory: artifacts/release-assets
         run: |
+          # shellcheck disable=SC2086 # one word per archive
           gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
-            --notes-file artifacts/release-notes/notes.md \
-            "artifacts/release-assets/$ARCHIVE" artifacts/release-assets/install.sh \
-            artifacts/release-assets/SHA256SUMS
+            --notes-file ../release-notes/notes.md $ARCHIVES install.sh SHA256SUMS
           gh release edit "$TAG" --draft=false --latest
           echo "Published $GITHUB_SERVER_URL/$GH_REPO/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: Remove the draft
