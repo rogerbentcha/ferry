@@ -13,7 +13,7 @@ Run this command on the server, as <Term id="root" /> or with <Term id="sudo" />
 curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh
 ```
 
-The <Term id="install-script" /> works on Ubuntu 22.04 and 24.04, and on Debian 12 and 13, on x86_64. If you are root and the server has no sudo, end the command with `| sh`.
+The <Term id="install-script" /> works on Ubuntu 22.04 and 24.04, and on Debian 12 and 13, with an <Term id="x86-64" /> or an <Term id="arm64" /> CPU. If you are root and the server has no sudo, end the command with `| sh`.
 
 The script does all its checks before the first change. If a check fails, the server stays as it was. If the server has no <Term id="docker" /> or no git, the script installs them. Then it puts `ferryd` and `ferry` in `/usr/local/bin`, and creates the user `ferry` and a <Term id="systemd" /> unit. systemd starts `ferryd` now and at each boot.
 
@@ -80,20 +80,21 @@ export DOCKER_HOST=$(docker context inspect --format '{{.Endpoints.docker.Host}}
 
 ### Download the programs
 
-On Linux x86_64, download the two programs from the latest release. You need no build tools.
+On Linux x86_64 or arm64, download the two programs from the latest release. You need no build tools.
 
 ```bash title="Terminal"
-curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/ferry-x86_64-unknown-linux-gnu.tar.gz
+archive=ferry-$(uname -m)-unknown-linux-gnu.tar.gz
+curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/$archive
 curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-sudo tar -xzf ferry-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin ferryd ferry
+sudo tar -xzf $archive -C /usr/local/bin ferryd ferry
 ```
 
-If the checksum is not correct, do not install the archive. Download it again. The programs need <Term id="glibc" /> 2.35 or newer: Ubuntu 22.04 or newer, Debian 12 or newer.
+The first line selects the archive of your CPU: `uname -m` prints `x86_64` or `aarch64`. If the checksum is not correct, do not install the archive. Download it again. The programs need <Term id="glibc" /> 2.35 or newer: Ubuntu 22.04 or newer, Debian 12 or newer.
 
 ### Build from source
 
-On macOS or on ARM64, build the two programs from the source.
+On macOS, build the two programs from the source.
 
 ```bash title="Terminal"
 git clone https://github.com/rogerbentcha/ferry

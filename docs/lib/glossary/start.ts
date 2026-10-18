@@ -21,6 +21,16 @@ export const terms = {
     term: 'install script',
     definition: 'The file install.sh of each release. With one command, it installs Ferry on a server or upgrades it.',
   },
+  'x86-64': {
+    term: 'x86_64',
+    definition: 'The type of CPU in most PCs and servers, from Intel and AMD. It is also called amd64.',
+    see: ['arm64'],
+  },
+  arm64: {
+    term: 'arm64',
+    definition: 'A type of CPU. Many low-cost cloud servers and the newer Raspberry Pi boards use it. On Linux, `uname -m` calls it `aarch64`.',
+    see: ['x86-64'],
+  },
 
   // --- Download Ferry ------------------------------------------------------
   checksum: {
