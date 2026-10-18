@@ -4,6 +4,7 @@ import { metaSchema, pageSchema } from 'fumadocs-core/source/schema';
 import { remarkMdxMermaid } from 'fumadocs-core/mdx-plugins';
 import { applyMdxPreset } from 'fumadocs-mdx/config';
 import { defineDocs } from 'fumadocs-mdx/macro';
+import { codeThemes } from './code-theme';
 import { docsRoute } from './shared';
 
 // This module is also evaluated at build time by fumadocs-mdx (macro API):
@@ -12,9 +13,12 @@ const docs = defineDocs({
   dir: 'content/docs',
   docs: {
     schema: pageSchema,
-    // Default Fumadocs preset + ```mermaid code fences → <Mermaid chart="…" />.
+    // Default Fumadocs preset + ```mermaid code fences → <Mermaid chart="…" />, and the Ferry code
+    // colors. `defaultColor: false` (the Fumadocs default, lost when `themes` is set) lets the CSS
+    // switch light and dark.
     mdxOptions: applyMdxPreset({
       remarkPlugins: [remarkMdxMermaid],
+      rehypeCodeOptions: { themes: codeThemes, defaultColor: false },
     }),
     postprocess: {
       includeProcessedMarkdown: true,

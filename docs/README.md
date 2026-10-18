@@ -161,7 +161,7 @@ components/
   api-page.tsx            OpenAPI page renderer (playground off, YAML/gzip bodies, bearer token in samples)
   search.tsx              search dialog (static index, pages ranked by title/heading match)
 content/docs/             the pages
-lib/                      source loader, OpenAPI loader, shared settings, glossary/ (the terms)
+lib/                      source loader, OpenAPI loader, shared settings, code-theme.ts (the code colors), glossary/ (the terms)
 openapi/ferry.json        GENERATED
 public/logo.svg           the Ferry logo (header, footer, Open Graph images)
 public/hairline-kernel.js the engine of the landing page's harbor figure (@lucasmarkes/hairline, MIT)

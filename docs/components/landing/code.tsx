@@ -1,5 +1,41 @@
 import { Check, Copy } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+
+import { codePalette, type Palette } from '@/lib/code-theme'
+
+/** A color of the docs' code blocks (lib/code-theme.ts), for the light and the dark theme. */
+const tone = (key: keyof Palette) => ({ color: `light-dark(${codePalette.light[key]}, ${codePalette.dark[key]})` })
+
+// A shell line in tokens: spaces, quoted strings, operators, words.
+const SHELL_TOKEN = /(\s+)|('[^']*'|"[^"]*")|(&&|\|\||[|;()<>])|([^\s|&;()<>'"]+)/g
+
+/**
+ * One shell command, in the colors of the docs' code blocks: commands in purple, flags and
+ * variables in blue, strings in green, pipes and `&&` in pink, the rest in the text color.
+ */
+export function ShellLine({ line }: { line: string }) {
+  const parts: ReactNode[] = []
+  let command = true
+  for (const [i, [text, space, quoted, operator, word]] of [...line.matchAll(SHELL_TOKEN)].entries()) {
+    if (space) {
+      parts.push(text)
+    } else if (quoted) {
+      parts.push(<span key={i} style={tone('string')}>{text}</span>)
+      command = false
+    } else if (operator) {
+      parts.push(operator === '(' || operator === ')' ? text : <span key={i} style={tone('keyword')}>{text}</span>)
+      command = operator !== ')'
+    } else if (word && command && !word.includes('=')) {
+      parts.push(<span key={i} style={tone('fn')}>{text}</span>)
+      command = false
+    } else if (word?.startsWith('-') || word?.startsWith('$')) {
+      parts.push(<span key={i} style={tone('value')}>{text}</span>)
+    } else {
+      parts.push(text)
+    }
+  }
+  return <span style={tone('text')}>{parts}</span>
+}
 
 export function CopyButton({ text, label, className = '' }: { text: string; label: string; className?: string }) {
   const [copied, setCopied] = useState(false)
@@ -48,7 +84,7 @@ export function CommandBlock({ lines, label }: { lines: string[]; label: string 
             <span className="select-none text-foreground-muted" aria-hidden="true">
               ${' '}
             </span>
-            {line}
+            <ShellLine line={line} />
           </span>
         ))}
       </pre>
@@ -65,7 +101,7 @@ export function Transcript({ command, output }: { command: string; output: strin
         <span className="select-none text-foreground-muted" aria-hidden="true">
           ${' '}
         </span>
-        {command}
+        <ShellLine line={command} />
       </span>
       {output.map((line, i) =>
         line.startsWith('==>') ? (
