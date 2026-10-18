@@ -234,7 +234,16 @@ sudo chown -R ferry:ferry /var/lib/ferry
 sudo chmod 700 /var/lib/ferry
 ```
 
-Then install and start Ferry, with the same `--name-prefix` as the old server. The default is `ferry`. The install script keeps the data directory.
+If the old server used a name prefix other than `ferry`, write it in the settings file of the install script now. The script keeps this file:
+
+```bash title="Terminal"
+sudo install -d -o ferry -g ferry -m 700 /etc/ferry
+echo 'FERRY_NAME_PREFIX=old-prefix' | sudo tee /etc/ferry/ferryd.env
+sudo chown ferry:ferry /etc/ferry/ferryd.env
+sudo chmod 600 /etc/ferry/ferryd.env
+```
+
+Then run the install script. It keeps the data directory and starts `ferryd`.
 
 Deploy each service again with `ferry deploy NAME`. A backup has no built images. For a service from a local folder, use `ferry up`. Last, load your dumps. The datastores come back empty, with their old passwords.
 
