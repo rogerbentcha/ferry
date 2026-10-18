@@ -22,6 +22,8 @@ const config = {
   env: {
     DOCS_SITE_URL: process.env.DOCS_SITE_URL ?? 'http://localhost:3000',
     FERRY_DOCS_SERVER_URL: process.env.FERRY_DOCS_SERVER_URL ?? 'http://127.0.0.1:7878',
+    // The "Dashboard" link: set in .env (Next.js loads it before this file).
+    DOCS_DASHBOARD_URL: process.env.DOCS_DASHBOARD_URL ?? '',
     DOCS_GIT_BRANCH: process.env.DOCS_GIT_BRANCH ?? 'dev',
   },
 };

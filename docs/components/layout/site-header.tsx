@@ -8,7 +8,7 @@ import { useTheme } from 'next-themes';
 import { useSyncExternalStore, type ReactNode } from 'react';
 import { FerryLogo } from '@/components/ferry-logo';
 import { cn } from '@/lib/cn';
-import { ferryServerUrl, githubUrl } from '@/lib/shared';
+import { dashboardUrl, githubUrl } from '@/lib/shared';
 import { isSiteNavActive, SITE_NAV } from './site-nav';
 
 const iconButton =
@@ -152,10 +152,10 @@ export function SiteHeader({ className, menu }: { className?: string; menu?: Rea
           <GitHubIcon />
         </a>
         <a
-          href={ferryServerUrl}
+          href={dashboardUrl}
           target="_blank"
           rel="noreferrer noopener"
-          title={`Open your Ferry dashboard (${ferryServerUrl})`}
+          title={`Open your Ferry dashboard (${dashboardUrl})`}
           className="hidden h-8 items-center gap-1 rounded-full border border-border-strong bg-surface-100 px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-stronger hover:bg-surface-200 sm:inline-flex"
         >
           Dashboard

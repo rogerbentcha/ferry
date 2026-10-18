@@ -104,12 +104,13 @@ npm run build     # → out/ (static HTML, the search index, Open Graph images),
 npm start         # preview out/ on http://localhost:3000
 ```
 
-Build-time settings (environment variables):
+Build-time settings: environment variables, or lines in `.env`. Next.js reads `.env` (committed, the defaults) and `.env.local` (not committed, your values); the build environment wins over both.
 
 | Variable | Default | Used for |
 |---|---|---|
 | `DOCS_SITE_URL` | `http://localhost:3000` | the public URL of the site: canonical and Open Graph URLs |
-| `FERRY_DOCS_SERVER_URL` | `http://127.0.0.1:7878` | the "Dashboard" link and the server URL in the API request examples (set it for a public site: the default only works on the reader's machine) |
+| `DOCS_DASHBOARD_URL` | `http://127.0.0.1:7878` (in `.env`) | the "Dashboard" link of the docs header (set it for a public site: the default only works on the reader's machine) |
+| `FERRY_DOCS_SERVER_URL` | `http://127.0.0.1:7878` | the server URL in the API request examples |
 | `DOCS_GIT_BRANCH` | `dev` | the branch of the "Edit on GitHub" links; it must contain `docs/` |
 
 URLs end with a slash (`/docs/guides/domains/` → `out/docs/guides/domains/index.html`), which every static server resolves. `out/404.html` is the not-found page.

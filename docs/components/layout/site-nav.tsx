@@ -2,7 +2,7 @@
 import { SidebarItem } from 'fumadocs-ui/components/sidebar/base';
 import { usePathname } from 'fumadocs-core/framework';
 import { ArrowUpRight } from 'lucide-react';
-import { ferryServerUrl } from '@/lib/shared';
+import { dashboardUrl } from '@/lib/shared';
 import { sidebarItemClass } from './sidebar';
 
 /** The top-level sections, linked from the header (desktop) and the sidebar drawer (phones, tablets). */
@@ -40,7 +40,7 @@ export function SidebarSiteNav() {
           </SidebarItem>
         );
       })}
-      <SidebarItem href={ferryServerUrl} external icon={<></>} className={sidebarItemClass()}>
+      <SidebarItem href={dashboardUrl} external icon={<></>} className={sidebarItemClass()}>
         Dashboard
         <ArrowUpRight className="ms-auto" aria-hidden="true" />
       </SidebarItem>
