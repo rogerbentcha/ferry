@@ -33,6 +33,21 @@ export const terms = {
     definition: 'Each user has a role, and the role says what the user can do.',
   },
 
+  // --- Download Ferry ------------------------------------------------------
+  'github-release': {
+    term: 'release',
+    definition: 'A version of a program that its authors publish on GitHub, with files to download.',
+  },
+  checksum: {
+    term: 'checksum',
+    definition: 'A short value calculated from a file. When one byte of the file changes, the checksum changes.',
+    see: ['sha-256'],
+  },
+  glibc: {
+    term: 'glibc',
+    definition: 'The C library of most Linux systems. A program built with one version runs with that version or a newer one.',
+  },
+
   // --- Build Ferry ---------------------------------------------------------
   rust: {
     term: 'Rust',

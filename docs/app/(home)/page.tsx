@@ -160,7 +160,7 @@ export default function HomePage() {
           <pre className="overflow-x-auto bg-surface-75 px-4 py-4 font-mono text-[12.5px] leading-[1.75] text-foreground">
             <code>
               <Comment>get the code, build the dashboard, then the server and the CLI</Comment>
-              <Prompt>git clone https://github.com/Carter2307/ferry &amp;&amp; cd ferry</Prompt>
+              <Prompt>git clone https://github.com/rogerbentcha/ferry &amp;&amp; cd ferry</Prompt>
               <Prompt>(cd web &amp;&amp; npm ci &amp;&amp; npm run build)</Prompt>
               <Prompt>cargo build --release</Prompt>
               <Prompt>./target/release/ferryd</Prompt>

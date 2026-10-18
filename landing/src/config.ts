@@ -7,7 +7,7 @@ const docsBase = (import.meta.env.VITE_DOCS_URL ?? 'http://localhost:3000').repl
 /** A docs page, e.g. `docs('guides/production')`. Static-export URLs end with a slash. */
 export const docs = (page = '') => `${docsBase}/docs/${page ? `${page}/` : ''}`
 
-export const githubUrl = 'https://github.com/Carter2307/ferry'
+export const githubUrl = 'https://github.com/rogerbentcha/ferry'
 
 export const links = {
   quickstart: docs('getting-started/quickstart'),

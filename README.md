@@ -29,12 +29,26 @@ ferry up                      # deploy the current directory → http://my-app.l
 
 ## Quick start
 
-Requirements: Docker (Docker Desktop on macOS works), Rust 1.89+ and Node.js 20+ to build.
+Requirements: Docker (Docker Desktop on macOS works) and git.
+
+On a Linux x86_64 server, download `ferryd` and `ferry` from the
+[latest release](https://github.com/rogerbentcha/ferry/releases/latest) (glibc 2.35+: Ubuntu 22.04+,
+Debian 12+). No Rust or Node.js needed:
+
+```bash
+curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/ferry-x86_64-unknown-linux-gnu.tar.gz
+curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/SHA256SUMS
+sha256sum -c SHA256SUMS
+sudo tar -xzf ferry-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin ferryd ferry
+ferryd                                  # starts the server in the background; prints the dashboard URL and the link that creates your account
+```
+
+Elsewhere (macOS, ARM64), build from source with Rust 1.89+ and Node.js 20+:
 
 ```bash
 (cd web && npm ci && npm run build)     # the web dashboard (embedded into ferryd at compile time)
 cargo build --release
-./target/release/ferryd                 # starts the server in the background; prints the dashboard URL and the link that creates your account
+./target/release/ferryd
 ```
 
 `ferryd` gives the terminal back once the server listens, and the server keeps
@@ -47,9 +61,9 @@ account: the email and password you sign in to the dashboard with. Then connect 
 and deploy:
 
 ```bash
-./target/release/ferry login             # opens the dashboard: approve this terminal there
+ferry login                              # opens the dashboard: approve this terminal there (./target/release/ferry from a source build)
 
-cd examples/node-hello
+cd examples/node-hello                   # in a clone of this repository, or any app folder
 ferry up --follow                        # creates "node-hello", uploads, builds, deploys
 curl http://node-hello.localhost:8080
 ```
@@ -377,6 +391,11 @@ CI (`.github/workflows/ci.yml`) runs the same checks on Linux for every pull req
 `main`/`dev`: fmt, clippy and tests, the Docker end-to-end suites (`FERRY_E2E=1`), the web dashboard's
 typecheck, lint, tests and build, and the documentation site (generated references in sync, typecheck, build
 with link check).
+
+Releases (`.github/workflows/release.yml`): every push to `main` with a `feat`, `fix` or breaking commit since
+the last `vX.Y.Z` tag publishes the next version (`fix` → patch, `feat` → minor, breaking → major, minor while
+on 0.x), with `ferry-x86_64-unknown-linux-gnu.tar.gz` (`ferryd`, `ferry`, built on Ubuntu 22.04) and
+`SHA256SUMS`. The version is set in the release build only: `Cargo.toml` keeps `0.1.0`.
 
 Crates: `ferry-core` (models, store, contracts) · `ferry-docker` · `ferry-build` ·
 `ferry-proxy` · `ferry-tls` · `ferry-engine` · `ferry-api` (REST + SSE + OpenAPI) ·

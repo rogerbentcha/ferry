@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: You build two programs from the source, ferryd and ferry, then you start the server.
+description: You download or build two programs, ferryd and ferry, then you start the server.
 icon: Download
 ---
 
@@ -53,10 +53,23 @@ Ferry is one <Term id="rust" /> workspace that builds two <Term id="binary">bina
 
 The dashboard is a separate React app in `web/`. The build puts it into `ferryd`. Thus you have nothing more to deploy.
 
-## Build Ferry
+## Download Ferry
+
+On a Linux x86_64 server, download the two programs from the latest release. You need no build tools.
 
 ```bash title="Terminal"
-git clone https://github.com/Carter2307/ferry
+curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/ferry-x86_64-unknown-linux-gnu.tar.gz
+curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/SHA256SUMS
+sha256sum -c SHA256SUMS
+sudo tar -xzf ferry-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin ferryd ferry
+```
+
+## Build Ferry
+
+On macOS or on ARM64, build the two programs from the source.
+
+```bash title="Terminal"
+git clone https://github.com/rogerbentcha/ferry
 cd ferry
 (cd web && npm ci && npm run build)
 cargo build --release
@@ -65,7 +78,7 @@ cargo build --release
 ## In this section
 
 <Cards>
-  <Card title="What you need" href="/docs/getting-started/installation/requirements" description="Docker, git, Rust and Node.js." />
+  <Card title="Download a binary" href="/docs/getting-started/installation/download" description="Linux x86_64, with no build tools." />
   <Card title="Build from source" href="/docs/getting-started/installation/build" description="Four steps, from the code to the two programs." />
   <Card title="Start the server" href="/docs/getting-started/installation/start" description="Run ferryd and read what it prints." />
   <Card title="Create your account" href="/docs/getting-started/installation/account" description="The one administrator of your server." />

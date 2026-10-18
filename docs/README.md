@@ -132,7 +132,7 @@ ferry up ferry-docs --dir out --type static --follow
 
 ```bash
 ferry create ferry-docs --type static \
-  --repo https://github.com/Carter2307/ferry --branch dev \
+  --repo https://github.com/rogerbentcha/ferry --branch dev \
   --build-cmd "cd docs && npm ci --include=dev && npm run build" \
   --publish-dir docs/out --follow
 ```

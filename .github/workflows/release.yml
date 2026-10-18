@@ -1,0 +1,221 @@
+# Ships a version on every push to main that holds a feature, a fix or a
+# breaking change. The version comes from the Conventional Commits since the
+# last `vX.Y.Z` tag (.github/scripts/release.mjs). The build makes ferryd (the
+# dashboard inside) and ferry for Linux x86_64. The last job tags and publishes
+# the release, only after every asset is built and checked.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  # A change to the release itself is built and checked, never published.
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/scripts/release.mjs
+  workflow_dispatch:
+
+# One release at a time, in push order: each run reads the tag of the one before.
+# Pushes get their own group, so a manual run never replaces a waiting release.
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Same toolchain as ci.yml.
+  RUST_TOOLCHAIN: "1.95.0"
+  # Asset names carry no version, so releases/latest/download/<name> always works.
+  ARCHIVE: ferry-x86_64-unknown-linux-gnu.tar.gz
+
+jobs:
+  plan:
+    name: Next version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # every commit and tag since the last release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: plan
+        env:
+          PUBLISH: ${{ github.event_name == 'push' && '--publish' || '' }}
+        run: node .github/scripts/release.mjs plan --notes "$RUNNER_TEMP/notes.md" $PUBLISH | tee -a "$GITHUB_OUTPUT"
+      - name: Summary
+        env:
+          RELEASE: ${{ steps.plan.outputs.release }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          REASON: ${{ steps.plan.outputs.reason }}
+        run: |
+          if [ "$RELEASE" = true ]; then
+            echo "::notice title=Release $TAG::$REASON"
+            { echo "## Release $TAG"; echo; echo "$REASON"; echo; cat "$RUNNER_TEMP/notes.md"; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice title=No release::$REASON"
+            { echo "## No release"; echo; echo "$REASON"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.plan.outputs.release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/notes.md
+          if-no-files-found: error
+
+  build:
+    name: Build — Linux x86_64
+    needs: plan
+    # Pull requests and manual runs always build: that is what they check.
+    if: needs.plan.outputs.release == 'true' || github.event_name != 'push'
+    # glibc 2.35: the binaries also run on Ubuntu 22.04 and Debian 12 (glibc 2.36).
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # ferryd embeds web/dist when it compiles (DESIGN.md §13): build it first,
+      # or the binary serves the placeholder page.
+      - name: Build the dashboard
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+          test -f dist/index.html
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      # In this checkout only: the repository keeps its version, nothing is committed back.
+      - name: Set the version
+        run: |
+          node .github/scripts/release.mjs set-version "$VERSION"
+          cargo update --workspace
+      - name: Build ferryd and ferry
+        run: cargo build --release --locked -p ferryd -p ferry-cli
+
+      - name: Check the version and glibc
+        working-directory: target/release
+        run: |
+          for bin in ferryd ferry; do
+            printed=$(./$bin --version)
+            if [ "$printed" != "$bin $VERSION" ]; then
+              echo "::error::$bin --version printed '$printed', not '$bin $VERSION'"
+              exit 1
+            fi
+            glibc=$(objdump -T "$bin" | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -n 1)
+            echo "$bin needs glibc $glibc"
+            if [ "$(printf '%s\n' "$glibc" 2.35 | sort -V | tail -n 1)" != 2.35 ]; then
+              echo "::error::$bin needs glibc $glibc: Ubuntu 22.04 has 2.35"
+              exit 1
+            fi
+          done
+      - name: Run on Ubuntu 22.04 and Debian 12
+        run: |
+          for image in ubuntu:22.04 debian:12; do
+            for bin in ferryd ferry; do
+              docker run --rm -v "$PWD/target/release:/ferry:ro" "$image" "/ferry/$bin" --version
+            done
+          done
+      - name: Serve the dashboard
+        run: |
+          data="$RUNNER_TEMP/ferry-data"
+          ./target/release/ferryd run --data-dir "$data" > "$RUNNER_TEMP/ferryd.out" 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null; wait $pid 2>/dev/null; echo "--- ferryd output"; cat "$RUNNER_TEMP/ferryd.out"' EXIT
+          for _ in $(seq 60); do
+            curl -fsS http://127.0.0.1:7878/healthz > /dev/null 2>&1 && break
+            sleep 1
+          done
+          fail() { echo "::error::$1"; exit 1; }
+
+          # The built dashboard, with its own scripts, not the placeholder page.
+          curl -fsS http://127.0.0.1:7878/ > "$RUNNER_TEMP/index.html"
+          if grep -q 'name="ferry-ui" content="placeholder"' "$RUNNER_TEMP/index.html"; then
+            fail "ferryd serves the placeholder page, not the dashboard"
+          fi
+          script=$(grep -o '/assets/[^"]*\.js' "$RUNNER_TEMP/index.html" | head -n 1 || true)
+          [ -n "$script" ] || fail "the page at / loads no script from /assets"
+          curl -fsS -o /dev/null "http://127.0.0.1:7878$script" || fail "$script is not served"
+
+          # The version, everywhere ferryd reports it.
+          token=$(cat "$data/api_token")
+          info=$(curl -fsS -H "Authorization: Bearer $token" http://127.0.0.1:7878/api/v1/info | jq -r .version)
+          openapi=$(curl -fsS http://127.0.0.1:7878/api/openapi.json | jq -r .info.version)
+          state=$(jq -r .version "$data/ferryd.json")
+          echo "/api/v1/info: $info, OpenAPI: $openapi, ferryd.json: $state"
+          for v in "$info" "$openapi" "$state"; do
+            [ "$v" = "$VERSION" ] || fail "ferryd reports version $v, not $VERSION"
+          done
+
+      - name: Package
+        run: |
+          mkdir dist
+          # Owned by root: `sudo tar -x` keeps the owner of the archive, and the
+          # runner's uid can be a login user on a server.
+          tar --owner=0 --group=0 --numeric-owner -czf "dist/$ARCHIVE" \
+            -C target/release ferryd ferry -C "$GITHUB_WORKSPACE" LICENSE
+          (cd dist && sha256sum "$ARCHIVE" > SHA256SUMS && cat SHA256SUMS)
+          tar -tzvf "dist/$ARCHIVE" --numeric-owner
+          if tar -tzvf "dist/$ARCHIVE" --numeric-owner | awk '$2 != "0/0" { bad = 1 } END { exit !bad }'; then
+            echo "::error::$ARCHIVE has files not owned by 0/0"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Tag and publish
+    needs: [plan, build]
+    if: github.event_name == 'push' && needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      # A draft gets its tag only when it is published: a failed upload
+      # leaves no tag and no release with missing files.
+      - name: Publish ${{ needs.plan.outputs.tag }}
+        run: |
+          gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
+            --notes-file artifacts/release-notes/notes.md \
+            "artifacts/release-assets/$ARCHIVE" artifacts/release-assets/SHA256SUMS
+          gh release edit "$TAG" --draft=false --latest
+          echo "Published $GITHUB_SERVER_URL/$GH_REPO/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove the draft
+        if: failure() || cancelled()
+        run: |
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = true ]; then
+            gh release delete "$TAG" --yes
+          fi

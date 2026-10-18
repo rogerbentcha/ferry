@@ -14,7 +14,7 @@ export const docsContentRoute = '/llms.mdx/docs';
  * new work lands first).
  */
 export const gitConfig = {
-  user: 'Carter2307',
+  user: 'rogerbentcha',
   repo: 'ferry',
   branch: process.env.DOCS_GIT_BRANCH ?? 'dev',
 };
