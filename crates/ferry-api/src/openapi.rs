@@ -60,7 +60,7 @@ pub const SESSION_PATHS_PREFIX: &str = "/api/v1/auth/";
 pub const METRICS_PATH: &str = "/metrics";
 
 const DESCRIPTION: &str = "\
-The HTTP API of [Ferry](https://github.com/Carter2307/ferry), a self-hosted Render alternative. \
+The HTTP API of [Ferry](https://github.com/rogerbentcha/ferry), a self-hosted Render alternative. \
 The `ferry` CLI and the web dashboard use exactly this API.
 
 **Authentication.** Every `/api/v1` route needs an API token as `Authorization: Bearer <token>`: \

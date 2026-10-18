@@ -4,6 +4,10 @@ import { CommandBlock } from './code'
 import { Reveal } from './Reveal'
 import { Heading, Section } from './ui'
 
+const INSTALL = [`curl -fsSL ${githubUrl}/releases/latest/download/install.sh | sudo sh`]
+
+const TUNNEL = ['ssh -N -L 7878:127.0.0.1:7878 root@your-server']
+
 const SERVER = [
   `git clone ${githubUrl} && cd ferry`,
   '(cd web && npm ci && npm run build)',
@@ -23,18 +27,39 @@ export function Install() {
     <Section id="install" labelledBy="install-title">
       <div className="grid gap-x-16 gap-y-12 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
         <div className="min-w-0">
-          <Heading id="install-title" strong="Try it on your own machine" quiet="then on any Linux server" />
+          <Heading id="install-title" strong="One command on a fresh server" quiet="or build it on your own machine" />
           <Reveal delay={0.12}>
             <p className="mt-5 max-w-[34rem] text-foreground-lighter">
-              You need Docker, and Docker Desktop is fine on a Mac. To build from source you also need Rust 1.89 or
-              later and Node.js 20 or later.
+              On Ubuntu 22.04 or 24.04, or Debian 12 or 13 (x86_64), the install script sets up Docker, git and Ferry
+              as a systemd service. Elsewhere you need Docker, and Docker Desktop is fine on a Mac. To build from source
+              you also need Rust 1.89 or later and Node.js 20 or later.
             </p>
           </Reveal>
 
           <ol className="mt-10 space-y-8">
             <li>
               <Reveal>
-                <h3 className="text-base font-semibold">Build and start the server</h3>
+                <h3 className="text-base font-semibold">Install on your server</h3>
+                <p className="mt-1 mb-3 text-sm text-foreground-lighter">
+                  Run it as root or with <code className="inline-code">sudo</code>. Run it again to upgrade: your apps,
+                  data and settings stay.
+                </p>
+                <CommandBlock lines={INSTALL} label="Copy the install command" />
+              </Reveal>
+            </li>
+            <li>
+              <Reveal>
+                <h3 className="text-base font-semibold">Open the dashboard</h3>
+                <p className="mt-1 mb-3 text-sm text-foreground-lighter">
+                  The script ends with an SSH tunnel and a link. Run the tunnel on your computer, then open the link to
+                  create your account.
+                </p>
+                <CommandBlock lines={TUNNEL} label="Copy the tunnel command" />
+              </Reveal>
+            </li>
+            <li>
+              <Reveal>
+                <h3 className="text-base font-semibold">Or build and start it on your machine</h3>
                 <p className="mt-1 mb-3 text-sm text-foreground-lighter">
                   <code className="inline-code">ferryd</code> starts in the background and prints a link: open it to
                   create your account. <code className="inline-code">ferryd stop</code> stops the server.
@@ -46,8 +71,8 @@ export function Install() {
               <Reveal>
                 <h3 className="text-base font-semibold">Deploy the example app</h3>
                 <p className="mt-1 mb-3 text-sm text-foreground-lighter">
-                  <code className="inline-code">ferry login</code> opens the dashboard, where you approve the terminal.
-                  The dashboard is at <code className="inline-code">http://127.0.0.1:7878</code>.
+                  In the clone, <code className="inline-code">ferry login</code> opens the dashboard, where you approve
+                  the terminal. The dashboard is at <code className="inline-code">http://127.0.0.1:7878</code>.
                 </p>
                 <CommandBlock lines={FIRST_APP} label="Copy the deploy commands" />
               </Reveal>
@@ -59,9 +84,9 @@ export function Install() {
           <Reveal className="rounded-xl border border-border bg-surface-100 p-6">
             <h3 className="text-base font-semibold">Put it on a server</h3>
             <p className="mt-2 text-sm text-foreground-lighter">
-              On a Linux machine, run <code className="inline-code">ferryd</code> under systemd, point a wildcard DNS
-              record at it and give it your domain. Add an email address and it gets HTTPS certificates from Let’s
-              Encrypt.
+              Point a wildcard DNS record at the server, then give the install script your domain with{' '}
+              <code className="inline-code">--base-domain</code>. Add <code className="inline-code">--acme-email</code>{' '}
+              and it gets HTTPS certificates from Let’s Encrypt.
             </p>
             <a className="text-link mt-4 inline-block text-sm" href={links.production}>
               Read the production guide

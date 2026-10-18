@@ -1,0 +1,83 @@
+---
+title: Install with one command
+description: On a fresh Ubuntu or Debian server, one command installs Ferry and starts it with systemd.
+---
+
+<Flow
+  steps={[
+    { icon: 'shield-check', title: 'Check', text: 'The script checks the system, the CPU and Docker. It changes nothing yet.', tone: 'warning' },
+    { icon: 'download', title: 'Download', text: 'It gets the latest release and compares it with SHA256SUMS.' },
+    { icon: 'container', title: 'Docker and git', text: 'It installs Docker and git, if the server does not have them.' },
+    { icon: 'user', title: 'User and unit', text: 'It creates the user ferry, its folders and a systemd unit.' },
+    { icon: 'power', title: 'Start', text: 'systemd starts ferryd now, and at each boot.' },
+    { icon: 'link', title: 'Setup link', text: 'The script prints an SSH tunnel and the link that creates your account.', tone: 'success' },
+  ]}
+/>
+
+Each <Term id="github-release" /> has an <Term id="install-script" />. It works on Ubuntu 22.04 and 24.04, and on Debian 12 and 13, on x86_64. Run it as <Term id="root" />, or with <Term id="sudo" />. If you are root and the server has no sudo, end the command with `| sh`.
+
+## Run it on the server
+
+```bash title="Terminal"
+curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh
+```
+
+```text title="Output (end)" noCopy
+Create your account. On your computer:
+  1. Open an SSH tunnel to this server (use the address you connect to):
+       ssh -N -L 7878:127.0.0.1:7878 root@203.0.113.10
+  2. Open this link in your browser:
+       http://127.0.0.1:7878/setup?code=5b0e…
+```
+
+Do the two steps on your computer. The <Term id="ssh-tunnel" /> brings the dashboard to your machine. Then [create your account](/docs/getting-started/installation/account).
+
+## Add your domain and HTTPS
+
+```bash title="Terminal"
+curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh -s -- --base-domain apps.example.com --acme-email you@example.com
+```
+
+| Option | Effect |
+|---|---|
+| `--base-domain apps.example.com` | The <Term id="base-domain" />: your apps are at `<name>.apps.example.com`, on port 80. |
+| `--acme-email you@example.com` | HTTPS on port 443, with certificates from <Term id="lets-encrypt" />. It needs a base domain. |
+
+Without options, `ferryd` keeps its defaults: your apps are at `<name>.localhost:8080`. The script writes the values in `/etc/ferry/ferryd.env`. Before you use a domain, [point its DNS](/docs/guides/production/dns) to the server.
+
+## Upgrade
+
+Run the same command again. The script installs the latest release and restarts `ferryd`. It keeps `/var/lib/ferry` and `/etc/ferry/ferryd.env`: your apps, your data and your settings stay. If the release did not change, `ferryd` continues to run.
+
+<Accordions>
+  <Accordion title="What the script changes">
+    | Item | Change |
+    |---|---|
+    | Docker | If the server has none: Docker from the <Term id="apt-repository" /> of Docker. The script does not change a Docker that is installed. |
+    | git, SSH client | If the server does not have them |
+    | User `ferry` | A <Term id="system-user" /> in the group `docker` |
+    | `/var/lib/ferry`, `/etc/ferry` | <Term id="file-mode" /> 700 |
+    | `/etc/ferry/ferryd.env` | Mode 600 |
+    | `/usr/local/bin` | `ferryd` and `ferry` |
+    | `/etc/systemd/system/ferryd.service` | The unit of [the production guide](/docs/guides/production/unit) |
+
+    The script installs no Rust, no Node.js and no build tools.
+  </Accordion>
+  <Accordion title="When the script stops">
+    The script does all the checks before the first change. If a check fails, the server stays as it was.
+
+    | Case | Message |
+    |---|---|
+    | Another system, or another CPU | The supported systems |
+    | Docker older than 27.3 | How to upgrade Docker |
+    | A bad <Term id="checksum" /> | The script installed nothing |
+  </Accordion>
+  <Accordion title="If you lost the link">
+    Run the command again, or run `sudo ferryd status --data-dir /var/lib/ferry` on the server. Both print the link again.
+  </Accordion>
+  <Accordion title="A unit file of your own">
+    If `/etc/systemd/system/ferryd.service` exists and the script did not write it, the script keeps it. The unit of the script starts with the line `# Written by the Ferry install script.`
+
+    To change that unit, run `sudo systemctl edit ferryd`. It writes your changes in a separate file, and a rerun keeps that file. You can also remove the first line of the unit: then the unit is yours.
+  </Accordion>
+</Accordions>
