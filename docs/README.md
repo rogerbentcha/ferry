@@ -1,10 +1,11 @@
 # Ferry docs
 
-The documentation site of Ferry: [Fumadocs](https://fumadocs.dev) on Next.js 16 (App Router, React 19, TypeScript strict, Tailwind CSS v4), exported as a static site. It lives in its own folder with its own toolchain, like the web dashboard in `../web`.
+The website of Ferry: the landing page at `/` and the documentation at `/docs`. [Fumadocs](https://fumadocs.dev) on Next.js 16 (App Router, React 19, TypeScript strict, Tailwind CSS v4), exported as a static site. It lives in its own folder with its own toolchain, like the web dashboard in `../web`.
 
 | | |
 |---|---|
 | Content | MDX in `content/docs/` (one `meta.json` per folder for titles, order and icons) |
+| Landing page | `/`: React components in `components/landing/` (Motion, ferry-shaders, simple-icons), styles in `app/landing.css` scoped to `.landing`; Manrope for its headings |
 | Design | the Ferry design tokens from `../web/src/styles/tokens.css` (shared with the dashboard), mapped onto Fumadocs in `app/global.css`; Inter + Source Code Pro |
 | Layout | Fumadocs "notebook" layout with a custom 48px header (`components/layout/site-header.tsx`) and sidebar (`components/layout/sidebar.tsx`) |
 | Generated references | CLI, server options and the API reference, from the Rust binaries (`scripts/generate.mjs`) |
@@ -143,15 +144,17 @@ ferry create ferry-docs --type static \
 
 ```
 app/
-  (home)/                 landing page (/) and its layout
+  (home)/page.tsx         the landing page (/): components/landing/
   docs/                   docs layout (notebook, top nav) and [[...slug]] page
   not-found.tsx           404 page (exported as out/404.html)
   api/search/             static search index
   og/docs/                Open Graph images, one per page
   llms.txt, llms-full.txt, llms.mdx/   Markdown versions of the pages for LLMs
   global.css              Tailwind + Fumadocs presets, tokens → Fumadocs theme, prose tweaks
+  landing.css             the landing page's styles (imported by global.css, scoped to .landing)
   icon.svg                favicon (the Ferry logo in a square)
 components/
+  landing/                the landing page: landing-page.tsx (root), one file per section, deploy/ (the demo), config.ts (links, install command)
   layout/                 site header (theme menu), docs header slot, sidebar, site nav (drawer links)
   mdx/                    Callout, Card(s), Badge, Mermaid, and the figures: Diagram, Flow, Terminal, Term (figure.tsx: frame + playback, icons.ts: icon names)
   mdx.tsx                 the MDX component map
@@ -161,6 +164,7 @@ content/docs/             the pages
 lib/                      source loader, OpenAPI loader, shared settings, glossary/ (the terms)
 openapi/ferry.json        GENERATED
 public/logo.svg           the Ferry logo (header, footer, Open Graph images)
+public/hairline-kernel.js the engine of the landing page's harbor figure (@lucasmarkes/hairline, MIT)
 scripts/                  generate.mjs, check-links.mjs, check-ste.mjs + check-figures.mjs (npm run check-content)
 AUTHORING.md              how to write a page
 ```

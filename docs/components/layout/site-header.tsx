@@ -103,7 +103,7 @@ function SearchPill() {
 }
 
 /**
- * The 48px top bar shared by the landing page and the docs: logo + DOCS pill,
+ * The 48px top bar of the docs: logo + DOCS pill,
  * section links, search pill (⌘K), GitHub, Dashboard and the theme menu.
  * Below `lg` the section links (and below `sm` the Dashboard link) move to the
  * top of the sidebar drawer: see SidebarSiteNav.
