@@ -63,7 +63,7 @@ parse_args() {
   while [ $# -gt 0 ]; do
     case $1 in
       --base-domain | --acme-email)
-        [ $# -ge 2 ] && [ -n "$2" ] || fail "$1 needs a value."
+        if [ $# -lt 2 ] || [ -z "$2" ]; then fail "$1 needs a value."; fi
         if [ "$1" = --base-domain ]; then base_domain=$2; else acme_email=$2; fi
         shift 2
         ;;
