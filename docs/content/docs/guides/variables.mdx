@@ -1,5 +1,5 @@
 ---
-title: Environment variables and secrets
+title: Variables and secrets
 description: Set the variables of a service, keep secrets safe, share values and point a variable to a database.
 ---
 
@@ -33,7 +33,7 @@ You can also give variables when you create a service: `ferry create api -e KEY=
 </Tab>
 <Tab value="Dashboard">
 
-Open the service. Click **Environment**. Edit the list **Service variables**. Click **Save only** or **Save & restart**.
+Open the service. Click **Variables**. Edit the list **Service variables**. Click **Save only** or **Save & restart**.
 
 To add many variables, click **Import .env**. Paste the text of a `.env` file.
 
@@ -136,7 +136,7 @@ In the dashboard, click **Env groups** in the icon rail.
 
 ## Connect to a datastore or a service
 
-A value can contain a <Term id="reference" />. Ferry replaces it with the real value each time a container starts. Thus your app always gets the current address and password.
+A value can contain a <Term id="reference" />. Ferry replaces it with the real value each time a container starts. Thus your app always gets the current address and password. A reference finds a datastore or a service of the <Term id="environment" /> of the service only. The references of an env group follow the environment of each service that uses the group.
 
 ```bash title="Terminal"
 ferry env set api 'DATABASE_URL=${{datastore.app-db.connectionString}}'
@@ -218,6 +218,7 @@ At the deploy or the restart, Ferry resolves each reference. If one fails, the d
 | `service 'x' has no public URL` | You used `url` on a service that is not a web service or a static site. |
 | `datastore 'x' has no database name` | You used `database` on a Redis datastore. |
 | `datastore 'x' has no external port yet` | You used `externalConnectionString` before the datastore has a published port. |
+| `datastore 'x' is not in environment 'staging' (it is in 'production')` | The target is in another environment. The deploy fails before the build, with the status `build_failed`. See [Environments](/docs/guides/environments#what-a-service-reaches). |
 
 Fix the variable with `ferry env set`. The restart then uses the new value.
 

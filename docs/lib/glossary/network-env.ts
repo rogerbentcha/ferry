@@ -47,6 +47,11 @@ export const terms = {
     definition: 'A name that Docker gives to a container on a network. Other containers use this name, not an IP address.',
     see: ['private-network'],
   },
+  environment: {
+    term: 'environment',
+    definition: 'A group of services and datastores with its own private network, for example `production` or `staging`. Names do not resolve from one environment to another.',
+    see: ['private-network', 'staging'],
+  },
   'ssh-tunnel': {
     term: 'SSH tunnel',
     definition: 'A safe connection through SSH that makes a port of the server available as a port of your machine.',

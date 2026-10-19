@@ -4,8 +4,9 @@
   "pages": [
     "deploy",
     "github-auto-deploy",
-    "environment",
+    "variables",
     "databases",
+    "environments",
     "domains",
     "jobs",
     "scaling",

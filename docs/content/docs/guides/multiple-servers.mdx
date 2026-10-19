@@ -3,7 +3,7 @@ title: Multiple servers
 description: Run two Ferry servers on one Docker daemon, send commands to each, and move or remove a server.
 ---
 
-More than one <Term id="ferryd" /> can share one <Term id="docker-daemon" />. For example, run a <Term id="staging" /> server next to your production server on the same machine. Or run a temporary server for tests next to your real server.
+More than one <Term id="ferryd" /> can share one <Term id="docker-daemon" />. For example, run a <Term id="staging" /> server next to your production server on the same machine. Or run a temporary server for tests next to your real server. To test changes on one server with one account, an [environment](/docs/guides/environments) is simpler.
 
 ```bash title="Terminal"
 ferryd --data-dir /var/lib/ferry-staging \
@@ -65,7 +65,7 @@ The name prefix (default `ferry`) is part of each Docker name that a server crea
 
 | Resource | Name |
 |---|---|
-| Private network | `<prefix>` |
+| Private networks | `<prefix>` for `production`, `<prefix>-env-<environment>` for the other environments |
 | Service containers | `<prefix>-<service>-<deploy>-<random>` |
 | Job containers | `<prefix>-job-<service>-<job>` |
 | Datastore containers and volumes | `<prefix>-ds-<name>`, `<prefix>-ds-<name>-data` |

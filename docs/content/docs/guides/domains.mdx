@@ -79,7 +79,7 @@ Ferry has two types of domain. You can use the two together.
 | | <Term id="server-domain">Domain of the server</Term> | <Term id="custom-domain">Custom domain</Term> |
 |---|---|---|
 | Covers | Each web service and static site | One service |
-| Hostname | `<service>.example.com` | `www.example.com`, or `example.com` itself |
+| Hostname | `<service>.example.com`, or `<service>.<environment>.example.com` outside production | `www.example.com`, or `example.com` itself |
 | DNS | One <Term id="wildcard-record" /> | One record for each name |
 | Command | `ferry domains connect` | `ferry domains add` |
 
@@ -267,14 +267,14 @@ curl -I http://shop.example.com     # 308 Permanent Redirect to https://shop.exa
 
 Your app must listen on the address `0.0.0.0` and on the port in the variable `PORT`. Ferry publishes the <Term id="port" /> of each container on `127.0.0.1` of the server, and the proxy sends the requests there. An app that listens on `127.0.0.1` in its container gets no traffic. To choose the port, use `ferry update shop --port 3000`.
 
-All containers of a server share one Docker network: the <Term id="private-network" />. There, the name of a service or a <Term id="datastore" /> is its address. These requests do not go through the proxy.
+The containers of one <Term id="environment" /> share one Docker network: the <Term id="private-network" />. There, the name of a service or a <Term id="datastore" /> is its address. These requests do not go through the proxy.
 
 ```bash title="In a container"
 curl http://api:3000/health        # a private service named "api" listening on 3000
 psql postgresql://…@app-db:5432/…  # a datastore named "app-db"
 ```
 
-Do not write hosts and ports in your code. Use a <Term id="reference" />: `${{service.api.hostport}}` becomes `api:3000` when the service starts. A <Term id="private-service" /> has no public URL. `ferry show api` prints its internal address. Ferry does not isolate the services of one server from each other on this network.
+Do not write hosts and ports in your code. Use a <Term id="reference" />: `${{service.api.hostport}}` becomes `api:3000` when the service starts. A <Term id="private-service" /> has no public URL. `ferry show api` prints its internal address. Ferry does not isolate the services of one environment from each other on this network. A container of another environment cannot reach them by name. See [Environments](/docs/guides/environments#what-a-service-reaches).
 
 Each datastore also publishes its port on `127.0.0.1` of the server, never on a public interface. The external connection string of the datastore has this port. From your machine, open an <Term id="ssh-tunnel" /> to it:
 

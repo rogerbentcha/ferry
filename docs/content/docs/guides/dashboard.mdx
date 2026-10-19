@@ -42,7 +42,7 @@ Each screen has the same frame: a top bar, an <Term id="icon-rail" /> on the lef
 |---|---|
 | Top bar, left | The <Term id="breadcrumb" />: the server, with its default domain and its version. On a service, a switcher to another service, the type and the state. |
 | Top bar, right | **Connect**, **Docs**, the search field, the theme menu, help, **Sign out** and the account menu. |
-| Icon rail | **Services**, **Datastores**, **Env groups**, **Blueprints** and **Server**. On a phone, the rail becomes a menu button. |
+| Icon rail | **Services**, **Environments**, **Datastores**, **Env groups**, **Blueprints** and **Server**. On a phone, the rail becomes a menu button. |
 
 **Connect** opens a panel with the `ferry login` command for this server and the API URL. On a service page, it also has the URL, the private address and the <Term id="deploy-hook" /> of the service. Each value has a copy button.
 
@@ -60,11 +60,11 @@ The **Services** page is the home page. Each service is a card:
 | Status line | The state of the service and the time of the last deploy |
 | ⋮ menu | Open, deploy, restart, suspend or resume, copy the URL, delete |
 
-Search a service by its name. Filter by status, for example live, failed or suspended. Sort by name or by last deploy, and show a grid or a list. The **Ferry server** panel on the right shows the versions of Ferry and Docker, the address of the proxy and the number of each resource.
+Search a service by its name. Filter by status, for example live, failed or suspended. When the server has more than `production`, each card shows the <Term id="environment" /> of the service, and a menu filters the services by environment. Sort by name or by last deploy, and show a grid or a list. The **Ferry server** panel on the right shows the versions of Ferry and Docker, the address of the proxy and the number of each resource.
 
 If the server has no GitHub or GitLab account, the page starts with **Connect GitHub** and **Connect GitLab**. See [Auto-deploy from GitHub](/docs/guides/github-auto-deploy).
 
-**+ New service** opens one form. It has the service type, the name, the source, the build settings, the domains and the variables. The source is a **Git repository**, a **Docker image** or **Upload later**. **Advanced** has the root directory, the Dockerfile path, the health check path, a disk and the limits. Click **Create and deploy**. See [Deploy an app](/docs/guides/deploy).
+**+ New service** opens one form. It has the service type, the name, the environment, the source, the build settings, the domains and the variables. The source is a **Git repository**, a **Docker image** or **Upload later**. **Advanced** has the root directory, the Dockerfile path, the health check path, a disk and the limits. Click **Create and deploy**. See [Deploy an app](/docs/guides/deploy).
 
 ## A service page
 
@@ -99,16 +99,16 @@ The page shows the <Term id="runtime-log" /> of all the instances in one live li
 
 The list shows the one-off jobs and the cron runs: status, command, trigger, <Term id="exit-code" /> and duration. Click **Run job**, or **Run now** on a <Term id="cron-job" />. Open a job to read its output, or to cancel it while it runs. On a cron job, a card shows the schedule, with an **Edit schedule** shortcut. See [Jobs](/docs/guides/jobs).
 
-### Environment
+### Variables
 
 | Card | Use |
 |---|---|
 | **Service variables** | Edit each <Term id="env-var" /> of the service. |
-| **Linked environment groups** | Link or unlink an <Term id="env-group" />. |
-| **Effective environment** | The variables of the next deploy or restart, each with its source. **Show Ferry variables** adds the variables that Ferry gives, for example `PORT`. |
+| **Linked env groups** | Link or unlink an <Term id="env-group" />. |
+| **Effective variables** | The variables of the next deploy or restart, each with its source. **Show Ferry variables** adds the variables that Ferry gives, for example `PORT`. |
 | **Reference syntax** | The <Term id="reference">references</Term> that you can insert for your datastores and services. |
 
-The values stay hidden until you click **Reveal**. Import a `.env` file, or paste `KEY=value` lines into a key field. **Save only** keeps the variables for the next deploy or restart. **Save & restart** applies them immediately. See [Environment variables and secrets](/docs/guides/environment).
+The values stay hidden until you click **Reveal**. Import a `.env` file, or paste `KEY=value` lines into a key field. **Save only** keeps the variables for the next deploy or restart. **Save & restart** applies them immediately. See [Variables and secrets](/docs/guides/variables).
 
 ### Settings
 
@@ -127,7 +127,7 @@ If a setting changes in another place while you edit the form, the page shows **
 
 ## Datastores
 
-Each <Term id="datastore" /> is a card with its version, its private address, its status and its <Term id="host-port" />. Click **New datastore**. Give the name, the kind and the version. For Postgres, you can also give a database name and a user.
+Each <Term id="datastore" /> is a card with its version, its private address, its status and its <Term id="host-port" />. Click **New datastore**. Give the name, the environment, the kind and the version. For Postgres, you can also give a database name and a user.
 
 The page of a datastore has these parts:
 
@@ -140,6 +140,10 @@ The page of a datastore has these parts:
 | **Danger zone** | Delete the datastore and its data |
 
 See [Databases](/docs/guides/databases).
+
+## Environments
+
+**Environments** shows each environment with its web address, its services and its datastores. Click **New environment** and type the name. If the server has a domain that is not local, the dialog then shows the DNS record that the environment needs, with copy buttons. The page of an environment lists its services and datastores, and **New service** and **New datastore** create them in this environment. You can delete an environment only when it is empty. See [Environments](/docs/guides/environments).
 
 ## Env groups and blueprints
 
