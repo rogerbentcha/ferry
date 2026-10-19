@@ -29,7 +29,7 @@ ferry up                      # deploy the current directory → http://my-app.l
 
 ## Quick start
 
-On a fresh Ubuntu 22.04/24.04 or Debian 12/13 server (x86_64 or arm64), one command installs Docker and git
+On a fresh Ubuntu 22.04/24.04/26.04 or Debian 12/13 server (x86_64 or arm64), one command installs Docker and git
 when they are missing, the latest `ferryd` and `ferry`, and a systemd service, then prints the link
 that creates your account:
 
@@ -118,7 +118,7 @@ ferry db update app-db --memory 1G                   # datastores: applied right
 
 ## Production setup
 
-On Ubuntu 22.04/24.04 or Debian 12/13 (x86_64 or arm64), the install command of [Quick start](#quick-start),
+On Ubuntu 22.04/24.04/26.04 or Debian 12/13 (x86_64 or arm64), the install command of [Quick start](#quick-start),
 with `--base-domain apps.example.com --acme-email you@example.com`, does the software of step 1 and
 step 2 for you: Docker, a `ferry` user in the `docker` group, `/var/lib/ferry`, the settings in
 `/etc/ferry/ferryd.env`, and a unit like the one below, started at boot. Point the DNS first.
@@ -419,7 +419,7 @@ Releases (`.github/workflows/release.yml`): every push to `main` with a `feat`, 
 the last `vX.Y.Z` tag publishes the next version (`fix` → patch, `feat` → minor, breaking → major, minor while
 on 0.x), with `ferry-x86_64-unknown-linux-gnu.tar.gz` and `ferry-aarch64-unknown-linux-gnu.tar.gz` (`ferryd`,
 `ferry`, built on Ubuntu 22.04 x86_64 and arm64), `install.sh` and `SHA256SUMS`. Before it publishes, a job runs
-`install.sh` with the new assets on a fresh Ubuntu 22.04 runner of each CPU (`.github/scripts/install.test.sh`):
+`install.sh` with the new assets on a fresh Ubuntu 22.04 and 26.04 runner of each CPU (`.github/scripts/install.test.sh`):
 the cases that must stop, a first install, a rerun and an upgrade. If one build fails, nothing is published.
 The version is set in the release build only: `Cargo.toml` keeps `0.1.0`.
 

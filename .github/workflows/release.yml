@@ -2,9 +2,9 @@
 # breaking change. The version comes from the Conventional Commits since the
 # last `vX.Y.Z` tag (.github/scripts/release.mjs). The builds make ferryd (the
 # dashboard inside) and ferry for Linux x86_64 and arm64, and install.sh
-# installs them on a fresh Ubuntu 22.04 of each CPU. The last job tags and
-# publishes the release, only after every asset is built and checked: a
-# release has the archives of all the CPUs, or there is no release.
+# installs them on a fresh Ubuntu 22.04 and 26.04 of each CPU. The last job
+# tags and publishes the release, only after every asset is built and
+# checked: a release has the archives of all the CPUs, or there is no release.
 name: Release
 
 on:
@@ -247,16 +247,25 @@ jobs:
   # A runner of its own: the build already ran a ferryd there, and its Docker
   # resources would block a second server.
   install:
-    name: Install — Ubuntu 22.04 ${{ matrix.cpu }}
+    name: Install — Ubuntu ${{ matrix.ubuntu }} ${{ matrix.cpu }}
     needs: assets
     strategy:
       fail-fast: false
+      # The oldest and the newest Ubuntu the script installs on.
       matrix:
         include:
-          - cpu: x86_64
+          - ubuntu: "22.04"
+            cpu: x86_64
             runner: ubuntu-22.04
-          - cpu: arm64
+          - ubuntu: "22.04"
+            cpu: arm64
             runner: ubuntu-22.04-arm
+          - ubuntu: "26.04"
+            cpu: x86_64
+            runner: ubuntu-26.04
+          - ubuntu: "26.04"
+            cpu: arm64
+            runner: ubuntu-26.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
