@@ -8,6 +8,7 @@ function svc(patch: Partial<ServiceView>): ServiceView {
   return {
     id: 'srv-1',
     name: 'web',
+    environment: 'production',
     type: 'web_service',
     repo_url: null,
     branch: 'main',

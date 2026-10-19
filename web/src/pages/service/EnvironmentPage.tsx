@@ -20,7 +20,10 @@ function sameVars(a: readonly EnvVar[], b: readonly EnvVar[]): boolean {
   return a.length === b.length && a.every((v, i) => v.key === b[i]?.key && v.value === b[i]?.value)
 }
 
-/** `/services/:name/environment` — own variables, linked groups, merged view, reference help. */
+/**
+ * `/services/:name/environment` — the Variables tab: own variables, linked
+ * groups, merged view, reference help. (The path predates environments.)
+ */
 export function EnvironmentPage() {
   const { service } = useServiceOutlet()
   // A different service is a different form (fresh state, no leaked edits).
@@ -75,16 +78,16 @@ function EnvironmentView({ service }: { service: ServiceView }) {
           loadServer(vars)
           if (restart) {
             toast.success(`Saved — restarting ${name}`, {
-              description: 'The new environment is live once the restart deploy finishes.',
+              description: 'The new variables are live once the restart deploy finishes.',
               action: { label: 'View deploys', onClick: () => void navigate(servicePath(name, '/deploys')) },
             })
           } else {
-            toast.success('Environment saved', {
+            toast.success('Variables saved', {
               description: canRestart ? 'It applies on the next deploy or restart.' : undefined,
             })
           }
         },
-        onError: (e) => toast.error('Could not save the environment', { description: errorMessage(e) }),
+        onError: (e) => toast.error('Could not save the variables', { description: errorMessage(e) }),
         onSettled: () => setSaving(null),
       },
     )
@@ -96,12 +99,21 @@ function EnvironmentView({ service }: { service: ServiceView }) {
     document.getElementById('service-variables')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
 
+  // References resolve inside the service's environment only.
+  const envDatastores = React.useMemo(
+    () => datastores.data?.filter((d) => d.environment === service.environment),
+    [datastores.data, service.environment],
+  )
+  const envServices = React.useMemo(
+    () => services.data?.filter((s) => s.environment === service.environment),
+    [services.data, service.environment],
+  )
   const known = React.useMemo<KnownTargets | null>(
     () =>
-      datastores.data && services.data
-        ? { datastores: datastores.data.map((d) => d.name), services: services.data.map((s) => s.name) }
+      envDatastores && envServices
+        ? { datastores: envDatastores.map((d) => d.name), services: envServices.map((s) => s.name) }
         : null,
-    [datastores.data, services.data],
+    [envDatastores, envServices],
   )
   const envReady = Boolean(data)
 
@@ -111,13 +123,13 @@ function EnvironmentView({ service }: { service: ServiceView }) {
       <div className="grid grid-cols-1 gap-x-8 gap-y-10 2xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="flex min-w-0 flex-col">
           <PageSection
-            title="Environment variables"
+            title="Variables"
             description={
               <>
-                Available to builds (as secrets, never baked into the image) and to running containers. Share variables
+                Environment variables available to builds (as secrets, never baked into the image) and to running containers. Share variables
                 across services with{' '}
                 <Link to="/env-groups" className="text-primary underline-offset-4 hover:underline">
-                  environment groups
+                  env groups
                 </Link>
                 .
               </>
@@ -168,8 +180,8 @@ function EnvironmentView({ service }: { service: ServiceView }) {
         <aside aria-label="Reference help" className="min-w-0 2xl:sticky 2xl:top-6 2xl:self-start">
           <ReferenceHelp
             service={service}
-            datastores={datastores.data}
-            services={services.data}
+            datastores={envDatastores}
+            services={envServices}
             loading={datastores.isPending || services.isPending}
             ownVars={kv.vars}
             onAdd={envReady && !saving ? addVariable : null}

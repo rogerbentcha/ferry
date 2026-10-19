@@ -9,6 +9,7 @@ import {
   isLongRunning,
   isPublicHttp,
   listensOnPort,
+  PRODUCTION,
   type CreateService,
   type EnvVar,
   type Runtime,
@@ -38,6 +39,8 @@ export interface PickedRepository {
 export interface NewServiceForm {
   type: ServiceType
   name: string
+  /** Name of its environment (default production), never changed once created. */
+  environment: string
   source: SourceMode
   repoMode: RepoMode
   /** The repository picked from a connected account (`repoMode` = account). */
@@ -75,6 +78,7 @@ export type FieldErrors = Partial<Record<FieldKey, string>>
 export const INITIAL_FORM: NewServiceForm = {
   type: 'web_service',
   name: '',
+  environment: PRODUCTION,
   source: 'git',
   repoMode: 'account',
   repository: null,
@@ -173,7 +177,7 @@ export function clearDraft(): void {
 
 export const MAX_INSTANCES = 50
 const RESERVED_NAMES = ['ferry', 'localhost']
-const ID_PREFIXES = ['srv', 'dep', 'job', 'dbs', 'evg', 'git']
+const ID_PREFIXES = ['srv', 'dep', 'job', 'dbs', 'evg', 'git', 'env']
 
 /** Which settings apply to the current type and source. */
 export function visibleFields(f: Pick<NewServiceForm, 'type' | 'source' | 'runtime'>) {
@@ -374,12 +378,14 @@ export function parseDomains(text: string): { domains: string[] } | { error: str
 
 /**
  * Every field error for the current state (only fields that apply).
- * `hostCpus` (Docker host CPUs, from `/api/v1/info`) caps the CPU limit.
+ * `hostCpus` (Docker host CPUs, from `/api/v1/info`) caps the CPU limit;
+ * `environments` (names, once loaded) must hold the picked environment.
  */
 export function validateForm(
   f: NewServiceForm,
   taken: { services: string[]; datastores: string[] },
   hostCpus?: number | null,
+  environments?: readonly string[],
 ): FieldErrors {
   const v = visibleFields(f)
   const errors: FieldErrors = {}
@@ -387,6 +393,9 @@ export function validateForm(
     if (msg) errors[k] = msg
   }
   set('name', validateName(f.name, taken))
+  if (environments && !environments.includes(f.environment)) {
+    set('environment', `There is no environment “${f.environment}” (any more). Pick another one.`)
+  }
   if (v.repo) {
     if (f.repoMode === 'account') set('repository', f.repository ? null : 'Select a repository.')
     else set('repoUrl', validateRepoUrl(f.repoUrl))
@@ -416,6 +425,7 @@ export function validateForm(
 export const FIELD_ORDER: FieldKey[] = [
   'type',
   'name',
+  'environment',
   'source',
   'repository',
   'repoUrl',
@@ -448,6 +458,8 @@ const opt = (s: string): string | undefined => {
 export function toCreateRequest(f: NewServiceForm, env: EnvVar[]): CreateService {
   const v = visibleFields(f)
   const body: CreateService = { name: f.name.trim(), type: f.type }
+  // Production is the server's default: left out, like an older client.
+  if (f.environment !== PRODUCTION) body.environment = f.environment
   if (v.repo) {
     // A picked repository is just its clone URL: the server clones it with
     // the account connected for that host.
@@ -494,6 +506,9 @@ export function fieldForServerError(message: string): FieldKey | null {
     [/cpu limit|range of cpus/, 'cpuLimit'],
     [/env group/, 'envGroups'],
     [/environment variable|variables total|value of /, 'env'],
+    // A reference to a datastore or service of another environment.
+    [/^env var |is not in environment/, 'env'],
+    [/environment '/, 'environment'],
     [/domain '/, 'domains'],
     [/custom domain|host '/, 'name'],
     [/repo_url|either repo_url or image/, 'repoUrl'],

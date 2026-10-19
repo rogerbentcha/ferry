@@ -7,6 +7,7 @@ import {
   ChevronsUpDown,
   CircleHelp,
   FileCode2,
+  Layers,
   LogOut,
   Menu,
   Monitor,
@@ -39,7 +40,15 @@ import { Hint } from '@/components/ui/tooltip'
 import { ApiError } from '@/lib/api/client'
 import { useLive } from '@/lib/api/events'
 import { signOut } from '@/lib/api/session'
-import { useDatastores, useEnvGroups, useOpenApiSpec, useServerInfo, useService, useServices } from '@/lib/api/queries'
+import {
+  useDatastores,
+  useEnvGroups,
+  useEnvironments,
+  useOpenApiSpec,
+  useServerInfo,
+  useService,
+  useServices,
+} from '@/lib/api/queries'
 import { defaultDomain } from '@/lib/domains'
 import { DATASTORE_KIND_LABELS, SERVICE_TYPE_LABELS } from '@/lib/format'
 import { isMac } from '@/lib/platform'
@@ -227,6 +236,37 @@ function EnvGroupSegment({ name }: { name: string }) {
   )
 }
 
+function EnvironmentSegment({ name }: { name: string }) {
+  const { data: environments, isLoading } = useEnvironments()
+  if (environments && !environments.some((e) => e.name === name || e.id === name)) return null
+  return (
+    <>
+      <Slash />
+      <ResourceSwitcher
+        label={`Environment ${name}, switch environment`}
+        current={name}
+        placeholder="Find environment…"
+        loading={isLoading}
+        items={(environments ?? []).map((e) => ({
+          value: e.name,
+          label: e.name,
+          to: `/environments/${encodeURIComponent(e.name)}`,
+          icon: <Layers className="text-foreground-lighter" />,
+          meta: (
+            <span className="font-mono text-[11px] text-foreground-lighter">
+              {e.services.length + e.datastores.length}
+            </span>
+          ),
+        }))}
+        footer={[{ label: 'All environments', to: '/environments', icon: <Layers /> }]}
+      >
+        <Layers className="size-4 shrink-0 text-foreground-lighter" aria-hidden="true" />
+        <span className="max-w-[180px] truncate">{name}</span>
+      </ResourceSwitcher>
+    </>
+  )
+}
+
 const THEME_ICON: Record<ThemePreference, React.ComponentType<{ className?: string }>> = {
   light: Sun,
   dark: Moon,
@@ -356,6 +396,7 @@ export function TopBar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         {resource.kind === 'service' && <ServiceSegment name={resource.name} />}
         {resource.kind === 'datastore' && <DatastoreSegment name={resource.name} />}
         {resource.kind === 'env-group' && <EnvGroupSegment name={resource.name} />}
+        {resource.kind === 'environment' && <EnvironmentSegment name={resource.name} />}
         <span className="ml-2 hidden md:inline-flex">
           <ConnectPopover />
         </span>

@@ -18,6 +18,8 @@ import { ApiError } from '@/lib/api/client'
 import { useDatastore } from '@/lib/api/queries'
 import type { DatastoreView } from '@/lib/api/types'
 import { DATASTORE_KIND_LABELS, dateTime, relativeTime } from '@/lib/format'
+import { useShownEnvironments } from '@/pages/environments/lib'
+import { EnvironmentBadge } from '@/pages/environments/parts'
 
 import { DeleteDatastoreDialog } from './DeleteDatastoreDialog'
 import { DATASTORE_PROPERTIES, datastoreRef, maskPassword, suggestedEnvKey } from './lib'
@@ -56,7 +58,7 @@ function StatusCallout({ ds }: { ds: DatastoreView }) {
   return null
 }
 
-function ConnectionCard({ ds }: { ds: DatastoreView }) {
+function ConnectionCard({ ds, showEnvironment }: { ds: DatastoreView; showEnvironment: boolean }) {
   const internalAddress = `${ds.internal_host}:${ds.internal_port}`
   return (
     <FormCard asDiv>
@@ -65,7 +67,14 @@ function ConnectionCard({ ds }: { ds: DatastoreView }) {
           <DatastoreStatusBadge status={ds.status} />
         </div>
       </FormRow>
-      <FormRow label="Internal address" description="Host and port on the private network, for services and jobs.">
+      <FormRow
+        label="Internal address"
+        description={
+          showEnvironment
+            ? `Host and port on the private network of ${ds.environment}, for its services and jobs.`
+            : 'Host and port on the private network, for services and jobs.'
+        }
+      >
         <CopyField value={internalAddress} what="internal address" aria-label="Internal address" />
       </FormRow>
       <FormRow
@@ -123,7 +132,7 @@ function UseInServiceCard({ ds }: { ds: DatastoreView }) {
         label="Environment variable"
         description={
           <>
-            Add this to a service’s environment (or an env group). Ferry resolves the reference when the container
+            Add this to the variables of a service (or an env group). Ferry resolves the reference when the container
             starts, on the private network.
           </>
         }
@@ -209,7 +218,7 @@ function ReferencesTable({ refs, loading, error }: { refs: DatastoreReference[];
                     Env group {r.group}
                   </Link>
                 ) : (
-                  'Service environment'
+                  'Service variables'
                 )}
               </TableCell>
               <TableCell className="hidden sm:table-cell">
@@ -252,6 +261,7 @@ export function DatastoreDetailPage() {
   const navigate = useNavigate()
   const { data: ds, error, refetch, isRefetching } = useDatastore(name)
   const references = useDatastoreReferences(ds ? ds.name : undefined)
+  const { shown: showEnvironment } = useShownEnvironments()
   const [deleteOpen, setDeleteOpen] = React.useState(false)
 
   const notFound = error instanceof ApiError && error.isNotFound && !ds
@@ -306,6 +316,7 @@ export function DatastoreDetailPage() {
                   {DATASTORE_KIND_LABELS[ds.kind]} {ds.version}
                 </Badge>
                 <DatastoreStatusBadge status={ds.status} />
+                {showEnvironment && <EnvironmentBadge name={ds.environment} link />}
               </>
             }
             description={
@@ -318,7 +329,7 @@ export function DatastoreDetailPage() {
           <StatusCallout ds={ds} />
 
           <PageSection title="Connection" description="Credentials and addresses for this datastore.">
-            <ConnectionCard ds={ds} />
+            <ConnectionCard ds={ds} showEnvironment={showEnvironment} />
           </PageSection>
 
           <DatastoreResourcesSection key={ds.id} ds={ds} />
@@ -332,7 +343,7 @@ export function DatastoreDetailPage() {
 
           <PageSection
             title="Referenced by"
-            description="Services whose environment (or a linked env group) references this datastore."
+            description="Services whose variables (or a linked env group) reference this datastore."
           >
             <ReferencesTable refs={references.refs} loading={references.loading} error={references.error} />
           </PageSection>

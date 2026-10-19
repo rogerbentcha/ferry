@@ -47,6 +47,11 @@ export const keys = {
   envGroupList: () => ['env-groups', 'list'] as const,
   envGroup: (ref: string) => ['env-groups', 'detail', ref] as const,
 
+  /** Environments list their services and datastores, and the DNS records of the server's domains. */
+  environments: () => ['environments'] as const,
+  environmentList: () => ['environments', 'list'] as const,
+  environment: (ref: string) => ['environments', 'detail', ref] as const,
+
   /** The server's domains, and the certificates of the hosts they give services. */
   domains: () => ['domains'] as const,
   domainList: () => ['domains', 'list'] as const,

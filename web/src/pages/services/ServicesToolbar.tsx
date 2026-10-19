@@ -1,5 +1,5 @@
 import { Link } from 'react-router'
-import { ArrowUpDown, LayoutGrid, List, Plus } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, Layers, LayoutGrid, List, Plus } from 'lucide-react'
 
 import { FilterButton, SearchInput } from '@/components/patterns/ListToolbar'
 import { MonoLabel } from '@/components/patterns/MonoLabel'
@@ -13,13 +13,16 @@ import {
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Hint } from '@/components/ui/tooltip'
-import type { ServiceState } from '@/lib/api/types'
+import type { EnvironmentView, ServiceState } from '@/lib/api/types'
 import { SERVICE_STATE_LABELS } from '@/lib/format'
+import { cn } from '@/lib/utils'
+import { newServicePath, sortEnvironments } from '@/pages/environments/lib'
 
 import { FILTER_STATES, type ServicesSort, type ServicesView } from './lib'
 
@@ -81,6 +84,51 @@ function StatusFilter({
   )
 }
 
+/** A radio group can't hold an empty value: "every environment". */
+const ALL_ENVIRONMENTS = '*'
+
+/** "All environments ⌄" / "staging ⌄": the environment the list shows (a menu, like the sort). */
+function EnvironmentFilter({
+  environments,
+  value,
+  onChange,
+}: {
+  environments: EnvironmentView[]
+  value: string | null
+  onChange: (environment: string | null) => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          icon={<Layers className="size-3.5" />}
+          iconRight={<ChevronDown className="size-3.5 opacity-70" />}
+          aria-label={value ? `Showing environment ${value}. Change environment` : 'Showing all environments. Filter by environment'}
+          className={cn('max-w-[220px]', !value && 'text-foreground-light')}
+        >
+          <span className={cn('truncate', value && 'font-mono text-[12.5px]')}>{value ?? 'All environments'}</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-52">
+        <DropdownMenuLabel>Environment</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={value ?? ALL_ENVIRONMENTS}
+          onValueChange={(v) => onChange(v === ALL_ENVIRONMENTS ? null : v)}
+        >
+          <DropdownMenuRadioItem value={ALL_ENVIRONMENTS}>All environments</DropdownMenuRadioItem>
+          <DropdownMenuSeparator />
+          {sortEnvironments(environments).map((e) => (
+            <DropdownMenuRadioItem key={e.id} value={e.name}>
+              <span className="truncate font-mono text-[12.5px]">{e.name}</span>
+              <span className="ml-auto font-mono text-[11.5px] text-foreground-lighter tabular">{e.services.length}</span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 function SortMenu({ sort, onChange }: { sort: ServicesSort; onChange: (s: ServicesSort) => void }) {
   return (
     <DropdownMenu>
@@ -110,9 +158,17 @@ interface ServicesToolbarProps {
   onSortChange: (s: ServicesSort) => void
   view: ServicesView
   onViewChange: (v: ServicesView) => void
+  /** The environments to filter by; no filter while there is only production. */
+  environments?: EnvironmentView[]
+  environment: string | null
+  onEnvironmentChange: (environment: string | null) => void
 }
 
-/** Studio "Projects" toolbar: search, dashed Status filter, sort, grid/list toggle, + New service. */
+/**
+ * Studio "Projects" toolbar: search, dashed Status filter, environment
+ * select (with more than production), sort, grid/list toggle, + New service
+ * (in the environment shown).
+ */
 export function ServicesToolbar(props: ServicesToolbarProps) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -123,6 +179,13 @@ export function ServicesToolbar(props: ServicesToolbarProps) {
         label="Search services"
       />
       <StatusFilter selected={props.states} counts={props.counts} onChange={props.onStatesChange} />
+      {props.environments && props.environments.length > 1 && (
+        <EnvironmentFilter
+          environments={props.environments}
+          value={props.environment}
+          onChange={props.onEnvironmentChange}
+        />
+      )}
       <SortMenu sort={props.sort} onChange={props.onSortChange} />
       <div className="ml-auto flex items-center gap-2">
         <ToggleGroup
@@ -146,7 +209,7 @@ export function ServicesToolbar(props: ServicesToolbarProps) {
           </Hint>
         </ToggleGroup>
         <Button asChild variant="primary" icon={<Plus />}>
-          <Link to="/services/new">New service</Link>
+          <Link to={props.environment ? newServicePath(props.environment) : '/services/new'}>New service</Link>
         </Button>
       </div>
     </div>

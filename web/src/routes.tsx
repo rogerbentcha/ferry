@@ -104,6 +104,18 @@ export const routes: RouteObject[] = [
             }),
           },
           {
+            path: 'environments',
+            lazy: async () => ({
+              Component: (await import('@/pages/environments/EnvironmentsPage')).EnvironmentsPage,
+            }),
+          },
+          {
+            path: 'environments/:name',
+            lazy: async () => ({
+              Component: (await import('@/pages/environments/EnvironmentDetailPage')).EnvironmentDetailPage,
+            }),
+          },
+          {
             path: 'env-groups',
             lazy: async () => ({ Component: (await import('@/pages/env-groups/EnvGroupsPage')).EnvGroupsPage }),
           },

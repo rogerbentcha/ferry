@@ -16,6 +16,8 @@ import { useService } from '@/lib/api/queries'
 import { isDeployActive, type ServiceView } from '@/lib/api/types'
 import { DEPLOY_STATUS_LABELS, displayUrl, SERVICE_TYPE_LABELS } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { useShownEnvironments } from '@/pages/environments/lib'
+import { EnvironmentBadge } from '@/pages/environments/parts'
 
 import { servicePath, type ServiceOutletContext } from './context'
 import { ServiceActions } from './ServiceActions'
@@ -43,7 +45,8 @@ function menuGroups(name: string, service: ServiceView | undefined): InnerMenuGr
     {
       label: 'Configuration',
       items: [
-        { label: 'Environment', to: servicePath(name, '/environment'), icon: <SlidersHorizontal /> },
+        // The variables (the route keeps its historical `/environment` path).
+        { label: 'Variables', to: servicePath(name, '/environment'), icon: <SlidersHorizontal /> },
         { label: 'Settings', to: servicePath(name, '/settings'), icon: <Settings2 /> },
       ],
     },
@@ -55,12 +58,14 @@ function menuGroups(name: string, service: ServiceView | undefined): InnerMenuGr
 }
 
 /**
- * Title block shown above every service page: name + pills, URL + Copy,
- * actions. On Overview (the service's home) the title is the 32px entity
- * title; on the other sections it is a 28px page title, and on phones those
- * sections get a compact one-line header so the content starts higher.
+ * Title block shown above every service page: name + pills (its environment
+ * too, with more than production), URL + Copy, actions. On Overview (the
+ * service's home) the title is the 32px entity title; on the other sections
+ * it is a 28px page title, and on phones those sections get a compact
+ * one-line header so the content starts higher.
  */
 function ServiceHeader({ service, home }: { service: ServiceView; home: boolean }) {
+  const { shown: showEnvironment } = useShownEnvironments()
   return (
     <header
       className={cn(
@@ -85,6 +90,7 @@ function ServiceHeader({ service, home }: { service: ServiceView; home: boolean 
           <Badge variant="outline" className="hidden sm:inline-flex">
             {SERVICE_TYPE_LABELS[service.type]}
           </Badge>
+          {showEnvironment && <EnvironmentBadge name={service.environment} link />}
         </div>
         <div
           className={cn(

@@ -89,6 +89,8 @@ export type LogStreamKind = 'stdout' | 'stderr' | 'system'
 export interface Service {
   id: string
   name: string
+  /** The name of its environment, picked when it was created and never changed. */
+  environment: string
   type: ServiceType
   repo_url: string | null
   branch: string
@@ -159,6 +161,8 @@ export interface JobRun {
 export interface Datastore {
   id: string
   name: string
+  /** The name of its environment, picked when it was created and never changed: only its services reach it. */
+  environment: string
   kind: DatastoreKind
   version: string
   status: DatastoreStatus
@@ -185,6 +189,18 @@ export interface EnvGroup {
   name: string
   created_at: Timestamp
   updated_at: Timestamp
+}
+
+/**
+ * A group of services and datastores with a private network of its own
+ * (`production`, `staging`…): they reach each other by name, and nothing of
+ * another environment.
+ */
+export interface Environment {
+  id: string
+  /** The rules of service names, never changed. */
+  name: string
+  created_at: Timestamp
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +277,8 @@ export interface ServiceView extends Service {
 /** `POST /api/v1/services` */
 export interface CreateService {
   name: string
+  /** Its environment (id or name), never changed. Omitted = `production` (left out rather than `null`). */
+  environment?: string
   type?: ServiceType | null
   repo_url?: string | null
   branch?: string | null
@@ -546,6 +564,8 @@ export interface ContainerPoint {
 export interface CreateDatastore {
   name: string
   kind: DatastoreKind
+  /** Its environment (id or name), never changed. Omitted = `production` (left out rather than `null`). */
+  environment?: string
   version?: string | null
   database?: string | null
   username?: string | null
@@ -581,6 +601,38 @@ export interface EnvGroupView extends EnvGroup {
   vars: EnvVar[]
   /** Names of linked services. */
   services: string[]
+}
+
+/** `POST /api/v1/environments` */
+export interface CreateEnvironment {
+  /** The rules of service names: 1-40 lowercase letters, digits or `-`, starting with a letter. */
+  name: string
+}
+
+/**
+ * The DNS records the services of an environment need under one domain of
+ * the server: `*.staging.example.com` (production's are covered by the
+ * domain's own `*`).
+ */
+export interface EnvironmentDns {
+  /** The domain whose zone gets the records: `example.com`. */
+  domain: string
+  /** The names they cover: `*.staging.example.com`. */
+  wildcard: string
+  /** The records, named relative to the domain (`*.staging`). */
+  records: DnsRecord[]
+}
+
+/** An environment as returned by the API (flattened `Environment` + computed fields). */
+export interface EnvironmentView extends Environment {
+  /** Names of its services. */
+  services: string[]
+  /** Names of its datastores. */
+  datastores: string[]
+  /** Where its web services are found: `https://<service>.staging.example.com`. */
+  url_pattern: string
+  /** One entry per domain of the server that is not local; empty for `production`. */
+  dns: EnvironmentDns[]
 }
 
 /**
@@ -906,7 +958,15 @@ export interface ApiErrorDetail {
 // Change feed (`GET /api/v1/events`, event `change`)
 // ---------------------------------------------------------------------------
 
-export type ChangeKind = 'service' | 'deploy' | 'datastore' | 'env_group' | 'job' | 'git_connection' | 'domain'
+export type ChangeKind =
+  | 'service'
+  | 'deploy'
+  | 'datastore'
+  | 'env_group'
+  | 'job'
+  | 'git_connection'
+  | 'domain'
+  | 'environment'
 export type ChangeAction = 'created' | 'updated' | 'deleted'
 
 export interface ChangeEvent {
@@ -919,6 +979,17 @@ export interface ChangeEvent {
 // ---------------------------------------------------------------------------
 // Derived helpers (pure, mirror models.rs logic)
 // ---------------------------------------------------------------------------
+
+/** `models::PRODUCTION`: the environment every server has, and the one of everything created without picking one. */
+export const PRODUCTION = 'production'
+
+/**
+ * `models::host_label`: what comes before a domain in the hostnames of a
+ * service — `<name>` in production, `<name>.<environment>` elsewhere.
+ */
+export function hostLabel(name: string, environment: string = PRODUCTION): string {
+  return environment === PRODUCTION ? name : `${name}.${environment}`
+}
 
 /** `Service::source_kind` */
 export function sourceKind(s: Pick<Service, 'image' | 'repo_url'>): SourceKind {

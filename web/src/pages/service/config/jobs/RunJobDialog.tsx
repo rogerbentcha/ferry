@@ -89,7 +89,7 @@ export function RunJobDialog({ service, open, onOpenChange, initialCommand = '' 
             <DialogTitle>Run a job on {name}</DialogTitle>
             <DialogDescription>
               Runs in a new container from the live deploy
-              {service.live_deploy_id ? ` (${shortId(service.live_deploy_id)})` : ''}, with the service’s environment and
+              {service.live_deploy_id ? ` (${shortId(service.live_deploy_id)})` : ''}, with the service’s variables and
               private network{service.disk_mount_path ? ' and its disk' : ''}. No port is exposed.
             </DialogDescription>
           </DialogHeader>

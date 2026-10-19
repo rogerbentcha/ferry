@@ -1,4 +1,4 @@
-import { Boxes, Braces, Database, FileCode2, Server, type LucideIcon } from 'lucide-react'
+import { Boxes, Braces, Database, FileCode2, Layers, Server, type LucideIcon } from 'lucide-react'
 
 export interface NavItem {
   label: string
@@ -12,6 +12,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[][] = [
   [{ label: 'Services', to: '/services', icon: Boxes, hint: 'Web services, workers, cron jobs, static sites' }],
   [
+    { label: 'Environments', to: '/environments', icon: Layers, hint: 'Production, staging: a private network each' },
     { label: 'Datastores', to: '/datastores', icon: Database, hint: 'Managed Postgres and Redis' },
     { label: 'Env groups', to: '/env-groups', icon: Braces, hint: 'Shared environment variables' },
     { label: 'Blueprints', to: '/blueprints', icon: FileCode2, hint: 'Apply ferry.yaml / render.yaml' },

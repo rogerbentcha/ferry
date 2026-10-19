@@ -10,7 +10,6 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useDatastores } from '@/lib/api/queries'
 import type { DatastoreView } from '@/lib/api/types'
 import { DATASTORE_KIND_LABELS } from '@/lib/format'
 
@@ -28,10 +27,17 @@ function keyFor(ds: DatastoreView, rows: KvRow[]): string {
 /**
  * "Reference a datastore" menu: adds `DATABASE_URL=${{datastore.<name>.connectionString}}`
  * (resolved by the server at deploy time, so credentials never live in the service).
+ * `datastores` are those the service can reach: the ones of its environment.
  */
-export function DatastoreRefMenu({ rows, onChange }: { rows: KvRow[]; onChange: (rows: KvRow[]) => void }) {
-  const datastores = useDatastores()
-  const list = datastores.data ?? []
+export function DatastoreRefMenu({
+  rows,
+  onChange,
+  datastores: list,
+}: {
+  rows: KvRow[]
+  onChange: (rows: KvRow[]) => void
+  datastores: DatastoreView[]
+}) {
   if (list.length === 0) return null
   return (
     <DropdownMenu>
