@@ -37,6 +37,8 @@ pub struct MockEngine {
     pub fail_restart: AtomicBool,
     pub fail_scale: AtomicBool,
     pub fail_update_limits: AtomicBool,
+    /// Docker "refuses" to make the network of a new environment.
+    pub fail_environment: AtomicBool,
     /// Running instances `service_status` reports (default: all desired).
     pub running: Mutex<Option<u32>>,
     /// The domains whose names "reach the server" when they are verified.
@@ -54,6 +56,7 @@ impl MockEngine {
             fail_restart: AtomicBool::new(false),
             fail_scale: AtomicBool::new(false),
             fail_update_limits: AtomicBool::new(false),
+            fail_environment: AtomicBool::new(false),
             running: Mutex::new(None),
             reachable: Mutex::new(Vec::new()),
             public_ips: Mutex::new(vec!["203.0.113.10".parse().unwrap()]),
@@ -280,6 +283,19 @@ impl Engine for MockEngine {
         if self.fail_update_limits.load(Ordering::SeqCst) {
             return Err(Error::docker("docker update exploded"));
         }
+        Ok(())
+    }
+
+    async fn create_environment(&self, environment: &str) -> Result<()> {
+        self.record(format!("create_environment {environment}"));
+        if self.fail_environment.load(Ordering::SeqCst) {
+            return Err(Error::docker("creating network ferry-env-x: no more address pools"));
+        }
+        Ok(())
+    }
+
+    async fn delete_environment(&self, environment: &str) -> Result<()> {
+        self.record(format!("delete_environment {environment}"));
         Ok(())
     }
 

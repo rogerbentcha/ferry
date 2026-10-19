@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { isLongRunning, sourceKind, type ServiceView } from '@/lib/api/types'
 import { displayUrl, SERVICE_TYPE_LABELS } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { EnvironmentBadge } from '@/pages/environments/parts'
 import { servicePath } from '@/pages/service/context'
 
 import { LastDeploy } from './LastDeploy'
@@ -46,8 +47,19 @@ function Endpoint({ service }: { service: ServiceView }) {
   )
 }
 
-/** Studio project card: name + ⋮, source line, mono badges, endpoint, status footer. */
-export function ServiceCard({ service, now }: { service: ServiceView; now: number }) {
+/**
+ * Studio project card: name + ⋮, source line, mono badges (the environment
+ * first when `showEnvironment`), endpoint, status footer.
+ */
+export function ServiceCard({
+  service,
+  now,
+  showEnvironment = false,
+}: {
+  service: ServiceView
+  now: number
+  showEnvironment?: boolean
+}) {
   const kind = sourceKind(service)
   const SourceIcon = SOURCE_ICONS[kind]
   const latest = service.latest_deploy
@@ -74,6 +86,7 @@ export function ServiceCard({ service, now }: { service: ServiceView; now: numbe
       }
       badges={
         <>
+          {showEnvironment && <EnvironmentBadge name={service.environment} />}
           <Badge font="mono" shape="square" title={SERVICE_TYPE_LABELS[service.type]}>
             {SERVICE_TYPE_TAGS[service.type]}
           </Badge>

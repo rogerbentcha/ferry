@@ -39,9 +39,22 @@ impl Naming {
         &self.prefix
     }
 
-    /// The user-defined bridge network all workloads join (private networking).
+    /// The user-defined bridge network of the `production` environment
+    /// (private networking), which every workload joined before environments.
     pub fn network(&self) -> String {
         self.prefix.clone()
+    }
+
+    /// The private network of an environment: [`Naming::network`] for
+    /// `production` (an upgrade keeps it), `ferry-env-staging` for the others.
+    /// Containers of different environments share no network, so they can't
+    /// reach each other by name or by address.
+    pub fn environment_network(&self, environment: &str) -> String {
+        if environment == crate::models::PRODUCTION {
+            self.network()
+        } else {
+            format!("{}-env-{}", self.prefix, environment)
+        }
     }
 
     /// Repository part of built images: `ferry/web`.
@@ -124,5 +137,7 @@ mod tests {
         assert_eq!(n.service_container("web", "dep-0123456789abcdef0123", "xyz"), "ferry-web-cdef0123-xyz");
         assert_eq!(n.datastore_volume("db"), "ferry-ds-db-data");
         assert_eq!(n.service_labels("srv-1", "dep-1")[LABEL_INSTANCE], "ferry");
+        assert_eq!(n.environment_network("production"), "ferry");
+        assert_eq!(n.environment_network("staging"), "ferry-env-staging");
     }
 }

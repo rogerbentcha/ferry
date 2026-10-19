@@ -17,13 +17,15 @@
 //! `datastores`, `status` (status + runtime logs), `logs` (deploy/job log
 //! hub), `images` (pull policy + retention), `limits` (container resource
 //! limits, OOM messages, free-disk check), `domains` (the domains services
-//! are served under, and their verification), `metrics` (how busy the host
+//! are served under, and their verification), `environments` (the private
+//! network of each environment), `metrics` (how busy the host
 //! and the containers are), `history` (the last 24 hours of those metrics),
 //! `requests` (the requests the proxy answered, stored every 10 s).
 
 mod datastores;
 mod deploy;
 mod domains;
+mod environments;
 mod health;
 mod history;
 mod images;
@@ -78,7 +80,7 @@ impl FerryEngine {
     ///    left running ([`Builder::reap_orphans`]), then delete the scratch
     ///    directories it left in `builds/` (they hold the records the
     ///    reaping needs);
-    /// 3. ensure the Docker network exists;
+    /// 3. ensure the Docker network of every environment exists;
     /// 4. mark deploys/jobs interrupted by a previous crash as failed;
     /// 5. read the domains services are served under (the base domain and
     ///    the connected ones, DESIGN.md §21);
@@ -134,6 +136,7 @@ impl FerryEngine {
         remove_stale_build_dirs(&config.builds_dir()).await;
 
         inner.docker.ensure_network(&inner.naming.network(), &inner.naming.base_labels("network")).await?;
+        environments::ensure_networks(inner).await?;
         deploy::recover_interrupted(inner).await?;
         // Before any route: a service's hostnames come from the domains.
         ferry_core::domains::init(&inner.store, config).await?;
@@ -267,6 +270,14 @@ impl Engine for FerryEngine {
 
     async fn update_datastore_limits(&self, datastore_id: &str) -> Result<()> {
         datastores::update_limits(&self.inner, datastore_id).await
+    }
+
+    async fn create_environment(&self, environment: &str) -> Result<()> {
+        environments::ensure_network(&self.inner, environment).await
+    }
+
+    async fn delete_environment(&self, environment: &str) -> Result<()> {
+        environments::remove_network(&self.inner, environment).await
     }
 
     async fn refresh_domains(&self) -> Result<()> {

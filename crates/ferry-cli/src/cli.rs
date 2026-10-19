@@ -61,7 +61,7 @@ pub enum Command {
     Info,
     /// List services
     #[command(visible_alias = "ls")]
-    Services,
+    Services(ServicesArgs),
     /// Create a service
     Create(CreateArgs),
     /// Show a service's settings and state
@@ -109,6 +109,15 @@ pub enum Command {
     /// Manage Postgres and Redis datastores
     #[command(subcommand)]
     Db(DbCommand),
+    /// Manage environments: groups of services and datastores, each on a
+    /// private network of its own (production, staging…)
+    ///
+    /// A service or datastore is created in an environment (--environment,
+    /// default production) and reaches the datastores and services of that
+    /// environment only. Outside production, a web service answers at
+    /// <service>.<environment>.<domain>.
+    #[command(visible_alias = "envs")]
+    Environments(EnvironmentsArgs),
     /// Manage environment groups
     #[command(subcommand, name = "env-group")]
     EnvGroup(EnvGroupCommand),
@@ -139,6 +148,49 @@ when creating the service (an existing service keeps its type).";
 pub struct NameArg {
     /// Service name or id
     pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Args)]
+pub struct ServicesArgs {
+    /// Only the services of this environment
+    #[arg(long, value_name = "ENV")]
+    pub environment: Option<String>,
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+pub struct EnvironmentsArgs {
+    #[command(subcommand)]
+    pub command: Option<EnvironmentsCommand>,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum EnvironmentsCommand {
+    /// List environments (the default)
+    #[command(visible_alias = "list")]
+    Ls,
+    /// Create an environment; prints the DNS record its services need
+    Create(EnvironmentNameArg),
+    /// Show an environment: its services, datastores and DNS records
+    Show(EnvironmentNameArg),
+    /// Delete an empty environment (production can't be deleted)
+    #[command(visible_alias = "delete")]
+    Rm(EnvironmentRmArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct EnvironmentNameArg {
+    /// Environment name (lowercase letters, digits and '-'), or id
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct EnvironmentRmArgs {
+    /// Environment name or id
+    pub name: String,
+    /// Don't ask for confirmation
+    #[arg(short, long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -222,6 +274,9 @@ impl SettingsArgs {
 pub struct CreateArgs {
     /// Service name (lowercase letters, digits and '-')
     pub name: String,
+    /// Environment to create it in (default: production; it can't change later)
+    #[arg(long, value_name = "ENV")]
+    pub environment: Option<String>,
     /// Service type: web, pserv, worker, cron, static
     #[arg(short = 't', long = "type", value_name = "TYPE", value_parser = parse_service_type)]
     pub service_type: Option<ServiceType>,
@@ -315,6 +370,9 @@ pub struct UpArgs {
     /// Service type, only used when creating the service: web, pserv, worker, cron, static [default: web]
     #[arg(short = 't', long = "type", value_name = "TYPE", value_parser = parse_service_type)]
     pub service_type: Option<ServiceType>,
+    /// Environment, only used when creating the service [default: production]; an existing service must be in it
+    #[arg(long, value_name = "ENV")]
+    pub environment: Option<String>,
     /// Build & deploy settings: used to create the service, or applied to
     /// the existing one before deploying
     #[command(flatten)]
@@ -554,7 +612,7 @@ pub enum DbCommand {
     Create(DbCreateArgs),
     /// List datastores
     #[command(visible_alias = "list")]
-    Ls,
+    Ls(DbLsArgs),
     /// Show a datastore with its connection URLs
     Show(DbNameArg),
     /// Change a datastore's memory / CPU limits (applied to the running
@@ -565,10 +623,20 @@ pub enum DbCommand {
     Rm(DbRmArgs),
 }
 
+#[derive(Debug, Clone, Default, Args)]
+pub struct DbLsArgs {
+    /// Only the datastores of this environment
+    #[arg(long, value_name = "ENV")]
+    pub environment: Option<String>,
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct DbCreateArgs {
     /// Datastore name (also its hostname on the private network)
     pub name: String,
+    /// Environment to create it in: only its services reach the datastore (default: production)
+    #[arg(long, value_name = "ENV")]
+    pub environment: Option<String>,
     /// postgres or redis
     #[arg(long, value_name = "KIND", default_value = "postgres", value_parser = parse_datastore_kind)]
     pub kind: DatastoreKind,
@@ -833,8 +901,8 @@ mod tests {
         assert_eq!(c.global.server.as_deref(), Some("http://x:1"));
         assert_eq!(c.global.token.as_deref(), Some("t"));
         assert!(c.global.json);
-        assert!(matches!(c.command, Command::Services));
-        assert!(matches!(parse(&["ls"]).command, Command::Services));
+        assert!(matches!(c.command, Command::Services(_)));
+        assert!(matches!(parse(&["ls"]).command, Command::Services(_)));
         assert!(matches!(parse(&["login", "--server", "u", "--token", "t"]).command, Command::Login(_)));
         match parse(&["login", "--no-browser"]).command {
             Command::Login(args) => assert!(args.no_browser && args.poll_ms.is_none()),
@@ -1210,7 +1278,7 @@ mod tests {
             panic!()
         };
         assert_eq!((a.database.as_deref(), a.username.as_deref()), (Some("app"), Some("app")));
-        assert!(matches!(parse(&["db", "ls"]).command, Command::Db(DbCommand::Ls)));
+        assert!(matches!(parse(&["db", "ls"]).command, Command::Db(DbCommand::Ls(_))));
         assert!(matches!(parse(&["db", "show", "main"]).command, Command::Db(DbCommand::Show(_))));
         let Command::Db(DbCommand::Rm(a)) = parse(&["db", "rm", "main", "-y"]).command else { panic!() };
         assert!(a.yes);

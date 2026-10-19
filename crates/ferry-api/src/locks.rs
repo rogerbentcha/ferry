@@ -10,7 +10,10 @@
 //!   on the private network), but each table only enforces its own
 //!   uniqueness: creating either — and the blueprint apply, which creates
 //!   both — runs under one global **names** lock, so a service and a
-//!   datastore can't be created with the same name concurrently.
+//!   datastore can't be created with the same name concurrently. Creating
+//!   and deleting environments takes it too, so nothing is created in an
+//!   environment being deleted; creating one also takes the **domain** lock
+//!   (its hostnames are claimed like a domain's).
 //! * [`detached`] runs a handler body on its own task: a client disconnect
 //!   drops the handler future, which must not stop a multi-step change
 //!   halfway (row written, first deploy never queued...).

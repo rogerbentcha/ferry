@@ -165,7 +165,7 @@ export function EffectiveEnvTable({ service, ownVars, dirty, groups, loading, er
     <PageSection
       title={
         <span className="flex flex-wrap items-center gap-2">
-          Effective environment
+          Effective variables
           {dirty && (
             <Badge variant="warning" title="Includes changes that are not saved yet">
               Unsaved preview
@@ -192,7 +192,7 @@ export function EffectiveEnvTable({ service, ownVars, dirty, groups, loading, er
         </>
       }
     >
-      <Table aria-label="Effective environment" className="table-fixed">
+      <Table aria-label="Effective variables" className="table-fixed">
         <colgroup>
           <col className="w-[40%] sm:w-[30%]" />
           <col />
@@ -212,7 +212,7 @@ export function EffectiveEnvTable({ service, ownVars, dirty, groups, loading, er
             <TableErrorRow colSpan={3} error={error} />
           ) : merged.length === 0 ? (
             <TableMessageRow colSpan={3}>
-              No variables. Add some above or link an environment group.
+              No variables. Add some above or link an env group.
               {!showInjected && ` Ferry still injects ${injectedCount} variables such as ${injectedExamples}.`}
             </TableMessageRow>
           ) : (

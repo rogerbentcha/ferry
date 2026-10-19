@@ -597,6 +597,58 @@ async fn boot_recovery_fails_interrupted_work() {
     assert!(!f.engine.inner.logs.is_open(LogKind::Job, &job.id));
 }
 
+async fn staging(store: &Store) {
+    store.create_environment(&ferry_core::Environment::new("staging")).await.unwrap();
+}
+
+/// A reference to a datastore of another environment fails the deploy
+/// before anything is built or pulled (Docker is unreachable here), and
+/// says where the datastore is.
+#[tokio::test]
+async fn a_reference_to_another_environment_fails_the_deploy() {
+    let f = fixture(2).await;
+    staging(&f.store).await;
+    f.store.create_datastore(&Datastore::new("db", DatastoreKind::Postgres)).await.unwrap();
+    let shop = service(&f.store, "shop", ServiceType::WebService, |s| {
+        s.environment = "staging".into();
+        s.image = Some("nginx:alpine".into());
+    })
+    .await;
+    f.store.set_env(&shop.id, "DATABASE_URL", "${{datastore.db.connectionString}}").await.unwrap();
+    let d = f.engine.deploy(&shop.id, DeployRequest::new(DeployTrigger::Manual)).await.unwrap();
+    let d = wait_status(&f.store, &d.id, |s| s.is_terminal()).await;
+    assert_eq!(d.status, DeployStatus::BuildFailed);
+    let error = d.error.unwrap();
+    assert!(
+        error.starts_with("cannot resolve environment variables: env var DATABASE_URL: ")
+            && error.contains("datastore 'db' is not in environment 'staging' (it is in 'production')"),
+        "{error}"
+    );
+    let lines = log_lines(&f.engine, &d.id).await;
+    assert!(!lines.iter().any(|l| l.contains("Pulling") || l.contains("pull")), "nothing was pulled: {lines:?}");
+}
+
+/// A service outside production answers at `<service>.<env>.<domain>`.
+#[tokio::test]
+async fn services_outside_production_are_routed_under_their_environment() {
+    let f = fixture(2).await;
+    staging(&f.store).await;
+    let shop = service(&f.store, "shop", ServiceType::WebService, |s| {
+        s.environment = "staging".into();
+        s.custom_domains = vec!["shop.example.org".into()];
+    })
+    .await;
+    let upstream: std::net::SocketAddr = "127.0.0.1:4243".parse().unwrap();
+    f.routes.set_service_routes(&shop.id, &["shop.localhost".into()], vec![upstream]);
+    {
+        let _busy = f.engine.inner.service_locks.try_lock(&shop.id).unwrap();
+        f.engine.refresh_routes(&shop.id).await.unwrap();
+    }
+    assert_eq!(f.routes.resolve("shop.staging.localhost:8080"), Resolution::Upstream(upstream));
+    assert_eq!(f.routes.resolve("shop.example.org"), Resolution::Upstream(upstream));
+    assert_ne!(f.routes.resolve("shop.localhost"), Resolution::Upstream(upstream), "production's host stays free");
+}
+
 #[tokio::test]
 async fn refresh_routes_and_suspend_route_states() {
     let f = fixture(2).await;

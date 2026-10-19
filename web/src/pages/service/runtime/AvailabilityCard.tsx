@@ -124,7 +124,7 @@ export function AvailabilityCard({ service, onScale, onRunJob }: AvailabilityCar
         <FormRow
           className={ROW}
           label="Restart service"
-          description="Start fresh containers from the live image with the current environment and settings. Nothing is rebuilt."
+          description="Start fresh containers from the live image with the current variables and settings. Nothing is rebuilt."
         >
           <div className="flex md:justify-end">
             <div className="flex items-center">
@@ -228,8 +228,8 @@ export function AvailabilityCard({ service, onScale, onRunJob }: AvailabilityCar
             label="Suspend service"
             description={
               isCron
-                ? 'Skip scheduled runs until you resume it. Settings, environment and deploys are kept.'
-                : `Stop every instance${isPublicHttp(service.type) ? '; the proxy answers 503' : ''} until you resume it. Settings, environment and deploys are kept.`
+                ? 'Skip scheduled runs until you resume it. Settings, variables and deploys are kept.'
+                : `Stop every instance${isPublicHttp(service.type) ? '; the proxy answers 503' : ''} until you resume it. Settings, variables and deploys are kept.`
             }
           >
             <div className="flex md:justify-end">

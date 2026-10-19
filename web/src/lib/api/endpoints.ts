@@ -18,11 +18,13 @@ import type {
   CreatedApiToken,
   CreateDatastore,
   CreateEnvGroup,
+  CreateEnvironment,
   CreateService,
   DatastoreView,
   Deploy,
   DomainView,
   EnvGroupView,
+  EnvironmentView,
   EnvVar,
   GitAuthorization,
   GitBranches,
@@ -151,6 +153,13 @@ export const endpoints = {
     api.put<EnvGroupView>(`${V1}/env-groups/${seg(ref)}/env`, body, restart ? { restart: true } : undefined),
   patchEnvGroupEnv: (ref: string, body: PatchEnv, restart = false) =>
     api.patch<EnvGroupView>(`${V1}/env-groups/${seg(ref)}/env`, body, restart ? { restart: true } : undefined),
+
+  // environments (production first; a service or datastore picks one when it is created)
+  listEnvironments: (signal?: AbortSignal) => api.get<EnvironmentView[]>(`${V1}/environments`, undefined, signal),
+  getEnvironment: (ref: string, signal?: AbortSignal) =>
+    api.get<EnvironmentView>(`${V1}/environments/${seg(ref)}`, undefined, signal),
+  createEnvironment: (body: CreateEnvironment) => api.post<EnvironmentView>(`${V1}/environments`, body),
+  deleteEnvironment: (ref: string) => api.delete(`${V1}/environments/${seg(ref)}`),
 
   // git connections
   listGitConnections: (signal?: AbortSignal) =>

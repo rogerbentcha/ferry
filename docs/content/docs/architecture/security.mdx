@@ -139,7 +139,8 @@ Each person who can deploy can run any code on the server. The limits protect th
 - Builds have no memory limit and no CPU limit. Only `--build-concurrency` (default 2) limits them.
 - Disks have no <Term id="quota">quotas</Term>. A service that writes to its disk can fill the disk of the host.
 - Disk and network I/O have no limit.
-- All services and datastores share one <Term id="private-network" />. Each container can reach each datastore by name. Only the password protects a datastore.
+- The services and datastores of one <Term id="environment" /> share one <Term id="private-network" />. Each container can reach each datastore of its environment by name. Only the password protects a datastore.
+- Names do not resolve from one environment to another. But from Docker Engine 28, a container can connect to a port that Ferry publishes on the server at the IP address of its container, also from another environment. Thus a staging container that knows the address and the password of a production datastore can connect to it. To close this gap, add rules to the `DOCKER-USER` chain of the firewall of the server.
 
 **What you do**
 

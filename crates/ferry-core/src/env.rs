@@ -13,6 +13,11 @@
 //! `db`/`database` are aliases for `datastore`, `svc` for `service`.
 //! Write `$${{` for a literal `${{`.
 //! Example: `DATABASE_URL=${{datastore.main-db.connectionString}}`.
+//!
+//! A reference resolves inside the environment of the service that uses it
+//! (env groups are server-wide: their references follow the service too).
+//! One to a datastore or service of another environment is an error
+//! ([`check_environment`]).
 
 use crate::config::Config;
 use crate::models::{Datastore, Deploy, EnvVar, Service};
@@ -135,6 +140,70 @@ fn resolve_reference(expr: &str, ctx: &RefContext<'_>) -> Result<String> {
     }
 }
 
+/// The `(kind, name)` of each reference in `value` (`datastore` / `service`,
+/// aliases folded), skipping escaped `$${{` and malformed ones (resolving
+/// reports those).
+fn referenced(value: &str) -> Vec<(&'static str, &str)> {
+    let mut out = Vec::new();
+    let mut rest = value;
+    while let Some(start) = rest.find("${{") {
+        let escaped = start > 0 && rest.as_bytes()[start - 1] == b'$';
+        let after = &rest[start + 3..];
+        if escaped {
+            rest = after;
+            continue;
+        }
+        let Some(end) = after.find("}}") else { break };
+        let parts: Vec<&str> = after[..end].trim().split('.').map(str::trim).collect();
+        if let [kind, name, _] = parts.as_slice() {
+            match kind.to_ascii_lowercase().as_str() {
+                "datastore" | "db" | "database" => out.push(("datastore", *name)),
+                "service" | "svc" => out.push(("service", *name)),
+                _ => {}
+            }
+        }
+        rest = &after[end + 2..];
+    }
+    out
+}
+
+/// Fail when a variable of a service of `environment` references a
+/// datastore or service of another environment: references resolve inside
+/// the service's environment only, and the error says where the target is
+/// (resolving would only call it unknown). `datastores` / `services` are
+/// those of every environment.
+pub fn check_environment(
+    vars: &[EnvVar],
+    environment: &str,
+    datastores: &[Datastore],
+    services: &[Service],
+) -> Result<()> {
+    for v in vars {
+        for (kind, name) in referenced(&v.value) {
+            let (here, elsewhere) = if kind == "datastore" {
+                let mut matching = datastores.iter().filter(|d| d.name == name);
+                (
+                    matching.clone().any(|d| d.environment == environment),
+                    matching.find(|d| d.environment != environment).map(|d| &d.environment),
+                )
+            } else {
+                let mut matching = services.iter().filter(|s| s.name == name);
+                (
+                    matching.clone().any(|s| s.environment == environment),
+                    matching.find(|s| s.environment != environment).map(|s| &s.environment),
+                )
+            };
+            if let (false, Some(other)) = (here, elsewhere) {
+                return Err(Error::invalid(format!(
+                    "env var {}: {kind} '{name}' is not in environment '{environment}' (it is in '{other}'): a service only reaches the datastores and services of its own environment",
+                    v.key
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Resolve references in every value.
 pub fn resolve_all(vars: &[EnvVar], ctx: &RefContext<'_>) -> Result<Vec<EnvVar>> {
     vars.iter()
@@ -191,7 +260,7 @@ pub fn injected(service: &Service, deploy: &Deploy, port: Option<u16>, config: &
         v.push(EnvVar::new("FERRY_GIT_BRANCH", &service.branch));
     }
     if let Some(url) = config.service_url(service) {
-        v.push(EnvVar::new("FERRY_EXTERNAL_HOSTNAME", config.default_host(&service.name)));
+        v.push(EnvVar::new("FERRY_EXTERNAL_HOSTNAME", config.default_host(&service.host_label())));
         v.push(EnvVar::new("FERRY_EXTERNAL_URL", url));
     }
     v
@@ -234,6 +303,33 @@ mod tests {
         // The message never repeats the value: it may hold a secret.
         let e = resolve_value("postgres://app:S3cret@${{datastore.db.host}:5432/db", &ctx).unwrap_err();
         assert!(e.to_string().contains("unterminated reference") && !e.to_string().contains("S3cret"), "{e}");
+    }
+
+    #[test]
+    fn references_stay_inside_the_environment() {
+        let mut db = Datastore::new("db", DatastoreKind::Postgres);
+        db.environment = "production".into();
+        let mut shop_db = Datastore::new("shop-db", DatastoreKind::Postgres);
+        shop_db.environment = "staging".into();
+        let api = Service::new("api", ServiceType::PrivateService);
+        let (datastores, services) = (vec![db, shop_db], vec![api]);
+        let check = |value: &str| {
+            check_environment(&[EnvVar::new("URL", value)], "staging", &datastores, &services)
+                .map_err(|e| e.to_string())
+        };
+        assert!(check("${{datastore.shop-db.connectionString}}").is_ok());
+        let e = check("${{datastore.db.connectionString}}").unwrap_err();
+        assert!(
+            e.contains("datastore 'db' is not in environment 'staging' (it is in 'production')") && e.contains("URL"),
+            "{e}"
+        );
+        let e = check("http://${{ svc.api.hostport }}").unwrap_err();
+        assert!(e.contains("service 'api' is not in environment 'staging'"), "{e}");
+        // Escaped, unknown and malformed references are not this check's business.
+        assert!(check("$${{datastore.db.connectionString}}").is_ok());
+        assert!(check("${{datastore.nope.connectionString}} ${{db.db}} ${{x.db.y}}").is_ok());
+        // From production, production's own.
+        assert!(check_environment(&[EnvVar::new("U", "${{db.db.url}}")], "production", &datastores, &services).is_ok());
     }
 
     #[test]

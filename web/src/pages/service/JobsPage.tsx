@@ -63,7 +63,7 @@ function JobsView({ service }: { service: ServiceView }) {
         description={
           isCron
             ? 'Scheduled and manual runs of this cron job. Each run starts a fresh container from the live deploy.'
-            : 'One-off commands (migrations, scripts, backfills) in a fresh container with the service’s image and environment.'
+            : 'One-off commands (migrations, scripts, backfills) in a fresh container with the service’s image and variables.'
         }
         // one CTA at a time: the empty state carries its own
         actions={list && list.length === 0 ? undefined : runButton}

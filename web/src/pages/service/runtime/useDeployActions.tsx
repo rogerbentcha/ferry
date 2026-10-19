@@ -102,7 +102,7 @@ export function useDeployActions(service: ServiceView) {
         description={
           <>
             <p>
-              Ferry starts a new deploy from the image built for this deploy{commit}, with the current environment and
+              Ferry starts a new deploy from the image built for this deploy{commit}, with the current variables and
               settings. Nothing is rebuilt.
             </p>
             {service.auto_deploy && service.repo_url && info.data?.github_webhook_enabled && (

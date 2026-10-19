@@ -74,7 +74,7 @@ pub async fn list(State(st): State<AppState>) -> ApiResult<Json<Vec<DomainView>>
     responses(
         (status = 201, description = "The connected domain, with the DNS records to create.", body = DomainView),
         (status = 400, description = "Not a domain name (a URL, a wildcard, an address), or too many domains.", body = ApiErrorBody),
-        (status = 409, description = "The domain is already connected, or a service would be served at a hostname that is taken: a custom domain of another service, or the dashboard's host.", body = ApiErrorBody),
+        (status = 409, description = "The domain is already connected, or a service would be served at a hostname that is taken: a custom domain of another service, or the dashboard's host; or the DNS record of an environment under it would hide the dashboard's host.", body = ApiErrorBody),
     ),
 )]
 pub async fn connect(
@@ -102,6 +102,7 @@ pub async fn connect(
             .into());
         }
         checks::check_domain_free(&st.config, &st.store.list_services().await?, &name)?;
+        checks::check_domain_free_of_environments(&st.config, &st.store.list_environments().await?, &name)?;
         let domain = Domain::new(name, DomainSource::Connected);
         st.store.create_domain(&domain).await?;
         domains::reload(&st.store, &st.config).await?;

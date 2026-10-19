@@ -115,8 +115,10 @@ async fn list_effective(ctx: &Ctx, name: &str) -> Result<()> {
 }
 
 /// Warn about variables whose references don't resolve against the
-/// server's current datastores and services (best effort).
-async fn warn_unresolved(ctx: &Ctx, vars: &[EnvVar]) {
+/// server's current datastores and services (best effort): inside the
+/// environment of `service` when they are its own, everywhere for an env
+/// group (its references follow each service using it).
+async fn warn_unresolved(ctx: &Ctx, vars: &[EnvVar], service: Option<&str>) {
     if !envref::any_reference(vars) {
         return;
     }
@@ -126,7 +128,10 @@ async fn warn_unresolved(ctx: &Ctx, vars: &[EnvVar]) {
     ) else {
         return;
     };
-    for (key, why) in envref::unresolved(vars, &datastores.data, &services.data) {
+    let environment = service
+        .and_then(|s| services.data.iter().find(|v| v.service.name == s || v.service.id == s))
+        .map(|v| v.service.environment.as_str());
+    for (key, why) in envref::unresolved(vars, &datastores.data, &services.data, environment) {
         errln!("{} {key}: {why}; deploys fail until it resolves", output::err(output::Color::Yellow, "warning:"));
     }
 }
@@ -274,7 +279,7 @@ async fn patch(ctx: &Ctx, name: &str, body: PatchEnv, restart: bool, follow: boo
 }
 
 pub async fn set(ctx: &Ctx, name: &str, vars: Vec<EnvVar>, restart: bool, follow: bool) -> Result<()> {
-    warn_unresolved(ctx, &vars).await;
+    warn_unresolved(ctx, &vars, Some(name)).await;
     patch(ctx, name, PatchEnv { set: vars, unset: Vec::new() }, restart, follow).await
 }
 
@@ -302,7 +307,7 @@ fn print_group(ctx: &Ctx, resp: &Json<EnvGroupView>) -> Result<()> {
 }
 
 pub async fn group_create(ctx: &Ctx, name: &str, vars: Vec<EnvVar>) -> Result<()> {
-    warn_unresolved(ctx, &vars).await;
+    warn_unresolved(ctx, &vars, None).await;
     let body = CreateEnvGroup { name: name.to_string(), vars };
     let resp = ctx.client.post::<_, EnvGroupView>(&["env-groups"], &[], &body).await?;
     if !ctx.json {
@@ -358,7 +363,7 @@ async fn group_patch(ctx: &Ctx, name: &str, body: PatchEnv, restart: bool) -> Re
 }
 
 pub async fn group_set(ctx: &Ctx, name: &str, vars: Vec<EnvVar>, restart: bool) -> Result<()> {
-    warn_unresolved(ctx, &vars).await;
+    warn_unresolved(ctx, &vars, None).await;
     group_patch(ctx, name, PatchEnv { set: vars, unset: Vec::new() }, restart).await
 }
 

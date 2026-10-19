@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { isLongRunning, sourceKind, type ServiceView } from '@/lib/api/types'
 import { displayUrl, SERVICE_TYPE_LABELS } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { EnvironmentBadge } from '@/pages/environments/parts'
 import { servicePath } from '@/pages/service/context'
 
 import { LastDeploy } from './LastDeploy'
@@ -18,18 +19,20 @@ import { ServiceMenu } from './ServiceMenu'
 /**
  * Column visibility by table width (container queries), shared by header, rows
  * and skeleton. Budget ≈ service 220 + status 110 + actions 48 (always shown),
- * last deploy 150, type 80, instances 100, source 200: each threshold leaves
- * room for every visible column so the table never scrolls sideways next to
- * the server panel (~770px at 1280).
+ * last deploy 150, type 80, environment 110 (with more than production),
+ * instances 100, source 200: each threshold leaves room for every visible
+ * column so the table never scrolls sideways next to the server panel
+ * (~770px at 1280).
  */
 const COL = {
   lastDeploy: 'hidden @lg:table-cell',
   type: 'hidden @2xl:table-cell',
+  environment: 'hidden @3xl:table-cell',
   instances: 'hidden @4xl:table-cell',
   source: 'hidden @5xl:table-cell',
 } as const
 
-function SkeletonRows() {
+function SkeletonRows({ showEnvironment }: { showEnvironment: boolean }) {
   return Array.from({ length: 5 }, (_, i) => (
     <TableRow key={i} className="hover:bg-transparent" aria-hidden="true">
       <TableCell>
@@ -47,6 +50,11 @@ function SkeletonRows() {
       <TableCell className={COL.type}>
         <Skeleton className="h-5 w-12 rounded-sm" />
       </TableCell>
+      {showEnvironment && (
+        <TableCell className={COL.environment}>
+          <Skeleton className="h-5 w-16 rounded-sm" />
+        </TableCell>
+      )}
       <TableCell className={COL.source}>
         <Skeleton className="h-3.5 w-28" />
       </TableCell>
@@ -61,8 +69,18 @@ function SkeletonRows() {
   ))
 }
 
-/** List view of the services (Studio table: mono headers, clickable rows). */
-export function ServicesTable({ services, loading, now }: { services: ServiceView[]; loading: boolean; now: number }) {
+/** List view of the services (Studio table: mono headers, clickable rows; the environment column with more than production). */
+export function ServicesTable({
+  services,
+  loading,
+  now,
+  showEnvironment = false,
+}: {
+  services: ServiceView[]
+  loading: boolean
+  now: number
+  showEnvironment?: boolean
+}) {
   const navigate = useNavigate()
   return (
     <div className="@container">
@@ -72,6 +90,7 @@ export function ServicesTable({ services, loading, now }: { services: ServiceVie
             <TableHead>Service</TableHead>
             <TableHead>Status</TableHead>
             <TableHead className={COL.type}>Type</TableHead>
+            {showEnvironment && <TableHead className={COL.environment}>Environment</TableHead>}
             <TableHead className={COL.source}>Source</TableHead>
             <TableHead className={COL.instances}>Instances</TableHead>
             <TableHead className={COL.lastDeploy}>Last deploy</TableHead>
@@ -82,7 +101,7 @@ export function ServicesTable({ services, loading, now }: { services: ServiceVie
         </TableHeader>
         <TableBody>
           {loading ? (
-            <SkeletonRows />
+            <SkeletonRows showEnvironment={showEnvironment} />
           ) : (
             services.map((s) => {
               const latest = s.latest_deploy
@@ -113,6 +132,11 @@ export function ServicesTable({ services, loading, now }: { services: ServiceVie
                       {SERVICE_TYPE_TAGS[s.type]}
                     </Badge>
                   </TableCell>
+                  {showEnvironment && (
+                    <TableCell className={COL.environment}>
+                      <EnvironmentBadge name={s.environment} />
+                    </TableCell>
+                  )}
                   <TableCell className={cn(COL.source, 'max-w-[220px]')}>
                     <span
                       className={cn('block truncate text-[13px] text-foreground-light', kind !== 'upload' && 'font-mono text-[12.5px]')}

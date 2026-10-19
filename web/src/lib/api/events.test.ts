@@ -9,6 +9,29 @@ describe('invalidationsForChange', () => {
       keys.services(),
     ])
   })
+  it('refreshes environments when a service or a datastore comes or goes', () => {
+    // environments list the names of their services and datastores
+    for (const action of ['created', 'deleted'] as const) {
+      expect(invalidationsForChange({ kind: 'service', id: 'srv-1', service_id: 'srv-1', action })).toEqual([
+        keys.services(),
+        keys.environments(),
+      ])
+      expect(invalidationsForChange({ kind: 'datastore', id: 'dbs-1', service_id: null, action })).toEqual([
+        keys.datastores(),
+        keys.environments(),
+      ])
+    }
+  })
+  it('maps environment changes to the environments', () => {
+    for (const action of ['created', 'updated', 'deleted'] as const) {
+      expect(invalidationsForChange({ kind: 'environment', id: 'env-1', service_id: null, action })).toEqual([
+        keys.environments(),
+      ])
+    }
+    for (const key of [keys.environmentList(), keys.environment('staging')]) {
+      expect(key[0]).toBe(keys.environments()[0])
+    }
+  })
   it('maps deploy changes to the deploy and the service views', () => {
     expect(invalidationsForChange({ kind: 'deploy', id: 'dep-1', service_id: 'srv-1', action: 'created' })).toEqual([
       keys.deploy('dep-1'),
@@ -41,12 +64,14 @@ describe('invalidationsForChange', () => {
       expect(key[0]).toBe(keys.git()[0])
     }
   })
-  it('maps domain changes to the domains, the server info and every service', () => {
-    // a domain that starts or stops being served changes the hosts and the URL of every service
+  it('maps domain changes to the domains, the server info, every service and the environments', () => {
+    // a domain that starts or stops being served changes the hosts and the URL of every service,
+    // and the URL pattern and DNS records of every environment
     expect(invalidationsForChange({ kind: 'domain', id: 'dom-1', service_id: null, action: 'updated' })).toEqual([
       keys.domains(),
       keys.info(),
       keys.services(),
+      keys.environments(),
     ])
     for (const key of [keys.domainList(), keys.certificates()]) {
       expect(key[0]).toBe(keys.domains()[0])

@@ -192,6 +192,23 @@ async fn git_connections_are_reported() {
 }
 
 #[tokio::test]
+async fn environments_are_reported_before_what_they_hold() {
+    let app = TestApp::new().await;
+    let mut feed = Feed::open(&app).await;
+    let staging = app.post("/api/v1/environments", json!({"name": "staging"})).await.json();
+    let seen = feed.until("environment", &id(&staging), "created").await;
+    assert_eq!(
+        seen.last().unwrap(),
+        &json!({"kind": "environment", "id": id(&staging), "service_id": null, "action": "created"})
+    );
+    let shop = app.create_service(json!({"name": "shop", "environment": "staging"})).await;
+    feed.until("service", &id(&shop), "created").await;
+    assert_eq!(app.delete("/api/v1/services/shop").await.status, StatusCode::NO_CONTENT);
+    assert_eq!(app.delete("/api/v1/environments/staging").await.status, StatusCode::NO_CONTENT);
+    feed.until("environment", &id(&staging), "deleted").await;
+}
+
+#[tokio::test]
 async fn domains_are_reported_with_what_the_engine_finds() {
     let app = TestApp::new().await;
     let mut feed = Feed::open(&app).await;

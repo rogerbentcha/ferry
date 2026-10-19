@@ -14,6 +14,7 @@ import { errorMessage } from '@/lib/api/client'
 import { useApplyBlueprint } from '@/lib/api/queries'
 import type { BlueprintResult } from '@/lib/api/types'
 import { plural } from '@/lib/format'
+import { useShownEnvironments } from '@/pages/environments/lib'
 import { isMac } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 
@@ -219,12 +220,18 @@ export function BlueprintsPage() {
   }
 
   const lineCount = yaml === '' ? 0 : yaml.split('\n').length
+  const { shown: showEnvironments } = useShownEnvironments()
 
   return (
     <PageContainer>
       <PageHeader
         title="Blueprints"
-        description="Describe services, datastores and env groups in a ferry.yaml (or Render’s render.yaml) and apply them in one go."
+        description={
+          <>
+            Describe services, datastores and env groups in a ferry.yaml (or Render’s render.yaml) and apply them in one
+            go.{showEnvironments && ' A blueprint applies to the production environment.'}
+          </>
+        }
         actions={
           <Button asChild icon={<BookOpen />}>
             <a href={BLUEPRINT_DOCS_URL} target="_blank" rel="noreferrer">

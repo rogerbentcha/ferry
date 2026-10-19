@@ -33,6 +33,9 @@ The request examples target `http://127.0.0.1:7878`, the default `--api-addr` (d
   <Card title="Environment variables" href="/docs/reference/api/env">
     A service's own environment variables. `?restart=true` restarts the live service when its effective environment changed.
   </Card>
+  <Card title="environments" href="/docs/reference/api/environments">
+    Environments (`production`, `staging`…): groups of services and datastores, each on a private network of its own. A service or datastore picks its environment when it is created and reaches only the datastores and services of that environment by name; outside `production` a web service answers at `<service>.<environment>.<domain>`. Only public URLs cross from one environment to another.
+  </Card>
   <Card title="Env groups" href="/docs/reference/api/env-groups">
     Shared variable sets linked to services (a service's own variables win over its groups'), and linking / unlinking them.
   </Card>

@@ -16,6 +16,7 @@ use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use crate::environments;
 use crate::instances::{self, STOP_GRACE_SECS};
 use crate::limits::{self, Resources};
 use crate::state::{Inner, SetGuard, deleting_datastores_set};
@@ -94,7 +95,7 @@ pub(crate) fn datastore_spec(
         cmd,
         entrypoint,
         labels: naming.datastore_labels(&ds.id),
-        network: Some(naming.network()),
+        network: Some(naming.environment_network(&ds.environment)),
         network_aliases: vec![ds.name.clone()],
         publish: Some(PortPublish {
             container_port: ds.internal_port(),
@@ -366,7 +367,7 @@ async fn run_container(inner: &Inner, ds: &mut Datastore) -> Result<String> {
     let bind_ip = inner.config.datastore_bind_ip.clone();
     let port = ds.host_port.ok_or_else(|| Error::internal("datastore host port not allocated"))?;
     let resources = resources(inner, ds).await;
-    match inner.docker.run_container(&datastore_spec(&inner.naming, ds, &bind_ip, port, &resources)).await {
+    match environments::run_container(inner, &datastore_spec(&inner.naming, ds, &bind_ip, port, &resources)).await {
         Ok(info) => Ok(info.id),
         Err(e) if is_port_conflict(&e) => {
             let new_port = free_host_port()?;
@@ -374,7 +375,7 @@ async fn run_container(inner: &Inner, ds: &mut Datastore) -> Result<String> {
             ds.host_port = Some(new_port);
             *ds = inner.store.update_datastore(ds).await?;
             let spec = datastore_spec(&inner.naming, ds, &bind_ip, new_port, &resources);
-            let info = inner.docker.run_container(&spec).await?;
+            let info = environments::run_container(inner, &spec).await?;
             Ok(info.id)
         }
         Err(e) => Err(e),
@@ -618,7 +619,12 @@ mod tests {
         assert!(spec.env.contains(&("POSTGRES_PASSWORD".into(), "pw".into())));
         assert!(spec.env.contains(&("POSTGRES_DB".into(), "main_db".into())));
         assert_eq!((spec.cmd, spec.entrypoint), (None, None));
+        assert_eq!(spec.network.as_deref(), Some("ferry"), "production keeps the server's network");
         assert_eq!(spec.network_aliases, vec!["main-db"]);
+        let mut staging = ds.clone();
+        staging.environment = "staging".into();
+        let spec_staging = datastore_spec(&naming, &staging, "127.0.0.1", 15433, &resources);
+        assert_eq!(spec_staging.network.as_deref(), Some("ferry-env-staging"));
         assert_eq!(
             spec.publish,
             Some(PortPublish { container_port: 5432, host_ip: "127.0.0.1".into(), host_port: Some(15432) })

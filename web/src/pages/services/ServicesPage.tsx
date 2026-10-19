@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { Boxes, FileCode2, Plus, SearchX } from 'lucide-react'
+import { Boxes, FileCode2, Layers, Plus, SearchX } from 'lucide-react'
 
 import { CodeBlock } from '@/components/patterns/Copy'
 import { EmptyState, ErrorState, StaleDataCallout } from '@/components/patterns/EmptyState'
@@ -10,6 +10,7 @@ import { RESOURCE_GRID, ResourceCardSkeleton } from '@/components/patterns/Resou
 import { Button } from '@/components/ui/button'
 import { useServices } from '@/lib/api/queries'
 import type { ServiceState } from '@/lib/api/types'
+import { activeEnvironment, inEnvironment, newServicePath, useShownEnvironments } from '@/pages/environments/lib'
 
 import { ConnectGitPrompt } from './ConnectGitPrompt'
 import { countByState, matchesQuery, parseStatusParam, sortServices } from './lib'
@@ -64,6 +65,11 @@ export function ServicesPage() {
   const sort = useServicesViewPrefs((s) => s.sort)
   const setView = useServicesViewPrefs((s) => s.setView)
   const setSort = useServicesViewPrefs((s) => s.setSort)
+  const chosenEnvironment = useServicesViewPrefs((s) => s.environment)
+  const setEnvironment = useServicesViewPrefs((s) => s.setEnvironment)
+  const { environments, shown: showEnvironments } = useShownEnvironments()
+  // The remembered environment, while it still exists.
+  const environment = activeEnvironment(chosenEnvironment, environments)
   const [params, setParams] = useSearchParams()
   const now = useNow()
 
@@ -84,7 +90,8 @@ export function ServicesPage() {
     )
   const setQuery = (q: string) => setParam('q', q)
   const setStates = (s: ServiceState[]) => setParam('status', s.join(','))
-  const clearFilters = () =>
+  const clearFilters = () => {
+    setEnvironment(null)
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev)
@@ -94,17 +101,20 @@ export function ServicesPage() {
       },
       { replace: true, flushSync: true },
     )
+  }
 
   const all = services.data
-  const counts = React.useMemo(() => countByState(all ?? []), [all])
+  // The status counts are those of the environment shown.
+  const inEnv = React.useMemo(() => inEnvironment(all ?? [], environment), [all, environment])
+  const counts = React.useMemo(() => countByState(inEnv), [inEnv])
   const visible = React.useMemo(() => {
-    const list = (all ?? []).filter((s) => matchesQuery(s, query) && (states.length === 0 || states.includes(s.state)))
+    const list = inEnv.filter((s) => matchesQuery(s, query) && (states.length === 0 || states.includes(s.state)))
     return sortServices(list, sort)
-  }, [all, query, states, sort])
+  }, [inEnv, query, states, sort])
 
   const loading = services.isPending
   const total = all?.length ?? 0
-  const filtered = query.trim() !== '' || states.length > 0
+  const filtered = query.trim() !== '' || states.length > 0 || environment !== null
 
   let content: React.ReactNode
   if (services.isError && !all) {
@@ -118,23 +128,48 @@ export function ServicesPage() {
     )
   } else if (!loading && total === 0) {
     content = <NoServices />
+  } else if (!loading && environment !== null && inEnv.length === 0) {
+    content = (
+      <EmptyState
+        icon={<Layers />}
+        title={`No services in ${environment} yet`}
+        description={`Services created in ${environment} reach its datastores and services by name, and nothing of another environment.`}
+        actions={
+          <>
+            <Button asChild variant="primary" icon={<Plus />}>
+              <Link to={newServicePath(environment)}>New service in {environment}</Link>
+            </Button>
+            <Button onClick={() => setEnvironment(null)}>Show all environments</Button>
+          </>
+        }
+      />
+    )
   } else if (!loading && visible.length === 0) {
     content = (
       <EmptyState
         icon={<SearchX />}
         title="No services match your filters"
-        description={query ? <>Nothing matches “{query.trim()}”{states.length > 0 && ' with the selected status'}.</> : 'No service has the selected status.'}
+        description={
+          query ? (
+            <>
+              Nothing matches “{query.trim()}”{states.length > 0 && ' with the selected status'}
+              {environment && ` in ${environment}`}.
+            </>
+          ) : (
+            `No service${environment ? ` of ${environment}` : ''} has the selected status.`
+          )
+        }
         actions={<Button onClick={clearFilters}>Clear filters</Button>}
       />
     )
   } else if (view === 'list') {
-    content = <ServicesTable services={visible} loading={loading} now={now} />
+    content = <ServicesTable services={visible} loading={loading} now={now} showEnvironment={showEnvironments} />
   } else {
     content = (
       <ul className={RESOURCE_GRID} aria-busy={loading || undefined} aria-label="Services">
         {loading
           ? Array.from({ length: 6 }, (_, i) => <ResourceCardSkeleton key={i} />)
-          : visible.map((s) => <ServiceCard key={s.id} service={s} now={now} />)}
+          : visible.map((s) => <ServiceCard key={s.id} service={s} now={now} showEnvironment={showEnvironments} />)}
       </ul>
     )
   }
@@ -159,6 +194,9 @@ export function ServicesPage() {
               onSortChange={setSort}
               view={view}
               onViewChange={setView}
+              environments={environments}
+              environment={environment}
+              onEnvironmentChange={setEnvironment}
             />
           )}
           {services.isError && all && (

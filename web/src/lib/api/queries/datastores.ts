@@ -37,6 +37,8 @@ export function useCreateDatastore() {
     onSuccess: (ds) => {
       qc.setQueryData(keys.datastore(ds.name), ds)
       void qc.invalidateQueries({ queryKey: keys.datastoreList() })
+      // Environments list their datastores.
+      void qc.invalidateQueries({ queryKey: keys.environments() })
     },
   })
 }
@@ -70,6 +72,7 @@ export function useDeleteDatastore() {
       )
       qc.removeQueries({ queryKey: keys.datastore(ref) })
       void qc.invalidateQueries({ queryKey: keys.datastores() })
+      void qc.invalidateQueries({ queryKey: keys.environments() })
     },
   })
 }

@@ -3,7 +3,9 @@
  */
 
 import {
+  hostLabel,
   isLongRunning,
+  PRODUCTION,
   sourceKind,
   type ServerInfo,
   type ServiceState,
@@ -63,6 +65,7 @@ export function matchesQuery(s: ServiceView, query: string): boolean {
     s.branch,
     s.image ?? '',
     s.url ? displayUrl(s.url) : '',
+    s.environment,
     ...s.custom_domains,
     SERVICE_STATE_LABELS[s.state],
   ]
@@ -117,15 +120,18 @@ function isLocalHost(host: string): boolean {
 }
 
 /**
- * URL a new public service named `name` would get (mirrors
- * `Config::url_for_host`; a hint only — the server decides).
+ * URL a new public service named `name` would get in `environment` (mirrors
+ * `Config::url_for_host` with `models::host_label`: `<name>.<domain>` in
+ * production, `<name>.<environment>.<domain>` elsewhere; a hint only — the
+ * server decides).
  */
 export function previewServiceUrl(
   name: string,
   info: Pick<ServerInfo, 'base_domain' | 'default_domain' | 'proxy_url' | 'tls_enabled' | 'dashboard_url'> | undefined,
+  environment: string = PRODUCTION,
 ): string | null {
   if (!info || !name) return null
-  const host = `${name}.${defaultDomain(info)}`
+  const host = `${hostLabel(name, environment)}.${defaultDomain(info)}`
   if (info.tls_enabled && !isLocalHost(host)) return `https://${host}`
   try {
     // The dashboard URL (when configured) carries the public port; else the proxy's.

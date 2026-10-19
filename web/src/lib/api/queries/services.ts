@@ -71,6 +71,8 @@ export function useCreateService() {
     onSuccess: (view) => {
       qc.setQueryData(keys.service(view.name), view)
       void qc.invalidateQueries({ queryKey: keys.serviceList() })
+      // Environments list their services.
+      void qc.invalidateQueries({ queryKey: keys.environments() })
       if (view.env_groups.length > 0) void qc.invalidateQueries({ queryKey: keys.envGroups() })
       // Git connections list the services whose repository they clone.
       if (view.repo_url) void qc.invalidateQueries({ queryKey: keys.gitConnections() })
@@ -105,6 +107,7 @@ export function useDeleteService() {
       if (cached) qc.removeQueries({ queryKey: keys.service(cached.name) })
       void qc.invalidateQueries({ queryKey: keys.services() })
       void qc.invalidateQueries({ queryKey: keys.envGroups() })
+      void qc.invalidateQueries({ queryKey: keys.environments() })
       void qc.invalidateQueries({ queryKey: keys.gitConnections() })
     },
   })

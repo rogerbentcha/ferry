@@ -24,6 +24,8 @@ import { copyText } from '@/hooks/useCopy'
 import { useDatastores } from '@/lib/api/queries'
 import { DATASTORE_KINDS, type DatastoreKind, type DatastoreView } from '@/lib/api/types'
 import { DATASTORE_KIND_LABELS } from '@/lib/format'
+import { useShownEnvironments } from '@/pages/environments/lib'
+import { EnvironmentBadge } from '@/pages/environments/parts'
 
 import { DeleteDatastoreDialog } from './DeleteDatastoreDialog'
 import { datastoreRef } from './lib'
@@ -35,7 +37,15 @@ async function copyWithToast(value: string, what: string) {
   else toast.error('Could not copy to the clipboard')
 }
 
-function DatastoreCard({ ds, onDelete }: { ds: DatastoreView; onDelete: () => void }) {
+function DatastoreCard({
+  ds,
+  showEnvironment,
+  onDelete,
+}: {
+  ds: DatastoreView
+  showEnvironment: boolean
+  onDelete: () => void
+}) {
   const navigate = useNavigate()
   const to = `/datastores/${encodeURIComponent(ds.name)}`
   return (
@@ -84,6 +94,7 @@ function DatastoreCard({ ds, onDelete }: { ds: DatastoreView; onDelete: () => vo
       }
       badges={
         <>
+          {showEnvironment && <EnvironmentBadge name={ds.environment} />}
           <Badge font="mono" shape="square">
             {ds.kind}
           </Badge>
@@ -122,6 +133,7 @@ function DatastoreCard({ ds, onDelete }: { ds: DatastoreView; onDelete: () => vo
 /** `/datastores` — managed Postgres / Redis as Studio project cards. */
 export function DatastoresPage() {
   const { data, error, isLoading, refetch, isRefetching } = useDatastores()
+  const { shown: showEnvironment } = useShownEnvironments()
   const [query, setQuery] = React.useState('')
   const [kinds, setKinds] = React.useState<Set<DatastoreKind>>(() => new Set())
   const [createOpen, setCreateOpen] = React.useState(false)
@@ -132,7 +144,11 @@ export function DatastoresPage() {
   const shown = all.filter(
     (d) =>
       (kinds.size === 0 || kinds.has(d.kind)) &&
-      (q === '' || d.name.includes(q) || d.kind.includes(q) || (d.database ?? '').toLowerCase().includes(q)),
+      (q === '' ||
+        d.name.includes(q) ||
+        d.kind.includes(q) ||
+        d.environment.includes(q) ||
+        (d.database ?? '').toLowerCase().includes(q)),
   )
   const filtered = q !== '' || kinds.size > 0
   const clearFilters = () => {
@@ -239,7 +255,7 @@ export function DatastoresPage() {
       ) : (
         <ul className={RESOURCE_GRID} aria-label="Datastores">
           {shown.map((ds) => (
-            <DatastoreCard key={ds.id} ds={ds} onDelete={() => setDeleting(ds)} />
+            <DatastoreCard key={ds.id} ds={ds} showEnvironment={showEnvironment} onDelete={() => setDeleting(ds)} />
           ))}
         </ul>
       )}

@@ -19,6 +19,7 @@ use futures::StreamExt;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
+use crate::environments;
 use crate::health::{LastExit, SIGKILL_EXIT_CODE};
 use crate::images;
 use crate::instances;
@@ -199,7 +200,8 @@ async fn execute(
         cmd: command.as_deref().map(instances::sh_c),
         entrypoint: None,
         labels: inner.naming.job_labels(&svc.id, &job.id),
-        network: Some(inner.naming.network()),
+        // The service's environment: a job reaches what its service reaches.
+        network: Some(inner.naming.environment_network(&svc.environment)),
         network_aliases: Vec::new(),
         publish: None,
         volumes: volume.into_iter().collect(),
@@ -227,7 +229,7 @@ async fn execute(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .saturating_sub(Duration::from_secs(1));
-    let info = match inner.docker.run_container(&container_spec).await {
+    let info = match environments::run_container(inner, &container_spec).await {
         Ok(info) => info,
         Err(e) => {
             let m = format!("starting the job container failed: {}", error_message(&e));

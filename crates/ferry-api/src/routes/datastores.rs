@@ -9,7 +9,7 @@ use http::StatusCode;
 use crate::AppState;
 use crate::checks::{self, RefKind};
 use crate::error::{ApiError, ApiResult};
-use crate::extract::{ApiJson, ApiPath, ApiQuery, DeleteQuery};
+use crate::extract::{ApiJson, ApiPath, ApiQuery, DeleteQuery, EnvironmentQuery};
 use crate::locks;
 use crate::ops;
 use crate::views::datastore_view;
@@ -21,10 +21,21 @@ use crate::views::datastore_view;
     tag = "datastores",
     operation_id = "listDatastores",
     summary = "List datastores",
-    responses((status = 200, description = "All datastores with their connection info.", body = [DatastoreView])),
+    description = "Every datastore with its connection info, or those of one `environment`.",
+    params(EnvironmentQuery),
+    responses(
+        (status = 200, description = "The datastores with their connection info.", body = [DatastoreView]),
+        (status = 404, description = "No such environment.", body = ApiErrorBody),
+    ),
 )]
-pub async fn list(State(st): State<AppState>) -> ApiResult<Json<Vec<DatastoreView>>> {
-    let all = st.store.list_datastores().await?;
+pub async fn list(
+    State(st): State<AppState>,
+    ApiQuery(q): ApiQuery<EnvironmentQuery>,
+) -> ApiResult<Json<Vec<DatastoreView>>> {
+    let all = match q.environment.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
+        Some(e) => st.store.environment_members(&st.store.require_environment(e).await?.name).await?.1,
+        None => st.store.list_datastores().await?,
+    };
     Ok(Json(all.into_iter().map(|d| datastore_view(&st.config, d)).collect()))
 }
 
@@ -83,11 +94,11 @@ fn checked_limits(memory_mb: Option<u32>, cpus: Option<f64>) -> Result<(Option<u
     tag = "datastores",
     operation_id = "createDatastore",
     summary = "Create a datastore",
-    description = "Creates the row (`creating`) and provisions the container. A failed provisioning still answers 201, with status `failed` and the reason in `error`. Datastores and services share one namespace of names. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit the container; omitted or `0` = the server default (see `GET /api/v1/info`).",
+    description = "Creates the row (`creating`) in its `environment` (omitted: `production`) and provisions the container on that environment's private network: only its services reach it. A failed provisioning still answers 201, with status `failed` and the reason in `error`. Datastores and services share one namespace of names. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit the container; omitted or `0` = the server default (see `GET /api/v1/info`).",
     request_body = CreateDatastore,
     responses(
         (status = 201, description = "The new datastore.", body = DatastoreView),
-        (status = 400, description = "Invalid name, version, database, username or resource limits.", body = ApiErrorBody),
+        (status = 400, description = "Invalid name, version, database, username or resource limits, or an unknown environment.", body = ApiErrorBody),
         (status = 409, description = "The name is already taken.", body = ApiErrorBody),
     ),
 )]
@@ -95,13 +106,14 @@ pub async fn create(
     State(st): State<AppState>,
     ApiJson(req): ApiJson<CreateDatastore>,
 ) -> ApiResult<(StatusCode, Json<DatastoreView>)> {
-    let ds = new_datastore(&req)?;
+    let mut ds = new_datastore(&req)?;
     // Row + provisioning: a client disconnect must not leave a row that is
     // `creating` forever.
     locks::detached(async move {
         {
             // Datastores share their namespace with services.
             let _names = locks::names().await;
+            ds.environment = checks::environment_for(&st.store, req.environment.as_deref()).await?;
             st.store.create_datastore(&ds).await?;
         }
         tracing::info!(datastore = %ds.name, kind = %ds.kind, "created datastore");

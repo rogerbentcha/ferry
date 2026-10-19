@@ -50,6 +50,7 @@ const CHANGE_KINDS: readonly ChangeKind[] = [
   'job',
   'git_connection',
   'domain',
+  'environment',
 ]
 
 function isChangeEvent(v: unknown): v is ChangeEvent {
@@ -65,24 +66,27 @@ export type Invalidation = QueryKey | 'service-jobs'
 export function invalidationsForChange(change: ChangeEvent): Invalidation[] {
   switch (change.kind) {
     case 'service':
-      // list + every service subtree (details are cached by name, events carry ids)
-      return [keys.services()]
+      // list + every service subtree (details are cached by name, events carry
+      // ids); a new or deleted one changes what its environment holds
+      return change.action === 'updated' ? [keys.services()] : [keys.services(), keys.environments()]
     case 'deploy':
       // latest_deploy / state live on the service views
       return [keys.deploy(change.id), keys.services()]
     case 'job':
       return [keys.job(change.id), 'service-jobs']
     case 'datastore':
-      return [keys.datastores()]
+      return change.action === 'updated' ? [keys.datastores()] : [keys.datastores(), keys.environments()]
     case 'env_group':
       return change.action === 'deleted' ? [keys.envGroups(), keys.services()] : [keys.envGroups()]
     case 'git_connection':
       // the accounts, and what they let the server read (repositories, branches)
       return [keys.git()]
     case 'domain':
-      // the domains and their certificates, the default domain of /info, and
-      // the hosts and URL of every service
-      return [keys.domains(), keys.info(), keys.services()]
+      // the domains and their certificates, the default domain of /info, the
+      // hosts and URL of every service, and the DNS records of environments
+      return [keys.domains(), keys.info(), keys.services(), keys.environments()]
+    case 'environment':
+      return [keys.environments()]
   }
 }
 

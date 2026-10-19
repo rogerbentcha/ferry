@@ -16,7 +16,7 @@ use serde::Deserialize;
 use crate::AppState;
 use crate::checks::{self, RefKind};
 use crate::error::{ApiError, ApiResult};
-use crate::extract::{ApiJson, ApiPath, ApiQuery, DeleteQuery, de_flag};
+use crate::extract::{ApiJson, ApiPath, ApiQuery, DeleteQuery, EnvironmentQuery, de_flag};
 use crate::locks;
 use crate::ops;
 use crate::runtime;
@@ -34,11 +34,21 @@ use crate::views::service_view;
     tag = "services",
     operation_id = "listServices",
     summary = "List services",
-    description = "Every service with its computed fields. The `state` of live services reflects their running instances (`degraded` when some are down), from counts refreshed at most every few seconds.",
-    responses((status = 200, description = "All services.", body = [ServiceView])),
+    description = "Every service with its computed fields, or those of one `environment`. The `state` of live services reflects their running instances (`degraded` when some are down), from counts refreshed at most every few seconds.",
+    params(EnvironmentQuery),
+    responses(
+        (status = 200, description = "The services.", body = [ServiceView]),
+        (status = 404, description = "No such environment.", body = ApiErrorBody),
+    ),
 )]
-pub async fn list(State(st): State<AppState>) -> ApiResult<Json<Vec<ServiceView>>> {
-    let services = st.store.list_services().await?;
+pub async fn list(
+    State(st): State<AppState>,
+    ApiQuery(q): ApiQuery<EnvironmentQuery>,
+) -> ApiResult<Json<Vec<ServiceView>>> {
+    let services = match q.environment.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
+        Some(e) => st.store.environment_members(&st.store.require_environment(e).await?.name).await?.0,
+        None => st.store.list_services().await?,
+    };
     runtime::refresh(&st.engine, &services).await;
     let mut out = Vec::with_capacity(services.len());
     for svc in services {
@@ -122,11 +132,11 @@ fn new_service(req: &CreateService) -> Result<Service, Error> {
     tag = "services",
     operation_id = "createService",
     summary = "Create a service",
-    description = "Creates the service with its own variables and env group links, then queues a first deploy (trigger `create`) when it has a repository or an image, unless `deploy` is `false`. Services and datastores share one namespace of names. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit every instance and job run of the service; omitted or `0` = the server default (see `GET /api/v1/info`).",
+    description = "Creates the service in its `environment` (omitted: `production`) with its own variables and env group links, then queues a first deploy (trigger `create`) when it has a repository or an image, unless `deploy` is `false`. Services and datastores share one namespace of names. Outside `production` a web service answers at `<service>.<environment>.<domain>`, and its variables reference the datastores and services of its environment only. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit every instance and job run of the service; omitted or `0` = the server default (see `GET /api/v1/info`).",
     request_body = CreateService,
     responses(
         (status = 201, description = "The new service.", body = ServiceView),
-        (status = 400, description = "Invalid settings (including resource limits out of range), name, variables or domains, or an unknown env group.", body = ApiErrorBody),
+        (status = 400, description = "Invalid settings (including resource limits out of range), name, variables or domains, or an unknown env group or environment.", body = ApiErrorBody),
         (status = 409, description = "The name, its default host or a custom domain is already taken.", body = ApiErrorBody),
     ),
 )]
@@ -139,7 +149,7 @@ pub async fn create(
 }
 
 async fn create_service(st: AppState, req: CreateService) -> ApiResult<(StatusCode, Json<ServiceView>)> {
-    let svc = new_service(&req)?;
+    let mut svc = new_service(&req)?;
     let env = req.env.clone().unwrap_or_default();
     validate::env_vars(&env)?;
     let mut groups: Vec<EnvGroup> = Vec::new();
@@ -162,9 +172,12 @@ async fn create_service(st: AppState, req: CreateService) -> ApiResult<(StatusCo
         // check-then-write across tables / services.
         let _names = locks::names().await;
         let _domains = locks::domains().await;
+        // Its hostnames depend on it.
+        svc.environment = checks::environment_for(&st.store, req.environment.as_deref()).await?;
+        checks::check_service_name_free(&st.store, &svc).await?;
         let existing = st.store.list_services().await?;
-        checks::check_default_host_free(&st.config, &existing, &svc.name)?;
-        checks::check_domains(&st.config, &existing, &svc.name, &svc.custom_domains)?;
+        checks::check_default_host_free(&st.config, &existing, &svc)?;
+        checks::check_domains(&st.config, &existing, &svc, &svc.custom_domains)?;
         st.store.create_service(&svc).await?;
     }
     let extras = async {
@@ -350,7 +363,7 @@ async fn update_service(st: AppState, id: String, req: UpdateService) -> ApiResu
     let domains_changed = next.custom_domains != current.custom_domains;
     if domains_changed {
         let all = st.store.list_services().await?;
-        checks::check_domains(&st.config, all.iter().filter(|s| s.id != current.id), &next.name, &next.custom_domains)?;
+        checks::check_domains(&st.config, all.iter().filter(|s| s.id != current.id), &next, &next.custom_domains)?;
     }
 
     // Instances and suspension are owned by the engine (scale / suspend);

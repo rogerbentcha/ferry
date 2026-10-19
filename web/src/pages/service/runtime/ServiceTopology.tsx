@@ -45,7 +45,7 @@ function useTopologyNodes(service: ServiceView) {
         name: group?.name ?? g,
         to: `/env-groups/${encodeURIComponent(group?.name ?? g)}`,
         icon: <Braces />,
-        subtitle: 'Environment group',
+        subtitle: 'Env group',
         meta: group ? plural(group.vars.length, 'variable') : undefined,
         tone: null,
         missing: groups.isSuccess && !group,
@@ -305,7 +305,7 @@ export function ServiceTopology({ service }: { service: ServiceView }) {
         <MonoLabel>{nodes.length > 0 ? `Depends on ${nodes.length}` : 'No connections'}</MonoLabel>
         <span className="text-[12px] text-foreground-lighter">
           {error ? (
-            <span className="text-destructive">Could not read the environment</span>
+            <span className="text-destructive">Could not read the variables</span>
           ) : nodes.length > 0 ? (
             'Env groups and ${{…}} references'
           ) : (

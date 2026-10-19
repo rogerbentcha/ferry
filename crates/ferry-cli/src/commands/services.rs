@@ -54,6 +54,7 @@ pub(super) fn create_body(name: &str, service_type: Option<ServiceType>, s: &Set
 /// Map `ferry create` flags to the request body.
 pub fn create_request(a: &CreateArgs) -> CreateService {
     CreateService {
+        environment: a.environment.clone(),
         repo_url: a.repo.clone(),
         branch: a.branch.clone(),
         image: a.image.clone(),
@@ -173,27 +174,46 @@ fn deploy_summary(d: Option<&Deploy>) -> Cell {
     }
 }
 
-pub async fn list(ctx: &Ctx) -> Result<()> {
-    let resp = ctx.client.get::<Vec<ServiceView>>(&["services"], &[]).await?;
+pub async fn list(ctx: &Ctx, environment: Option<&str>) -> Result<()> {
+    let query: Vec<(&str, String)> = environment.map(|e| ("environment", e.to_string())).into_iter().collect();
+    let resp = ctx.client.get::<Vec<ServiceView>>(&["services"], &query).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
     if resp.data.is_empty() {
-        outln!("No services yet. Create one with 'ferry create NAME' or deploy a directory with 'ferry up'.")?;
+        match environment {
+            Some(e) => {
+                outln!("No services in environment '{e}' yet. Create one with 'ferry create NAME --environment {e}'.")?
+            }
+            None => {
+                outln!("No services yet. Create one with 'ferry create NAME' or deploy a directory with 'ferry up'.")?
+            }
+        }
         return Ok(());
     }
-    let mut t = Table::new(&["NAME", "TYPE", "STATE", "INSTANCES", "URL", "LAST DEPLOY"]);
+    // The environment of each, once there is more than production.
+    let environments = resp.data.iter().any(|v| v.service.environment != ferry_core::PRODUCTION);
+    let mut header = vec!["NAME"];
+    if environments {
+        header.push("ENVIRONMENT");
+    }
+    header.extend(["TYPE", "STATE", "INSTANCES", "URL", "LAST DEPLOY"]);
+    let mut t = Table::new(&header);
     for v in &resp.data {
         let instances =
             if v.service.is_long_running() { v.service.desired_instances().to_string() } else { "-".into() };
-        t.row(vec![
-            Cell::new(&v.service.name),
+        let mut row = vec![Cell::new(&v.service.name)];
+        if environments {
+            row.push(Cell::new(v.service.environment.as_str()));
+        }
+        row.extend([
             Cell::new(output::type_short(v.service.service_type)),
             Cell::colored(v.state.as_str(), output::service_state_color(v.state)),
             Cell::new(instances),
             Cell::new(address(v)),
             deploy_summary(v.latest_deploy.as_ref()),
         ]);
+        t.row(row);
     }
     outln!("{}", t.render(output::stdout_color()).trim_end())?;
     Ok(())
@@ -254,6 +274,7 @@ pub async fn show(ctx: &Ctx, name: &str) -> Result<()> {
     let mut pairs: Vec<(&str, Cell)> = vec![
         ("Name", Cell::new(s.name.as_str())),
         ("ID", Cell::new(s.id.as_str())),
+        ("Environment", Cell::new(s.environment.as_str())),
         ("Type", Cell::new(output::type_long(s.service_type))),
         ("State", Cell::colored(v.state.as_str(), output::service_state_color(v.state))),
     ];

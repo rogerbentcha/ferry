@@ -21,7 +21,7 @@ ferry up                      # deploy the current directory → http://my-app.l
 | **Builds** | your Dockerfile, or auto-detected Node / Python / Go / Rust / Ruby / static (no Dockerfile needed) |
 | **Deploys** | zero-downtime blue/green with health checks, deploy history, one-click rollbacks, cancel |
 | **Triggers** | CLI / dashboard / API, a push to a connected GitHub account's repository (auto-deploy, nothing to add to the repository), secret deploy-hook URLs, blueprints |
-| **Networking** | built-in reverse proxy (HTTP/1.1, HTTP/2, websockets), `<service>.<your-domain>` under the domains you connect (Ferry checks their DNS), custom domains, Let's Encrypt HTTPS, private network (`http://api:3000`) |
+| **Networking** | built-in reverse proxy (HTTP/1.1, HTTP/2, websockets), `<service>.<your-domain>` under the domains you connect (Ferry checks their DNS), custom domains, Let's Encrypt HTTPS, private network (`http://api:3000`), environments (staging next to production, each on its own network, at `<service>.staging.<your-domain>`) |
 | **Data** | managed Postgres & Redis, persistent disks, env vars with references (`${{datastore.db.connectionString}}`), env groups |
 | **Ops** | instance scaling, suspend/resume, restart, self-healing reconciler, live build & runtime logs, CPU/memory, one-off jobs |
 | **Guardrails** | memory/CPU limits per service and datastore (server defaults 512 MiB / 1 CPU), pids limit and log rotation on every container, out-of-memory kills reported, free-disk check before deploys |
@@ -358,9 +358,10 @@ the host, ferryd or your databases.
   rollbacks and recreating an existing datastore's container still work.
 
 Not covered: builds (BuildKit has no per-build memory limit), disk space
-used by volumes and containers (no quotas), and network traffic (all apps
-share one private network). See [DESIGN.md](DESIGN.md) §14–15 for the
-details.
+used by volumes and containers (no quotas), and network traffic (the apps
+of an environment share one private network; from Docker 28 the ports
+Ferry publishes stay reachable at their container's address from another
+environment). See [DESIGN.md](DESIGN.md) §14–15 and §23 for the details.
 
 ## How it works
 

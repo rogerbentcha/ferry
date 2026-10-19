@@ -7,6 +7,7 @@ mod db;
 mod deploys;
 mod domains;
 mod env;
+mod environments;
 mod jobs;
 mod logs;
 mod services;
@@ -61,13 +62,14 @@ pub async fn run(cli: Cli, settings: Settings) -> Result<()> {
 
 async fn dispatch(ctx: &Ctx, command: Command) -> Result<()> {
     use crate::cli::{
-        BlueprintCommand, DbCommand, DeployHookCommand, DomainsCommand, EnvCommand, EnvGroupCommand, JobsCommand,
+        BlueprintCommand, DbCommand, DeployHookCommand, DomainsCommand, EnvCommand, EnvGroupCommand,
+        EnvironmentsCommand, JobsCommand,
     };
     match command {
         Command::Login(_) => bail!("internal error: 'login' needs no API client"),
         Command::MarkdownHelp => bail!("internal error: 'markdown-help' needs no API client"),
         Command::Info => auth::info(ctx).await,
-        Command::Services => services::list(ctx).await,
+        Command::Services(a) => services::list(ctx, a.environment.as_deref()).await,
         Command::Create(a) => services::create(ctx, a).await,
         Command::Show(a) => services::show(ctx, &a.name).await,
         Command::Update(a) => services::update(ctx, a).await,
@@ -109,10 +111,16 @@ async fn dispatch(ctx: &Ctx, command: Command) -> Result<()> {
         },
         Command::Db(c) => match c {
             DbCommand::Create(a) => db::create(ctx, a).await,
-            DbCommand::Ls => db::list(ctx).await,
+            DbCommand::Ls(a) => db::list(ctx, a.environment.as_deref()).await,
             DbCommand::Show(a) => db::show(ctx, &a.name).await,
             DbCommand::Update(a) => db::update(ctx, a).await,
             DbCommand::Rm(a) => db::remove(ctx, &a.name, a.yes, a.force).await,
+        },
+        Command::Environments(a) => match a.command.unwrap_or(EnvironmentsCommand::Ls) {
+            EnvironmentsCommand::Ls => environments::list(ctx).await,
+            EnvironmentsCommand::Create(a) => environments::create(ctx, &a.name).await,
+            EnvironmentsCommand::Show(a) => environments::show(ctx, &a.name).await,
+            EnvironmentsCommand::Rm(a) => environments::remove(ctx, &a.name, a.yes).await,
         },
         Command::EnvGroup(c) => match c {
             EnvGroupCommand::Create(a) => env::group_create(ctx, &a.name, a.vars).await,

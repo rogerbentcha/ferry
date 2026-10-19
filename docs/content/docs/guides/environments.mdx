@@ -1,0 +1,129 @@
+---
+title: Environments
+description: Run staging next to production on one server, each environment on its own private network.
+---
+
+An <Term id="environment" /> is a group of services and datastores with its own <Term id="private-network" />. Each server has the environment `production`. Create `staging` next to it, and test each change there before it goes to production. A service of staging cannot reach production by name.
+
+```bash title="Terminal"
+ferry environments create staging
+```
+
+## Create an environment
+
+<Tabs items={['CLI', 'Dashboard', 'API']} groupId="interface" persist>
+<Tab value="CLI">
+
+```bash title="Terminal"
+ferry environments create staging
+```
+
+```text title="Output" noCopy
+Created environment 'staging' (env-3f9a0c1b2d4e5f60718a)
+Its web services are served at https://<service>.staging.example.com
+
+Create this DNS record where the DNS of example.com is managed, for *.staging.example.com:
+TYPE   NAME        VALUE
+A      *.staging   203.0.113.10
+```
+
+`ferry environments` lists the environments. `ferry environments show staging` shows its services, its datastores and its DNS record.
+
+</Tab>
+<Tab value="Dashboard">
+
+Click **Environments** in the icon rail. Click **New environment**. Type the name. The dialog then shows the DNS record that the services of the environment need.
+
+</Tab>
+<Tab value="API">
+
+```bash title="Terminal"
+curl -X POST http://127.0.0.1:7878/api/v1/environments \
+  -H "Authorization: Bearer $FERRY_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name": "staging"}'
+```
+
+The answer has the field `dns`: the records to create. See the [API reference](/docs/reference/api/environments).
+
+</Tab>
+</Tabs>
+
+A name has 1 to 40 lowercase letters, digits or `-`, and starts with a letter. You cannot change the name later.
+
+## Add services and datastores
+
+Give `--environment` when you create a service or a datastore:
+
+```bash title="Terminal"
+ferry db create shop-db --environment staging
+ferry create shop --image nginx:alpine --environment staging
+ferry up shop --environment staging
+```
+
+Without `--environment`, Ferry puts the service or the datastore in `production`. You cannot move it to another environment later. In the dashboard, the form of a new service and the dialog of a new datastore have the field **Environment**.
+
+A name exists one time on a server. If production has `api`, staging cannot have a second `api`. Give the services of staging other names. A service of production cannot have the name of another environment, and an environment cannot have the name of a service of production: the DNS record of the environment hides the URL of that service. For the same reason, an environment cannot have the first part of the address of the dashboard, for example `ferry` for `ferry.example.com`.
+
+To see the services of one environment, run `ferry services --environment staging`. `ferry db ls --environment staging` does the same for datastores.
+
+## The URL of a service
+
+A <Term id="web-service" /> or a <Term id="static-site" /> outside production gets the name of its environment in its URL:
+
+| Environment | Service | URL |
+|---|---|---|
+| `production` | `web` | `https://web.example.com` |
+| `staging` | `shop` | `https://shop.staging.example.com` |
+
+Production keeps the URLs that it had before environments. Custom domains work in each environment.
+
+Each environment needs one DNS record for each domain of the server: `*.staging.example.com`, with the address of the server. `ferry environments create` and the dashboard show the record. A local domain needs no record: `http://shop.staging.localhost:8080` works immediately.
+
+## What a service reaches
+
+Each container joins the network of its environment only. A <Term id="job" /> run joins the network of its service.
+
+| From a container of staging, to | Result |
+|---|---|
+| A service or a datastore of staging, by name | It connects. |
+| A service or a datastore of production, by name | The name does not resolve. |
+| A container of production, by its IP address | No connection, except to a port that Ferry publishes (see below). |
+| The public URL of a production service | It connects, through the proxy. |
+
+A <Term id="reference" /> finds the datastores and the services of the same environment only. If a variable of a staging service refers to a datastore of production, the deploy fails before the build:
+
+```text title="Deploy log" noCopy
+cannot resolve environment variables: env var DATABASE_URL: datastore 'db' is not in environment 'staging' (it is in 'production'): a service only reaches the datastores and services of its own environment
+```
+
+`ferry env set` gives a warning for this variable before it saves.
+
+Env groups belong to the whole server, and you can link one group to services of different environments. A reference in a group finds the datastores and the services of the environment of each service. A name exists one time on a server, so a reference to a datastore works only for the services of the environment of that datastore.
+
+Blueprints apply to `production` only. See the [blueprint reference](/docs/reference/blueprint).
+
+## Delete an environment
+
+```bash title="Terminal"
+ferry environments rm staging
+```
+
+Ferry refuses while the environment has services or datastores. Delete them first:
+
+```text title="Terminal" noCopy
+error: environment 'staging' still holds service 'shop', datastore 'shop-db': delete them first (conflict)
+```
+
+Ferry then removes the network of the environment. You cannot delete `production`.
+
+<Accordions>
+  <Accordion title="A port that Ferry publishes">
+    Ferry publishes the port of each datastore and of each service that listens on `127.0.0.1` of the server. The proxy and the health checks use these ports. From Docker Engine 28, a container on another network can connect to a published port at the IP address of its container. Thus a container of staging that knows the IP address of the production datastore, and its password, can connect to it. The names stay isolated. To close this gap, add rules to the `DOCKER-USER` chain of the firewall of the server. See [Security](/docs/architecture/security).
+  </Accordion>
+  <Accordion title="After an upgrade from an older Ferry">
+    All the services and datastores go to `production`. They keep their network, their Docker names and their URLs. No container restarts.
+  </Accordion>
+  <Accordion title="Two servers instead of two environments">
+    A second `ferryd` with its own name prefix also gives a staging setup, with its own account and its own data directory. See [Multiple servers](/docs/guides/multiple-servers).
+  </Accordion>
+</Accordions>
