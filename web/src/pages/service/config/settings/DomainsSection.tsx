@@ -97,10 +97,10 @@ export function DomainsSection({ service }: { service: ServiceView }) {
           {info.data?.tls_enabled ? '; its certificate is issued automatically.' : '.'} To serve every service under
           a domain, connect it under{' '}
           <Link
-            to="/server?section=domains"
+            to="/domains"
             className="rounded-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
           >
-            Server → Domains
+            Domains
           </Link>
           .
         </>

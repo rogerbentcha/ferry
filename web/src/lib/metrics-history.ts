@@ -1,5 +1,5 @@
 /**
- * The rows the history charts of Server → Monitoring draw, from `GET /api/v1/server/metrics/history`:
+ * The rows the history charts of the Monitoring page draw, from `GET /api/v1/server/metrics/history`:
  * one row per step, with a break where ferryd read nothing (it was stopped), and the values' units.
  */
 import type {

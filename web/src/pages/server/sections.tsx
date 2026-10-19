@@ -27,11 +27,11 @@ function useOrigin(): string {
   return typeof window === 'undefined' ? '' : window.location.origin
 }
 
-/** Link to Server → Account, where API tokens are created. */
+/** Link to the Account page, where API tokens are created. */
 function AccountLink({ children }: { children: React.ReactNode }) {
   return (
     <Link
-      to="/server?section=account"
+      to="/account"
       className="rounded-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
     >
       {children}
@@ -126,7 +126,7 @@ function ServerInfoCard({ info }: { info: ServerInfo }) {
             <span className="font-mono text-[12.5px]">&lt;name&gt;.{defaultDomain(info)}</span>. Connect a domain of
             yours under{' '}
             <Link
-              to="/server?section=domains"
+              to="/domains"
               className="rounded-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
             >
               Domains

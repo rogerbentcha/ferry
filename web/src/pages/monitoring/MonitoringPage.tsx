@@ -5,7 +5,7 @@ import { AlertTriangle, Boxes, Database } from 'lucide-react'
 import { Callout, EmptyState, ErrorState } from '@/components/patterns/EmptyState'
 import { MetricCard, UsageBar } from '@/components/patterns/MetricCard'
 import { MonoLabel } from '@/components/patterns/MonoLabel'
-import { PageHeader, PageSection } from '@/components/patterns/Page'
+import { PageContainer, PageHeader, PageSection } from '@/components/patterns/Page'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { errorMessage } from '@/lib/api/client'
 import { useServerMetrics } from '@/lib/api/queries'
@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils'
 import { datastorePath } from '../datastores/lib'
 import { servicePath } from '../service/context'
 
-// The charts and their library load when the section is opened.
+// The charts and their library load when the page is opened.
 const MetricsHistorySection = React.lazy(() =>
   import('./MetricsHistory').then((m) => ({ default: m.MetricsHistorySection })),
 )
@@ -212,7 +212,7 @@ export function ContainersTable({ containers }: { containers: ContainerMetrics[]
   )
 }
 
-/** The whole section for one answer of the API. */
+/** What the page shows for one answer of the API. */
 export function MonitoringView({ metrics }: { metrics: ServerMetrics }) {
   return (
     <>
@@ -269,14 +269,14 @@ function MonitoringSkeleton() {
 }
 
 /**
- * Server → Monitoring: how busy the machine is right now and which service
- * or datastore uses it (`GET /api/v1/server/metrics`, asked every 5 s while
- * the tab is visible), then the charts of the last hours.
+ * `/monitoring`: how busy the machine is right now and which service or
+ * datastore uses it (`GET /api/v1/server/metrics`, asked every 5 s while the
+ * tab is visible), then the charts of the last hours.
  */
-export function MonitoringSection() {
+export function MonitoringPage() {
   const { data, error, isLoading, refetch, isRefetching } = useServerMetrics()
   return (
-    <>
+    <PageContainer size="narrow">
       <PageHeader
         title="Monitoring"
         description="How busy this server is right now and over the last 24 hours, which service or datastore uses it, and how your services answer their requests."
@@ -305,6 +305,6 @@ export function MonitoringSection() {
           <MetricsHistorySection />
         </React.Suspense>
       </ChartsBoundary>
-    </>
+    </PageContainer>
   )
 }
