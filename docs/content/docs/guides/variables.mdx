@@ -136,7 +136,7 @@ In the dashboard, click **Env groups** in the icon rail.
 
 ## Connect to a datastore or a service
 
-A value can contain a <Term id="reference" />. Ferry replaces it with the real value each time a container starts. Thus your app always gets the current address and password. A reference finds a datastore or a service of the <Term id="environment" /> of the service only. The references of an env group follow the environment of each service that uses the group.
+A value can contain a <Term id="reference" />. Ferry replaces it with the real value each time a container starts. Thus your app always gets the current address and password. A reference finds a datastore or a service of the <Term id="environment" /> of the service only. When two environments have a `db`, the reference of each service finds the `db` of its environment. The references of an env group follow the environment of each service that uses the group.
 
 ```bash title="Terminal"
 ferry env set api 'DATABASE_URL=${{datastore.app-db.connectionString}}'

@@ -166,7 +166,7 @@ Containers talk to each other on a private Docker network. The outside reaches t
 
 ### The private network
 
-Each <Term id="environment" /> has one <Term id="bridge-network" />. The network of `production` has the name prefix of the server as its name: `ferry` by default. The network of another environment is `<prefix>-env-<name>`, for example `ferry-env-staging`. Each service container, datastore and job run joins the network of its environment only. On this network, the <Term id="alias">DNS alias</Term> of a container is its name. Docker does not connect two bridge networks, so a name of one environment does not resolve in another.
+Each <Term id="environment" /> has one <Term id="bridge-network" />. The network of `production` has the name prefix of the server as its name: `ferry` by default. The network of another environment is `<prefix>-env-<name>`, for example `ferry-env-staging`. Each service container, datastore and job run joins the network of its environment only. On this network, the <Term id="alias">DNS alias</Term> of a container is its name. Docker does not connect two bridge networks, so a name of one environment does not resolve in another. Thus each environment can use the same names: `http://api:8000` in staging is the `api` of staging.
 
 | To reach | From a container, use |
 |---|---|

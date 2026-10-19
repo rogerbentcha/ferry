@@ -9,7 +9,7 @@ This page gives each main name of Ferry in a few sentences, with a link to the g
 
 ## Services
 
-A <Term id="service" /> is one app that Ferry builds and runs as one or more Docker <Term id="container">containers</Term>. Each service has a unique name, a type, a <Term id="source" />, settings and <Term id="env-var">environment variables</Term>. The source is a git repository, a Docker image or a folder that you upload. The type tells who can reach the service.
+A <Term id="service" /> is one app that Ferry builds and runs as one or more Docker <Term id="container">containers</Term>. Each service has a name that is unique in its <Term id="environment" />, a type, a <Term id="source" />, settings and <Term id="env-var">environment variables</Term>. The source is a git repository, a Docker image or a folder that you upload. The type tells who can reach the service.
 
 <Diagram
   nodes={[
@@ -84,7 +84,7 @@ See [Domains and HTTPS](/docs/guides/domains).
 
 ## Environments
 
-Each service and each datastore belongs to one environment. Each server has `production`. Create `staging` next to it to test a change before it goes live. The containers of staging cannot reach production by name. Outside production, the URL of a service has the name of its environment: `shop.staging.example.com`.
+Each service and each datastore belongs to one environment. Each server has `production`. Create `staging` next to it to test a change before it goes live. Staging can use the same names as production. The containers of staging cannot reach production by name. Outside production, the URL of a service has the name of its environment: `shop.staging.example.com`.
 
 See [Environments](/docs/guides/environments).
 

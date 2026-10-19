@@ -49,7 +49,7 @@ export const terms = {
   },
   environment: {
     term: 'environment',
-    definition: 'A group of services and datastores with its own private network, for example `production` or `staging`. Names do not resolve from one environment to another.',
+    definition: 'A group of services and datastores with its own private network, for example `production` or `staging`. Each environment can use the same names. Names do not resolve from one environment to another.',
     see: ['private-network', 'staging'],
   },
   'ssh-tunnel': {

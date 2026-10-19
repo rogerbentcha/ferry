@@ -320,7 +320,7 @@ Most `render.yaml` files apply with no change. A key that Ferry does not support
 | `ipAllowList`, `diskSizeGB`, `maxmemoryPolicy` on a datastore | Ignored, with a warning |
 | `previewValue` and other Render keys of `envVars` | Ignored, with a warning |
 | `image.creds` | Ignored, with a warning. Docker must pull the image with no credentials. |
-| Projects and environments | Ferry has no projects. A blueprint applies to the [environment](/docs/guides/environments) `production` only. If a name of the blueprint belongs to a service or a datastore of another environment, Ferry refuses the blueprint. |
+| Projects and environments | Ferry has no projects. A blueprint applies to the [environment](/docs/guides/environments) `production` only. Services and datastores of another environment with the same names do not change. |
 | An entry with no `repo` | Render uses the repository of the blueprint. Ferry has no default: set `repo`, or run `ferry up NAME`. |
 | `autoDeployTrigger: checksPass` | A deploy at each commit, with a warning. Ferry does not wait for checks. |
 | A runtime that Ferry cannot build, such as `elixir` | A warning. Ferry finds the runtime from your files: add a `Dockerfile`. |
