@@ -1,9 +1,9 @@
 ---
 title: Environments
-description: Run staging next to production on one server, each environment on its own private network.
+description: Run staging next to production on one server, with the same names, each on its own private network.
 ---
 
-An <Term id="environment" /> is a group of services and datastores with its own <Term id="private-network" />. Each server has the environment `production`. Create `staging` next to it, and test each change there before it goes to production. A service of staging cannot reach production by name.
+An <Term id="environment" /> is a group of services and datastores with its own <Term id="private-network" />. Each server has the environment `production`. Create `staging` next to it, and test each change there before it goes to production. Staging uses the same names and the same settings as production. A service of staging cannot reach production by name.
 
 ```bash title="Terminal"
 ferry environments create staging
@@ -62,9 +62,41 @@ ferry up shop --environment staging
 
 Without `--environment`, Ferry puts the service or the datastore in `production`. You cannot move it to another environment later. In the dashboard, the form of a new service and the dialog of a new datastore have the field **Environment**.
 
-A name exists one time on a server. If production has `api`, staging cannot have a second `api`. Give the services of staging other names. A service of production cannot have the name of another environment, and an environment cannot have the name of a service of production: the DNS record of the environment hides the URL of that service. For the same reason, an environment cannot have the first part of the address of the dashboard, for example `ferry` for `ferry.example.com`.
-
 To see the services of one environment, run `ferry services --environment staging`. `ferry db ls --environment staging` does the same for datastores.
+
+## Use the same names
+
+Each environment can use the names of the other environments. Thus staging can have `web`, `api` and `db`, with the same settings as production. Then the change that you test in staging is the change that goes to production.
+
+```bash title="Terminal"
+ferry create api --image ghcr.io/acme/api:2.4 --environment staging
+ferry env set web --environment staging DATABASE_URL='${{datastore.db.connectionString}}'
+ferry deploy api --environment staging
+```
+
+A name is unique in its environment. If staging has `api`, Ferry refuses a second `api` in staging:
+
+```text title="Terminal" noCopy
+error: name 'api' is already in use in environment 'staging' (conflict)
+```
+
+When a name is in more than one environment, tell Ferry which one you mean:
+
+| Where | How | Without it |
+|---|---|---|
+| CLI | `--environment staging` on each command that takes a service or a datastore name | `production` |
+| API | `?environment=staging` on each route of one service or datastore | `production` |
+| Dashboard | The URL has the name of the environment: `/services/api.staging` | `/services/api` is the service of production |
+
+Thus a script that runs `ferry deploy api` continues to deploy the `api` of production. A service id works in all environments. When a name is only in another environment, the error tells you which one:
+
+```text title="Terminal" noCopy
+error: service 'shop' not found in environment 'production' (environment 'staging' has one): name its environment, e.g. --environment staging in the CLI or ?environment=staging in the API (not_found)
+```
+
+Two services with the same name never share a container, an image, a volume or a URL. Outside production, a Docker name has the name of the environment after the name of the service or datastore. For example, the datastore `db` of staging has the container `ferry-ds-db.staging` and the volume `ferry-ds-db.staging-data`. Production keeps its Docker names.
+
+A service of production cannot have the name of another environment. An environment cannot have the name of a service of production. The DNS record of the environment hides the URL of that service. For the same reason, an environment cannot have the first part of the address of the dashboard, for example `ferry` for `ferry.example.com`.
 
 ## The URL of a service
 
@@ -73,7 +105,7 @@ A <Term id="web-service" /> or a <Term id="static-site" /> outside production ge
 | Environment | Service | URL |
 |---|---|---|
 | `production` | `web` | `https://web.example.com` |
-| `staging` | `shop` | `https://shop.staging.example.com` |
+| `staging` | `web` | `https://web.staging.example.com` |
 
 Production keeps the URLs that it had before environments. Custom domains work in each environment.
 
@@ -85,12 +117,12 @@ Each container joins the network of its environment only. A <Term id="job" /> ru
 
 | From a container of staging, to | Result |
 |---|---|
-| A service or a datastore of staging, by name | It connects. |
+| A service or a datastore of staging, by name | It connects. `http://api:8080` is the `api` of staging. |
 | A service or a datastore of production, by name | The name does not resolve. |
 | A container of production, by its IP address | No connection, except to a port that Ferry publishes (see below). |
 | The public URL of a production service | It connects, through the proxy. |
 
-A <Term id="reference" /> finds the datastores and the services of the same environment only. If a variable of a staging service refers to a datastore of production, the deploy fails before the build:
+A <Term id="reference" /> finds the datastores and the services of the same environment only. When `web` has `DATABASE_URL=${{datastore.db.connectionString}}` in both environments, each `web` gets the `db` of its environment. If a variable of a staging service refers to a datastore that is only in production, the deploy fails before the build:
 
 ```text title="Deploy log" noCopy
 cannot resolve environment variables: env var DATABASE_URL: datastore 'db' is not in environment 'staging' (it is in 'production'): a service only reaches the datastores and services of its own environment
@@ -98,9 +130,9 @@ cannot resolve environment variables: env var DATABASE_URL: datastore 'db' is no
 
 `ferry env set` gives a warning for this variable before it saves.
 
-Env groups belong to the whole server, and you can link one group to services of different environments. A reference in a group finds the datastores and the services of the environment of each service. A name exists one time on a server, so a reference to a datastore works only for the services of the environment of that datastore.
+Env groups belong to the whole server, and you can link one group to services of different environments. A reference in a group finds the datastores and the services of the environment of each service. An env group shows a service of another environment as `api.staging`.
 
-Blueprints apply to `production` only. See the [blueprint reference](/docs/reference/blueprint).
+Blueprints apply to `production` only. A blueprint does not change the services of staging that have the same names. See the [blueprint reference](/docs/reference/blueprint).
 
 ## Delete an environment
 
@@ -108,7 +140,7 @@ Blueprints apply to `production` only. See the [blueprint reference](/docs/refer
 ferry environments rm staging
 ```
 
-Ferry refuses while the environment has services or datastores. Delete them first:
+Ferry refuses while the environment has services or datastores. Delete them first, for example with `ferry delete api --environment staging`:
 
 ```text title="Terminal" noCopy
 error: environment 'staging' still holds service 'shop', datastore 'shop-db': delete them first (conflict)

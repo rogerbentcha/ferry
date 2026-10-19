@@ -32,6 +32,44 @@ pub struct Ctx {
     pub client: Client,
     /// `--json`: print raw API JSON.
     pub json: bool,
+    /// `--environment` of a command that names a service or datastore: the
+    /// environment its name is looked up in (`None` = production). Names are
+    /// unique in an environment only.
+    pub environment: Option<String>,
+}
+
+impl Ctx {
+    /// This context for a command run with `--environment` (`None`, or
+    /// blank: production).
+    fn scoped(&self, environment: Option<&str>) -> Ctx {
+        let environment = environment.map(str::trim).filter(|e| !e.is_empty()).map(str::to_string);
+        Ctx { client: self.client.clone(), json: self.json, environment }
+    }
+
+    /// `?environment=` for the routes of the service or datastore the
+    /// command names (empty without `--environment`: the server reads
+    /// production).
+    pub fn scope(&self) -> Vec<(&'static str, String)> {
+        self.environment.iter().map(|e| ("environment", e.clone())).collect()
+    }
+
+    /// ` --environment ENV` as given, to append to a suggested command.
+    pub fn flag(&self) -> String {
+        self.environment.as_deref().map(|e| format!(" --environment {e}")).unwrap_or_default()
+    }
+
+    /// [`Ctx::scope`] followed by `query`.
+    pub fn scope_and(&self, query: &[(&'static str, String)]) -> Vec<(&'static str, String)> {
+        let mut all = self.scope();
+        all.extend_from_slice(query);
+        all
+    }
+}
+
+/// ` --environment staging` for a resource of `environment`, to append to a
+/// suggested command; nothing for production.
+pub fn environment_flag(environment: &str) -> String {
+    if environment == ferry_core::PRODUCTION { String::new() } else { format!(" --environment {environment}") }
 }
 
 /// Ends the process with this exit code without printing an error (the
@@ -54,7 +92,7 @@ pub async fn run(cli: Cli, settings: Settings) -> Result<()> {
         Command::Login(args) => auth::login(&settings, &args, json).await,
         command => {
             let token = settings.require_token()?;
-            let ctx = Ctx { client: Client::new(&settings.server, token)?, json };
+            let ctx = Ctx { client: Client::new(&settings.server, token)?, json, environment: None };
             dispatch(&ctx, command).await
         }
     }
@@ -70,51 +108,78 @@ async fn dispatch(ctx: &Ctx, command: Command) -> Result<()> {
         Command::MarkdownHelp => bail!("internal error: 'markdown-help' needs no API client"),
         Command::Info => auth::info(ctx).await,
         Command::Services(a) => services::list(ctx, a.environment.as_deref()).await,
-        Command::Create(a) => services::create(ctx, a).await,
-        Command::Show(a) => services::show(ctx, &a.name).await,
-        Command::Update(a) => services::update(ctx, a).await,
-        Command::Delete(a) => services::delete(ctx, &a.name, a.yes, a.force).await,
-        Command::Deploy(a) => deploys::deploy(ctx, a).await,
-        Command::Up(a) => up::up(ctx, a).await,
-        Command::Deploys(a) => deploys::list(ctx, &a.name, a.limit).await,
+        Command::Create(a) => services::create(&ctx.scoped(a.environment.as_deref()), a).await,
+        Command::Show(a) => services::show(&ctx.scoped(a.scope.environment.as_deref()), &a.name).await,
+        Command::Update(a) => services::update(&ctx.scoped(a.scope.environment.as_deref()), a).await,
+        Command::Delete(a) => {
+            services::delete(&ctx.scoped(a.scope.environment.as_deref()), &a.name, a.yes, a.force).await
+        }
+        Command::Deploy(a) => deploys::deploy(&ctx.scoped(a.scope.environment.as_deref()), a).await,
+        Command::Up(a) => up::up(&ctx.scoped(a.environment.as_deref()), a).await,
+        Command::Deploys(a) => deploys::list(&ctx.scoped(a.scope.environment.as_deref()), &a.name, a.limit).await,
         Command::Cancel(a) => deploys::cancel(ctx, &a.deploy_id).await,
-        Command::Rollback(a) => deploys::rollback(ctx, &a.name, &a.deploy_id, a.follow).await,
-        Command::Restart(a) => deploys::restart(ctx, &a.name, a.follow).await,
-        Command::Suspend(a) => services::suspend(ctx, &a.name, true).await,
-        Command::Resume(a) => services::suspend(ctx, &a.name, false).await,
-        Command::Scale(a) => services::scale(ctx, &a.name, a.instances).await,
-        Command::Status(a) => services::status(ctx, &a.name).await,
-        Command::Logs(a) => logs::logs(ctx, a).await,
+        Command::Rollback(a) => {
+            deploys::rollback(&ctx.scoped(a.scope.environment.as_deref()), &a.name, &a.deploy_id, a.follow).await
+        }
+        Command::Restart(a) => deploys::restart(&ctx.scoped(a.scope.environment.as_deref()), &a.name, a.follow).await,
+        Command::Suspend(a) => services::suspend(&ctx.scoped(a.scope.environment.as_deref()), &a.name, true).await,
+        Command::Resume(a) => services::suspend(&ctx.scoped(a.scope.environment.as_deref()), &a.name, false).await,
+        Command::Scale(a) => services::scale(&ctx.scoped(a.scope.environment.as_deref()), &a.name, a.instances).await,
+        Command::Status(a) => services::status(&ctx.scoped(a.scope.environment.as_deref()), &a.name).await,
+        Command::Logs(a) => logs::logs(&ctx.scoped(a.scope.environment.as_deref()), a).await,
         Command::Env(a) => match a.command {
-            Some(EnvCommand::Ls(n)) => env::list(ctx, &n.name, n.effective).await,
-            Some(EnvCommand::Set(s)) => env::set(ctx, &s.name, s.vars, !s.no_restart, s.follow).await,
-            Some(EnvCommand::Unset(u)) => env::unset(ctx, &u.name, u.keys, !u.no_restart, u.follow).await,
-            None => env::list(ctx, a.name.as_deref().unwrap_or_default(), a.effective).await,
+            Some(EnvCommand::Ls(n)) => {
+                env::list(&ctx.scoped(n.scope.environment.as_deref()), &n.name, n.effective).await
+            }
+            Some(EnvCommand::Set(s)) => {
+                let ctx = ctx.scoped(s.scope.environment.as_deref());
+                env::set(&ctx, &s.name, s.vars, !s.no_restart, s.follow).await
+            }
+            Some(EnvCommand::Unset(u)) => {
+                let ctx = ctx.scoped(u.scope.environment.as_deref());
+                env::unset(&ctx, &u.name, u.keys, !u.no_restart, u.follow).await
+            }
+            None => {
+                let ctx = ctx.scoped(a.scope.environment.as_deref());
+                env::list(&ctx, a.name.as_deref().unwrap_or_default(), a.effective).await
+            }
         },
+        Command::Domains(a) if a.name.is_none() && a.scope.environment.is_some() => {
+            bail!("--environment needs a service name: ferry domains NAME --environment ENV lists its custom domains")
+        }
         Command::Domains(a) => match (a.command, a.name) {
             (Some(DomainsCommand::Connect(d)), _) => domains::connect(ctx, &d.domain).await,
             (Some(DomainsCommand::Verify(d)), _) => domains::verify(ctx, &d.domain).await,
             (Some(DomainsCommand::Default(d)), _) => domains::set_default(ctx, &d.domain).await,
             (Some(DomainsCommand::Disconnect(d)), _) => domains::disconnect(ctx, &d.domain, d.yes).await,
-            (Some(DomainsCommand::Ls(n)), _) => services::domains_list(ctx, &n.name).await,
-            (Some(DomainsCommand::Add(d)), _) => services::domains_add(ctx, &d.name, &d.domain).await,
-            (Some(DomainsCommand::Rm(d)), _) => services::domains_rm(ctx, &d.name, &d.domain).await,
-            (None, Some(name)) => services::domains_list(ctx, &name).await,
+            (Some(DomainsCommand::Ls(n)), _) => {
+                services::domains_list(&ctx.scoped(n.scope.environment.as_deref()), &n.name).await
+            }
+            (Some(DomainsCommand::Add(d)), _) => {
+                services::domains_add(&ctx.scoped(d.scope.environment.as_deref()), &d.name, &d.domain).await
+            }
+            (Some(DomainsCommand::Rm(d)), _) => {
+                services::domains_rm(&ctx.scoped(d.scope.environment.as_deref()), &d.name, &d.domain).await
+            }
+            (None, Some(name)) => services::domains_list(&ctx.scoped(a.scope.environment.as_deref()), &name).await,
             (None, None) => domains::list(ctx).await,
         },
         Command::Certificates => domains::certificates(ctx).await,
-        Command::Run(a) => jobs::run(ctx, &a.name, &a.command, a.follow).await,
+        Command::Run(a) => jobs::run(&ctx.scoped(a.scope.environment.as_deref()), &a.name, &a.command, a.follow).await,
         Command::Jobs(a) => match a.command {
-            Some(JobsCommand::Ls(l)) => jobs::list(ctx, &l.name, l.limit).await,
+            Some(JobsCommand::Ls(l)) => jobs::list(&ctx.scoped(l.scope.environment.as_deref()), &l.name, l.limit).await,
             Some(JobsCommand::Cancel(c)) => jobs::cancel(ctx, &c.job_id).await,
-            None => jobs::list(ctx, a.name.as_deref().unwrap_or_default(), a.limit).await,
+            None => {
+                let ctx = ctx.scoped(a.scope.environment.as_deref());
+                jobs::list(&ctx, a.name.as_deref().unwrap_or_default(), a.limit).await
+            }
         },
         Command::Db(c) => match c {
-            DbCommand::Create(a) => db::create(ctx, a).await,
+            DbCommand::Create(a) => db::create(&ctx.scoped(a.environment.as_deref()), a).await,
             DbCommand::Ls(a) => db::list(ctx, a.environment.as_deref()).await,
-            DbCommand::Show(a) => db::show(ctx, &a.name).await,
-            DbCommand::Update(a) => db::update(ctx, a).await,
-            DbCommand::Rm(a) => db::remove(ctx, &a.name, a.yes, a.force).await,
+            DbCommand::Show(a) => db::show(&ctx.scoped(a.scope.environment.as_deref()), &a.name).await,
+            DbCommand::Update(a) => db::update(&ctx.scoped(a.scope.environment.as_deref()), a).await,
+            DbCommand::Rm(a) => db::remove(&ctx.scoped(a.scope.environment.as_deref()), &a.name, a.yes, a.force).await,
         },
         Command::Environments(a) => match a.command.unwrap_or(EnvironmentsCommand::Ls) {
             EnvironmentsCommand::Ls => environments::list(ctx).await,
@@ -129,14 +194,22 @@ async fn dispatch(ctx: &Ctx, command: Command) -> Result<()> {
             EnvGroupCommand::Set(a) => env::group_set(ctx, &a.name, a.vars, !a.no_restart).await,
             EnvGroupCommand::Unset(a) => env::group_unset(ctx, &a.name, a.keys, !a.no_restart).await,
             EnvGroupCommand::Rm(a) => env::group_remove(ctx, &a.name, a.yes, a.force, a.restart).await,
-            EnvGroupCommand::Link(a) => env::group_link(ctx, &a.service, &a.group).await,
-            EnvGroupCommand::Unlink(a) => env::group_unlink(ctx, &a.service, &a.group).await,
+            EnvGroupCommand::Link(a) => {
+                env::group_link(&ctx.scoped(a.scope.environment.as_deref()), &a.service, &a.group).await
+            }
+            EnvGroupCommand::Unlink(a) => {
+                env::group_unlink(&ctx.scoped(a.scope.environment.as_deref()), &a.service, &a.group).await
+            }
         },
         Command::Blueprint(BlueprintCommand::Apply(a)) => blueprint::apply(ctx, a).await,
-        Command::Open(a) => services::open(ctx, &a.name).await,
+        Command::Open(a) => services::open(&ctx.scoped(a.scope.environment.as_deref()), &a.name).await,
         Command::DeployHook(c) => match c {
-            DeployHookCommand::Show(a) => services::deploy_hook_show(ctx, &a.name).await,
-            DeployHookCommand::Rotate(a) => services::deploy_hook_rotate(ctx, &a.name, a.yes).await,
+            DeployHookCommand::Show(a) => {
+                services::deploy_hook_show(&ctx.scoped(a.scope.environment.as_deref()), &a.name).await
+            }
+            DeployHookCommand::Rotate(a) => {
+                services::deploy_hook_rotate(&ctx.scoped(a.scope.environment.as_deref()), &a.name, a.yes).await
+            }
         },
     }
 }

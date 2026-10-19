@@ -1,5 +1,12 @@
 //! Naming conventions for Docker resources. Every crate that creates or looks
 //! up Docker objects MUST go through [`Naming`] so they agree.
+//!
+//! Services and datastores are named by their qualified name
+//! ([`crate::Service::qualified_name`], [`crate::Datastore::qualified_name`]):
+//! `api` in `production`, `api.staging` elsewhere. A name is unique in its
+//! environment only, so the same `api` in two environments gets two images,
+//! two sets of containers, two volumes; production keeps the names of a
+//! server set up before environments.
 
 use std::collections::BTreeMap;
 
@@ -57,7 +64,8 @@ impl Naming {
         }
     }
 
-    /// Repository part of built images: `ferry/web`.
+    /// Repository part of built images: `ferry/web`, `ferry/web.staging`
+    /// (`service_name` is the service's qualified name, as below).
     pub fn image_repo(&self, service_name: &str) -> String {
         format!("{}/{}", self.prefix, service_name)
     }
@@ -67,7 +75,8 @@ impl Naming {
         format!("{}:{}", self.image_repo(service_name), deploy_id)
     }
 
-    /// Container name for one instance of a deploy: `ferry-web-1a2b3c4d-9f8e7d`.
+    /// Container name for one instance of a deploy: `ferry-web-1a2b3c4d-9f8e7d`,
+    /// `ferry-web.staging-1a2b3c4d-9f8e7d`.
     /// `unique` should be random-ish (e.g. `ids::random_secret(6)`).
     pub fn service_container(&self, service_name: &str, deploy_id: &str, unique: &str) -> String {
         format!("{}-{}-{}-{}", self.prefix, service_name, ids::short(deploy_id), unique)
@@ -78,12 +87,13 @@ impl Naming {
         format!("{}-job-{}-{}", self.prefix, service_name, ids::short(job_id))
     }
 
-    /// Container name for a datastore: `ferry-ds-db`.
+    /// Container name for a datastore: `ferry-ds-db`, `ferry-ds-db.staging`
+    /// (`datastore_name` is its qualified name, as below).
     pub fn datastore_container(&self, datastore_name: &str) -> String {
         format!("{}-ds-{}", self.prefix, datastore_name)
     }
 
-    /// Data volume of a datastore: `ferry-ds-db-data`.
+    /// Data volume of a datastore: `ferry-ds-db-data`, `ferry-ds-db.staging-data`.
     pub fn datastore_volume(&self, datastore_name: &str) -> String {
         format!("{}-ds-{}-data", self.prefix, datastore_name)
     }
@@ -139,5 +149,41 @@ mod tests {
         assert_eq!(n.service_labels("srv-1", "dep-1")[LABEL_INSTANCE], "ferry");
         assert_eq!(n.environment_network("production"), "ferry");
         assert_eq!(n.environment_network("staging"), "ferry-env-staging");
+    }
+
+    /// The same name in two environments, and names that a plain `-` join
+    /// would mix up (`db` of `qa-1` and `1-db` of `qa`, `db` of `staging`
+    /// and `staging-db` of production), never share a Docker name.
+    #[test]
+    fn names_never_clash_across_environments() {
+        use crate::models::qualified_name;
+        let n = Naming::new("ferry");
+        let pairs = [
+            ("production", "db"),
+            ("staging", "db"),
+            ("production", "staging-db"),
+            ("production", "db-staging"),
+            ("qa-1", "db"),
+            ("qa", "1-db"),
+            ("qa", "db"),
+        ];
+        let deploy = "dep-0123456789abcdef0123";
+        let mut seen = std::collections::HashSet::new();
+        for (environment, name) in pairs {
+            let q = qualified_name(name, environment);
+            for docker_name in [
+                n.image_repo(&q),
+                n.service_container(&q, deploy, "xyz"),
+                n.job_container(&q, deploy),
+                n.datastore_container(&q),
+                n.datastore_volume(&q),
+            ] {
+                assert!(seen.insert(docker_name.clone()), "{docker_name} ({name} of {environment}) is taken twice");
+            }
+        }
+        // Production keeps the names of a server set up before environments.
+        assert_eq!(n.datastore_container(&qualified_name("db", "production")), "ferry-ds-db");
+        assert_eq!(n.datastore_volume(&qualified_name("db", "staging")), "ferry-ds-db.staging-data");
+        assert_eq!(n.image_tag(&qualified_name("api", "staging"), deploy), format!("ferry/api.staging:{deploy}"));
     }
 }

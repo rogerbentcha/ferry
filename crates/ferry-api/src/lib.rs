@@ -36,6 +36,7 @@ mod error;
 pub mod events;
 mod extract;
 mod locks;
+mod lookup;
 pub mod openapi;
 mod ops;
 pub mod prometheus;

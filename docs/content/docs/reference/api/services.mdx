@@ -82,7 +82,8 @@ _openapi:
       - content: 'Creates the service in its `environment` (omitted: `production`) with
           its own variables and env group links, then queues a first deploy
           (trigger `create`) when it has a repository or an image, unless
-          `deploy` is `false`. Services and datastores share one namespace of
+          `deploy` is `false`. A name is unique in its environment, which
+          services and datastores share: another environment may use the same
           names. Outside `production` a web service answers at
           `<service>.<environment>.<domain>`, and its variables reference the
           datastores and services of its environment only. `memory_limit_mb`

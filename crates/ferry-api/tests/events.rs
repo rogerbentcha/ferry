@@ -203,7 +203,7 @@ async fn environments_are_reported_before_what_they_hold() {
     );
     let shop = app.create_service(json!({"name": "shop", "environment": "staging"})).await;
     feed.until("service", &id(&shop), "created").await;
-    assert_eq!(app.delete("/api/v1/services/shop").await.status, StatusCode::NO_CONTENT);
+    assert_eq!(app.delete("/api/v1/services/shop?environment=staging").await.status, StatusCode::NO_CONTENT);
     assert_eq!(app.delete("/api/v1/environments/staging").await.status, StatusCode::NO_CONTENT);
     feed.until("environment", &id(&staging), "deleted").await;
 }

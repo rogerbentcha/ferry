@@ -121,8 +121,9 @@ async fn services_and_datastores_are_created_in_an_environment() {
     let r = app.post("/api/v1/datastores", json!({ "name": "lost-db", "kind": "redis", "environment": "qa" })).await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
 
-    // Names are still unique per server.
-    let r = app.post("/api/v1/services", json!({ "name": "shop" })).await;
+    // A name is unique in its environment (another one may use it: see
+    // `same_names.rs`).
+    let r = app.post("/api/v1/services", json!({ "name": "shop", "environment": "staging" })).await;
     assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
 
     // Listings filter by environment.
@@ -139,7 +140,7 @@ async fn services_and_datastores_are_created_in_an_environment() {
     assert_eq!((&view["services"], &view["datastores"]), (&json!(["api", "shop"]), &json!(["shop-db"])));
 
     // The environment can't be changed afterwards.
-    let r = app.patch("/api/v1/services/shop", json!({ "environment": "production" })).await;
+    let r = app.patch("/api/v1/services/shop?environment=staging", json!({ "environment": "production" })).await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
 }
 
@@ -157,8 +158,8 @@ async fn an_environment_is_deleted_once_empty() {
     assert!(r.text().contains("still holds service 'shop', datastore 'shop-db'"), "{}", r.text());
     assert!(app.engine.calls_with("delete_environment").is_empty(), "the network stays");
 
-    assert_eq!(app.delete("/api/v1/services/shop").await.status, StatusCode::NO_CONTENT);
-    assert_eq!(app.delete("/api/v1/datastores/shop-db").await.status, StatusCode::NO_CONTENT);
+    assert_eq!(app.delete("/api/v1/services/shop?environment=staging").await.status, StatusCode::NO_CONTENT);
+    assert_eq!(app.delete("/api/v1/datastores/shop-db?environment=staging").await.status, StatusCode::NO_CONTENT);
     assert_eq!(app.delete("/api/v1/environments/staging").await.status, StatusCode::NO_CONTENT);
     assert_eq!(app.engine.calls_with("delete_environment"), ["delete_environment staging"]);
     assert_eq!(app.get("/api/v1/environments/staging").await.status, StatusCode::NOT_FOUND);
@@ -180,26 +181,12 @@ async fn default_hosts_outside_production_are_claimed() {
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
 }
 
-/// A blueprint applies to production: it never takes over a resource of
-/// another environment.
+/// A blueprint applies to production (another environment's services of
+/// the same names stay as they are: see `same_names.rs`).
 #[tokio::test]
 async fn blueprints_stay_in_production() {
     let app = TestApp::new().await;
     create(&app, "staging").await;
-    app.create_service(json!({ "name": "shop", "environment": "staging" })).await;
-    let yaml = "services:\n  - type: web\n    name: shop\n    image: nginx:alpine\n";
-    let r = app
-        .send(
-            http::Request::post("/api/v1/blueprints/apply?dry_run=true")
-                .header("authorization", format!("Bearer {}", common::TOKEN))
-                .header("content-type", "application/yaml")
-                .body(axum::body::Body::from(yaml))
-                .unwrap(),
-        )
-        .await;
-    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
-    assert!(r.text().contains("environment 'staging'") && r.text().contains("production"), "{}", r.text());
-
     let yaml = "services:\n  - type: web\n    name: site\n    image: nginx:alpine\n";
     let r = app
         .send(

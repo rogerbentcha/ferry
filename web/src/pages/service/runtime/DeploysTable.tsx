@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { qualifiedName } from '@/lib/api/refs'
 import { isDeployActive, type Deploy, type ServiceView } from '@/lib/api/types'
 import {
   dateTime,
@@ -43,7 +44,7 @@ interface DeploysTableProps {
 const COLUMNS = 7
 
 function deployPath(service: ServiceView, d: Deploy) {
-  return servicePath(service.name, `/deploys/${encodeURIComponent(d.id)}`)
+  return servicePath(qualifiedName(service), `/deploys/${encodeURIComponent(d.id)}`)
 }
 
 function RowMenu({

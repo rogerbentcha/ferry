@@ -73,6 +73,8 @@ The name prefix (default `ferry`) is part of each Docker name that a server crea
 | Built images | `<prefix>/<service>:<deploy id>` |
 | Ownership marker volume | `<prefix>-owner` |
 
+Outside production, `<service>` and `<name>` also have the name of the environment: `api.staging`. Thus the same name in two environments gets two sets of Docker names.
+
 Each container also has the <Term id="container-label" /> `ferry.instance=<prefix>`. A server lists and controls only the containers with its own prefix.
 
 Two servers must never share a prefix. The <Term id="reconciler" /> of a server removes the containers under its prefix that it does not know. Each such container is an <Term id="orphan" />. With the same prefix, each server deletes the apps of the other.

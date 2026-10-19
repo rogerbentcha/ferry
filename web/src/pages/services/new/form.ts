@@ -213,7 +213,11 @@ function looksLikeId(s: string): boolean {
   return ID_PREFIXES.some((p) => s.length === p.length + 21 && s.startsWith(`${p}-`) && /^[0-9a-f]+$/.test(s.slice(p.length + 1)))
 }
 
-/** `validate::resource_name`, plus uniqueness against services / datastores we know about. */
+/**
+ * `validate::resource_name`, plus uniqueness against the services / datastores
+ * we know about in the picked environment (a name is unique in its
+ * environment only: `api` is free in staging while production has one).
+ */
 export function validateName(name: string, taken: { services: string[]; datastores: string[] } = { services: [], datastores: [] }): string | null {
   const n = name.trim()
   if (!n) return 'Enter a name.'
@@ -223,8 +227,10 @@ export function validateName(name: string, taken: { services: string[]; datastor
   if (n.endsWith('-')) return "Don't end the name with '-'."
   if (RESERVED_NAMES.includes(n)) return `“${n}” is reserved.`
   if (looksLikeId(n)) return 'This looks like a resource id; choose another name.'
-  if (taken.services.includes(n)) return `A service named “${n}” already exists.`
-  if (taken.datastores.includes(n)) return `A datastore is already named “${n}” (services and datastores share names).`
+  if (taken.services.includes(n)) return `A service named “${n}” already exists in this environment.`
+  if (taken.datastores.includes(n)) {
+    return `A datastore is already named “${n}” in this environment (services and datastores share names).`
+  }
   return null
 }
 

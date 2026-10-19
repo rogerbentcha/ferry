@@ -811,6 +811,88 @@ async fn environments_are_cut_off_from_each_other() {
     tokio::time::timeout(Duration::from_secs(40), engine.stopped()).await.expect("the second engine stops");
 }
 
+/// The same names in every environment (DESIGN.md §23): `api` and `db` in
+/// production and in staging run side by side, each with its own image,
+/// containers, volume and route, and a container of each environment
+/// reaches its own `api` and `db` by name. Production keeps its names.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_same_names_run_in_two_environments() {
+    require_e2e!();
+    let h = harness(|_| {}).await;
+    let staging = Environment::new("staging");
+    h.store.create_environment(&staging).await.unwrap();
+    h.engine.create_environment("staging").await.unwrap();
+
+    let db = Datastore::new("db", DatastoreKind::Redis);
+    let staging_db = Datastore { environment: "staging".into(), ..Datastore::new("db", DatastoreKind::Redis) };
+    for ds in [&db, &staging_db] {
+        h.store.create_datastore(ds).await.unwrap();
+        h.engine.provision_datastore(&ds.id).await.unwrap();
+    }
+    for ds in [&db, &staging_db] {
+        h.wait_datastore(&ds.id, Duration::from_secs(180)).await;
+    }
+    for suffix in ["", ".staging"] {
+        let (container, volume) = (format!("{}-ds-db{suffix}", h.prefix), format!("{}-ds-db{suffix}-data", h.prefix));
+        assert_eq!(inspect(&container, "{{.State.Running}}"), "true", "{container}");
+        assert!(docker_cli(&["volume", "inspect", &volume]).0, "{volume}");
+    }
+
+    // `api` in both, answering with its environment; a probe in both too.
+    let service = |name: &'static str, kind: ServiceType, environment: &'static str, start: String| {
+        h.create_service(name, kind, move |s| {
+            s.environment = environment.into();
+            s.image = Some("busybox:stable".into());
+            s.port = (kind == ServiceType::WebService).then_some(8080);
+            s.start_command = Some(start);
+        })
+    };
+    let mut apis = Vec::new();
+    let mut probes = Vec::new();
+    for environment in ["production", "staging"] {
+        let start = format!("mkdir -p /www && echo {environment} > /www/index.html && exec httpd -f -p 8080 -h /www");
+        apis.push(service("api", ServiceType::WebService, environment, start).await);
+        probes.push(service("probe", ServiceType::BackgroundWorker, environment, "exec sleep 3600".into()).await);
+    }
+    for svc in apis.iter().chain(&probes) {
+        h.deploy_live(svc, DeployRequest::new(DeployTrigger::Create)).await;
+    }
+
+    // Public: api.<domain> and api.staging.<domain>.
+    assert_eq!(h.wait_ok("api", "/", Duration::from_secs(60)).await.trim(), "production");
+    assert_eq!(h.wait_ok("api.staging", "/", Duration::from_secs(60)).await.trim(), "staging");
+    // Their own images and containers: production keeps its names.
+    let (images, staging_images) = (h.own_images("api"), h.own_images("api.staging"));
+    assert!(images.len() == 1 && staging_images.len() == 1, "{images:?} {staging_images:?}");
+    for (svc, name) in [(&apis[0], format!("/{}-api-", h.prefix)), (&apis[1], format!("/{}-api.staging-", h.prefix))] {
+        let instance = h.containers(&format!("ferry.service={}", svc.id));
+        assert_eq!(instance.len(), 1);
+        assert!(inspect(&instance[0], "{{.Name}}").starts_with(&name), "{name}");
+    }
+
+    // Private: each probe reaches its own environment's `api` and `db`.
+    for ((probe, environment), ds) in probes.iter().zip(["production", "staging"]).zip([&db, &staging_db]) {
+        let command = format!(
+            "test \"$(wget -qO- http://api:8080/)\" = {environment} && \
+             printf 'AUTH {}\\r\\nPING\\r\\n' | nc -w 3 db 6379 | grep -q PONG",
+            ds.password
+        );
+        let job = h.engine.run_job(&probe.id, Some(command), JobTrigger::Manual).await.unwrap();
+        let job = h.wait_job(&job.id).await;
+        let log = job_lines(&h, &job.id, false).await.join("\n");
+        assert_eq!(job.status, JobStatus::Succeeded, "{environment}: {log}");
+    }
+
+    // Deleting staging's leaves production's alone.
+    h.engine.delete_service(&apis[1].id).await.unwrap();
+    h.engine.delete_datastore(&staging_db.id).await.unwrap();
+    assert!(h.own_images("api.staging").is_empty());
+    assert_eq!(h.own_images("api"), images);
+    assert!(!docker_cli(&["volume", "inspect", &format!("{}-ds-db.staging-data", h.prefix)]).0);
+    assert!(docker_cli(&["volume", "inspect", &format!("{}-ds-db-data", h.prefix)]).0);
+    assert_eq!(h.wait_ok("api", "/", Duration::from_secs(30)).await.trim(), "production");
+}
+
 // ---------------------------------------------------------------------------
 // (12) archive deploy of a static site; disk + recreate deploys.
 

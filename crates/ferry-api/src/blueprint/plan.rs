@@ -148,26 +148,14 @@ fn prefix_err(ctx: &str, e: Error) -> Error {
 /// Validate `bp` against the current state and compute the actions. Reads
 /// the store; writes nothing. A blueprint applies to `production`: its
 /// entries are created there, update only what is there, and their
-/// references resolve there.
+/// references resolve there. Another environment may use the same names:
+/// its services and datastores are left alone.
 pub async fn plan(store: &Store, config: &Config, bp: &Blueprint) -> Result<Plan> {
     let (all_services, all_datastores) = (store.list_services().await?, store.list_datastores().await?);
-    // An entry never takes over a resource of another environment.
-    for (kind, name, environment) in all_datastores
-        .iter()
-        .map(|d| ("datastore", &d.name, &d.environment))
-        .chain(all_services.iter().map(|s| ("service", &s.name, &s.environment)))
-        .filter(|(_, _, environment)| environment.as_str() != PRODUCTION)
-    {
-        if bp.datastores.iter().any(|d| &d.name == name) || bp.services.iter().any(|s| &s.name == name) {
-            return Err(Error::conflict(format!(
-                "'{name}': the name is used by a {kind} of environment '{environment}', and a blueprint applies to production"
-            )));
-        }
-    }
     // A new service of production never takes an environment's name (see
     // `checks::check_service_name_free`).
     for s in &bp.services {
-        if !all_services.iter().any(|x| x.name == s.name)
+        if !all_services.iter().any(|x| x.name == s.name && x.environment == PRODUCTION)
             && s.name != PRODUCTION
             && store.find_environment(&s.name).await?.is_some_and(|e| e.name == s.name)
         {
@@ -415,8 +403,13 @@ pub async fn plan(store: &Store, config: &Config, bp: &Blueprint) -> Result<Plan
     }
 
     // ---- custom domains & default hosts -------------------------------------------
+    // Outside the blueprint: every service but production's of its names
+    // (another environment's service of the same name is outside it).
     let blueprint_names: HashSet<&str> = bp.services.iter().map(|s| s.name.as_str()).collect();
-    let outside: Vec<&Service> = every_service.iter().filter(|s| !blueprint_names.contains(s.name.as_str())).collect();
+    let outside: Vec<&Service> = every_service
+        .iter()
+        .filter(|s| s.environment != PRODUCTION || !blueprint_names.contains(s.name.as_str()))
+        .collect();
     for (i, sp) in services.iter().enumerate() {
         let ctx = format!("service '{}'", sp.desired.name);
         let siblings: Vec<&Service> =

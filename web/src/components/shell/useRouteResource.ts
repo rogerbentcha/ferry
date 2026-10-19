@@ -7,7 +7,11 @@ export type RouteResource =
   | { kind: 'environment'; name: string }
   | { kind: null; name: null }
 
-/** Which resource detail page is open (drives the breadcrumb switchers, ⌘K actions, Connect). */
+/**
+ * Which resource detail page is open (drives the breadcrumb switchers, ⌘K
+ * actions, Connect). `name` is the route's: a service or a datastore by its
+ * qualified name (`api.staging`) or id.
+ */
 export function useRouteResource(): RouteResource {
   const service = useMatch('/services/:name/*')
   const datastore = useMatch('/datastores/:name/*')

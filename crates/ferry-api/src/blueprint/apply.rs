@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use ferry_core::dto::BlueprintResult;
-use ferry_core::{Config, Datastore, DeployRequest, DeployTrigger, Engine, EnvGroup, Error, Result, Store};
+use ferry_core::{Config, Datastore, DeployRequest, DeployTrigger, Engine, EnvGroup, Error, PRODUCTION, Result, Store};
 
 use super::{Blueprint, plan};
 use crate::{locks, ops};
@@ -37,19 +37,16 @@ pub async fn apply(
     let service_names: HashSet<&str> = bp.services.iter().map(|s| s.name.as_str()).collect();
     let group_names: HashSet<&str> = bp.env_groups.iter().map(|g| g.name.as_str()).collect();
     let datastore_names: HashSet<&str> = bp.datastores.iter().map(|d| d.name.as_str()).collect();
-    let mut owners: Vec<String> = store
-        .list_services()
-        .await?
-        .into_iter()
-        .filter(|s| service_names.contains(s.name.as_str()))
-        .map(|s| s.id)
-        .collect();
+    // Production's: a blueprint applies there (another environment may use
+    // the same names).
+    let (production_services, production_datastores) = store.environment_members(PRODUCTION).await?;
+    let mut owners: Vec<String> =
+        production_services.into_iter().filter(|s| service_names.contains(s.name.as_str())).map(|s| s.id).collect();
     owners.extend(
         store.list_env_groups().await?.into_iter().filter(|g| group_names.contains(g.name.as_str())).map(|g| g.id),
     );
-    owners.extend(
-        store.list_datastores().await?.into_iter().filter(|d| datastore_names.contains(d.name.as_str())).map(|d| d.id),
-    );
+    owners
+        .extend(production_datastores.into_iter().filter(|d| datastore_names.contains(d.name.as_str())).map(|d| d.id));
     let row_guards = locks::owners(owners).await;
 
     let plan = plan(store, config, bp).await?;

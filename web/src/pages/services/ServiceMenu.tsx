@@ -22,6 +22,7 @@ import {
   useSuspendService,
   useTriggerDeploy,
 } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { sourceKind, type ServiceView } from '@/lib/api/types'
 import { cn } from '@/lib/utils'
 import { servicePath } from '@/pages/service/context'
@@ -39,11 +40,13 @@ function stop(e: React.SyntheticEvent) {
  */
 export function ServiceMenu({ service, className }: { service: ServiceView; className?: string }) {
   const { name } = service
+  // What the API and the routes take: the name alone is ambiguous across environments.
+  const ref = qualifiedName(service)
   const navigate = useNavigate()
-  const deploy = useTriggerDeploy(name)
-  const restart = useRestartService(name)
-  const suspend = useSuspendService(name)
-  const resume = useResumeService(name)
+  const deploy = useTriggerDeploy(ref)
+  const restart = useRestartService(ref)
+  const suspend = useSuspendService(ref)
+  const resume = useResumeService(ref)
   const remove = useDeleteService()
   const [dialog, setDialog] = React.useState<Dialog>(null)
   const triggerRef = React.useRef<HTMLButtonElement | null>(null)
@@ -100,7 +103,7 @@ export function ServiceMenu({ service, className }: { service: ServiceView; clas
 
   const confirmDelete = async () => {
     try {
-      await remove.mutateAsync({ ref: name, force })
+      await remove.mutateAsync({ ref, force })
       toast.success(`${name} deleted`)
     } catch (e) {
       if (e instanceof ApiError && e.isConflict) setConflict(true)
@@ -132,7 +135,7 @@ export function ServiceMenu({ service, className }: { service: ServiceView; clas
             }
           }}
         >
-          <DropdownMenuItem onSelect={() => void navigate(servicePath(name))}>
+          <DropdownMenuItem onSelect={() => void navigate(servicePath(ref))}>
             <ArrowUpRight /> Open service
           </DropdownMenuItem>
           <DropdownMenuSeparator />

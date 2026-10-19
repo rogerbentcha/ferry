@@ -148,6 +148,18 @@ when creating the service (an existing service keeps its type).";
 pub struct NameArg {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
+}
+
+/// `--environment` of the commands that name a service or datastore: names
+/// are unique in an environment only, so `api` may be production's or
+/// staging's.
+#[derive(Debug, Clone, Default, Args)]
+pub struct EnvironmentArg {
+    /// Environment the name is looked up in (default: production)
+    #[arg(long, value_name = "ENV")]
+    pub environment: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -197,6 +209,8 @@ pub struct EnvironmentRmArgs {
 pub struct FollowNameArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Stream the build/deploy logs until it finishes (exit 1 if it fails)
     #[arg(short, long)]
     pub follow: bool,
@@ -313,6 +327,8 @@ pub struct CreateArgs {
 pub struct UpdateArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Git repository URL or server-side path ("" clears; a relative path
     /// that exists here is sent as an absolute path)
     #[arg(long, value_name = "URL")]
@@ -337,6 +353,8 @@ pub struct UpdateArgs {
 pub struct DeleteArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Don't ask for confirmation
     #[arg(short, long)]
     pub yes: bool,
@@ -349,6 +367,8 @@ pub struct DeleteArgs {
 pub struct DeployArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Build this exact commit (git services)
     #[arg(long, value_name = "SHA")]
     pub commit: Option<String>,
@@ -370,7 +390,7 @@ pub struct UpArgs {
     /// Service type, only used when creating the service: web, pserv, worker, cron, static [default: web]
     #[arg(short = 't', long = "type", value_name = "TYPE", value_parser = parse_service_type)]
     pub service_type: Option<ServiceType>,
-    /// Environment, only used when creating the service [default: production]; an existing service must be in it
+    /// Environment the service is looked up in, and created in when it doesn't exist there [default: production]
     #[arg(long, value_name = "ENV")]
     pub environment: Option<String>,
     /// Build & deploy settings: used to create the service, or applied to
@@ -395,6 +415,8 @@ pub struct UpArgs {
 pub struct ListArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Maximum number of entries
     #[arg(short = 'n', long, value_name = "N", default_value_t = 20)]
     pub limit: u32,
@@ -408,6 +430,8 @@ pub struct JobsArgs {
     /// Service name or id (lists its job runs)
     #[arg(required = true)]
     pub name: Option<String>,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Maximum number of entries
     #[arg(short = 'n', long, value_name = "N", default_value_t = 20)]
     pub limit: u32,
@@ -438,6 +462,8 @@ pub struct CancelArgs {
 pub struct RollbackArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Deploy to roll back to
     pub deploy_id: String,
     /// Stream the deploy logs until it finishes (exit 1 if it fails)
@@ -449,6 +475,8 @@ pub struct RollbackArgs {
 pub struct ScaleArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Number of instances
     pub instances: u32,
 }
@@ -458,6 +486,8 @@ pub struct ScaleArgs {
 pub struct LogsArgs {
     /// Service name or id (runtime logs)
     pub name: Option<String>,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Show a deploy's build/deploy log instead
     #[arg(long, value_name = "DEPLOY_ID")]
     pub deploy: Option<String>,
@@ -480,6 +510,8 @@ pub struct EnvArgs {
     /// Service name or id (lists its variables)
     #[arg(required = true)]
     pub name: Option<String>,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// List the merged environment: linked env groups, then the service's own variables
     #[arg(long)]
     pub effective: bool,
@@ -501,6 +533,8 @@ pub enum EnvCommand {
 pub struct EnvLsArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// List the merged environment: linked env groups, then the service's own variables
     #[arg(long)]
     pub effective: bool,
@@ -510,6 +544,8 @@ pub struct EnvLsArgs {
 pub struct EnvSetArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// KEY=VALUE pairs. Values may reference ${{datastore.NAME.connectionString}},
     /// ${{service.NAME.hostport}}, … (resolved when the service starts)
     #[arg(required = true, value_name = "KEY=VALUE", value_parser = parse_env_pair)]
@@ -526,6 +562,8 @@ pub struct EnvSetArgs {
 pub struct EnvUnsetArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Variable names
     #[arg(required = true, value_name = "KEY", value_parser = parse_env_key)]
     pub keys: Vec<String>,
@@ -545,6 +583,8 @@ pub struct DomainsArgs {
     /// Service name or id: lists its custom domains. Without it: the
     /// server's domains
     pub name: Option<String>,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -590,6 +630,8 @@ pub struct DisconnectDomainArgs {
 pub struct DomainArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Domain name, e.g. app.example.com
     pub domain: String,
 }
@@ -598,6 +640,8 @@ pub struct DomainArgs {
 pub struct RunArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Stream the job's output until it finishes (exit 1 if it fails)
     #[arg(short, long)]
     pub follow: bool,
@@ -665,6 +709,8 @@ pub struct DbCreateArgs {
 pub struct DbUpdateArgs {
     /// Datastore name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Memory limit, e.g. 256M or 1G (a plain number is MiB; 'default' = the server's default)
     #[arg(long, value_name = "SIZE", value_parser = parse_memory_limit)]
     pub memory: Option<u32>,
@@ -677,12 +723,16 @@ pub struct DbUpdateArgs {
 pub struct DbNameArg {
     /// Datastore name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
 }
 
 #[derive(Debug, Clone, Args)]
 pub struct DbRmArgs {
     /// Datastore name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Don't ask for confirmation
     #[arg(short, long)]
     pub yes: bool,
@@ -771,6 +821,8 @@ pub struct EnvGroupRmArgs {
 pub struct LinkArgs {
     /// Service name or id
     pub service: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Env group name or id
     pub group: String,
 }
@@ -802,6 +854,8 @@ pub enum DeployHookCommand {
 pub struct RotateHookArgs {
     /// Service name or id
     pub name: String,
+    #[command(flatten)]
+    pub scope: EnvironmentArg,
     /// Don't ask for confirmation
     #[arg(short, long)]
     pub yes: bool,

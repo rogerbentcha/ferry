@@ -8,11 +8,12 @@ import { FormCard, FormRow } from '@/components/patterns/FormCard'
 import { PageSection } from '@/components/patterns/Page'
 import { Button } from '@/components/ui/button'
 import { useRotateDeployHook } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { ServiceView } from '@/lib/api/types'
 
 /** Secret deploy hook URL (reveal / copy) and key rotation. */
 export function DeployHookSection({ service }: { service: ServiceView }) {
-  const rotate = useRotateDeployHook(service.name)
+  const rotate = useRotateDeployHook(qualifiedName(service))
   const [confirm, setConfirm] = React.useState(false)
   const url = `${window.location.origin}${service.deploy_hook_path}`
 

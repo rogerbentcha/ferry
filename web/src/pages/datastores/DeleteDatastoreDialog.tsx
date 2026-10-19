@@ -6,12 +6,13 @@ import { ConfirmDialog } from '@/components/patterns/ConfirmDialog'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ApiError } from '@/lib/api/client'
 import { useDeleteDatastore } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { DatastoreView } from '@/lib/api/types'
 
 import type { DatastoreReference } from './useDatastoreReferences'
 
 interface DeleteDatastoreDialogProps {
-  datastore: Pick<DatastoreView, 'name' | 'kind'>
+  datastore: Pick<DatastoreView, 'name' | 'kind' | 'environment'>
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Known references (detail page); the list page relies on the server's 409. */
@@ -47,7 +48,7 @@ export function DeleteDatastoreDialog({
 
   const confirm = async () => {
     try {
-      await del.mutateAsync({ ref: datastore.name, force: needsForce && force })
+      await del.mutateAsync({ ref: qualifiedName(datastore), force: needsForce && force })
     } catch (e) {
       if (e instanceof ApiError && e.isConflict) {
         setConflict(e.message)

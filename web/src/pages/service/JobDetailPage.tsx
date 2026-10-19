@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/lib/api/client'
 import { streamPaths } from '@/lib/api/endpoints'
 import { useJob, useJobCanceling } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { isJobTerminal, type JobRun, type ServiceView } from '@/lib/api/types'
 import { useLogStream } from '@/lib/api/useLogStream'
 import { dateTime, relativeTime, shortId } from '@/lib/format'
@@ -36,10 +37,10 @@ function wantsHeadingFocus(state: unknown): boolean {
   return typeof state === 'object' && state !== null && 'focus' in state && state.focus === 'heading'
 }
 
-function BackLink({ name }: { name: string }) {
+function BackLink({ serviceRef }: { serviceRef: string }) {
   return (
     <Link
-      to={servicePath(name, '/jobs')}
+      to={servicePath(serviceRef, '/jobs')}
       className="inline-flex w-fit items-center gap-1.5 rounded-sm text-[13px] text-foreground-lighter outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
     >
       <ArrowLeft className="size-3.5" aria-hidden="true" />
@@ -50,6 +51,7 @@ function BackLink({ name }: { name: string }) {
 
 function JobDetailView({ service, jobId }: { service: ServiceView; jobId: string }) {
   const name = service.name
+  const ref = qualifiedName(service)
   const job = useJob(jobId)
   const [cancelOpen, setCancelOpen] = React.useState(false)
   const [rerunOpen, setRerunOpen] = React.useState(false)
@@ -79,7 +81,7 @@ function JobDetailView({ service, jobId }: { service: ServiceView; jobId: string
     const notFound = job.error instanceof ApiError && job.error.isNotFound
     return (
       <div className="flex flex-col gap-4">
-        <BackLink name={name} />
+        <BackLink serviceRef={ref} />
         {notFound ? (
           <EmptyState
             size="lg"
@@ -88,7 +90,7 @@ function JobDetailView({ service, jobId }: { service: ServiceView; jobId: string
             description={`No job run ${jobId} exists. Old runs are pruned automatically.`}
             actions={
               <Button asChild variant="primary">
-                <Link to={servicePath(name, '/jobs')}>All jobs</Link>
+                <Link to={servicePath(ref, '/jobs')}>All jobs</Link>
               </Button>
             }
           />
@@ -102,7 +104,7 @@ function JobDetailView({ service, jobId }: { service: ServiceView; jobId: string
   return (
     <div className="flex flex-col">
       <header className="mb-6 flex flex-col gap-3">
-        <BackLink name={name} />
+        <BackLink serviceRef={ref} />
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-2.5">
             <h2

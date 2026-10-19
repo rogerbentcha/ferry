@@ -43,6 +43,7 @@ import {
   useServices,
   useTriggerDeploy,
 } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { DATASTORE_KIND_LABELS, SERVICE_TYPE_LABELS } from '@/lib/format'
 import { signOut } from '@/lib/api/session'
 import { useUi } from '@/stores/ui'
@@ -83,7 +84,8 @@ export function CommandMenu() {
   }
   const go = (to: string) => run(() => void navigate(to))
 
-  const svcPath = (name: string, sub = '') => `/services/${encodeURIComponent(name)}${sub}`
+  // `ref`: a qualified name (`api`, `api.staging`) or an id, like the route's `:name`.
+  const svcPath = (ref: string, sub = '') => `/services/${encodeURIComponent(ref)}${sub}`
 
   // Side-effect actions (deploy, restart) come last so the pre-highlighted item is harmless
   // (⌘K then Enter). Once the user types, they move first: typed intent ("restart") should win
@@ -182,11 +184,13 @@ export function CommandMenu() {
 
         {(services.data?.length ?? 0) > 0 && (
           <CommandGroup heading="Services">
+            {/* Qualified names: `api` of production and `api` of staging are two services. */}
             {services.data?.map((s) => (
-              <CommandItem key={s.id} value={s.name}
-                keywords={['service', SERVICE_TYPE_LABELS[s.type]]} onSelect={() => go(svcPath(s.name))}>
+              <CommandItem key={s.id} value={qualifiedName(s)}
+                keywords={['service', SERVICE_TYPE_LABELS[s.type], s.environment]}
+                onSelect={() => go(svcPath(qualifiedName(s)))}>
                 <ServiceTypeIcon type={s.type} />
-                <span className="truncate">{s.name}</span>
+                <span className="truncate">{qualifiedName(s)}</span>
                 <span className="ml-auto flex items-center gap-2 text-[12px] text-foreground-lighter">
                   {SERVICE_TYPE_LABELS[s.type]}
                   <StatusDot tone={SERVICE_STATE_TONE[s.state].tone} />
@@ -199,10 +203,11 @@ export function CommandMenu() {
         {(datastores.data?.length ?? 0) > 0 && (
           <CommandGroup heading="Datastores">
             {datastores.data?.map((d) => (
-              <CommandItem key={d.id} value={`datastore ${d.name}`}
-                keywords={[d.name, d.kind, 'database']} onSelect={() => go(`/datastores/${encodeURIComponent(d.name)}`)}>
+              <CommandItem key={d.id} value={`datastore ${qualifiedName(d)}`}
+                keywords={[d.name, d.kind, 'database', d.environment]}
+                onSelect={() => go(`/datastores/${encodeURIComponent(qualifiedName(d))}`)}>
                 <DatastoreKindIcon kind={d.kind} />
-                <span className="truncate">{d.name}</span>
+                <span className="truncate">{qualifiedName(d)}</span>
                 <span className="ml-auto text-[12px] text-foreground-lighter">
                   {DATASTORE_KIND_LABELS[d.kind]} {d.version}
                 </span>

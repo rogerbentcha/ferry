@@ -63,7 +63,9 @@ pub async fn create(ctx: &Ctx, a: DbCreateArgs) -> Result<()> {
         )?;
         match d.status {
             DatastoreStatus::Available => outln!("Internal URL: {}", resp.data.internal_url)?,
-            DatastoreStatus::Creating => outln!("Check progress with: ferry db show {}", d.name)?,
+            DatastoreStatus::Creating => {
+                outln!("Check progress with: ferry db show {}{}", d.name, super::environment_flag(&d.environment))?
+            }
             DatastoreStatus::Failed => {}
         }
     }
@@ -124,7 +126,7 @@ pub async fn list(ctx: &Ctx, environment: Option<&str>) -> Result<()> {
 /// still provisioning).
 pub async fn update(ctx: &Ctx, a: DbUpdateArgs) -> Result<()> {
     let body = update_request(&a);
-    let resp = match ctx.client.patch::<_, DatastoreView>(&["datastores", &a.name], &[], &body).await {
+    let resp = match ctx.client.patch::<_, DatastoreView>(&["datastores", &a.name], &ctx.scope(), &body).await {
         Ok(r) => r,
         Err(e) if is_unsupported_route(&e) => {
             return Err(e.context("this Ferry server can't change datastore limits: upgrade ferryd"));
@@ -159,7 +161,7 @@ fn limits_summary(a: &DbUpdateArgs, d: &Datastore, defaults: DefaultLimits) -> S
 }
 
 pub async fn show(ctx: &Ctx, name: &str) -> Result<()> {
-    let resp = ctx.client.get::<DatastoreView>(&["datastores", name], &[]).await?;
+    let resp = ctx.client.get::<DatastoreView>(&["datastores", name], &ctx.scope()).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
@@ -200,7 +202,7 @@ fn reference(d: &ferry_core::Datastore) -> String {
 
 pub async fn remove(ctx: &Ctx, name: &str, yes: bool, force: bool) -> Result<()> {
     // Resolve an id to the datastore's real name for the prompt and messages.
-    let ds = ctx.client.get::<DatastoreView>(&["datastores", name], &[]).await?.data.datastore;
+    let ds = ctx.client.get::<DatastoreView>(&["datastores", name], &ctx.scope()).await?.data.datastore;
     confirm(&format!("delete datastore '{}' and all its data", ds.name), yes).await?;
     ctx.client
         .delete_no_content(&["datastores", &ds.id], &super::force_query(force, false))

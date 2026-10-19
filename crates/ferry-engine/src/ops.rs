@@ -141,7 +141,7 @@ pub(crate) async fn delete_service(inner: &Arc<Inner>, service_id: &str) -> Resu
 
     // Images built for it (never pulled public images).
     let deploys = inner.store.list_deploys(&svc.id, u32::MAX).await?;
-    let repo = inner.naming.image_repo(&svc.name);
+    let repo = inner.naming.image_repo(&svc.qualified_name());
     let images: HashSet<&str> =
         deploys.iter().filter_map(|d| d.image.as_deref()).filter(|i| is_own_image(i, &repo)).collect();
     for image in images {

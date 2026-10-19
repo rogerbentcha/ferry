@@ -1,10 +1,19 @@
 /**
- * Pure helpers for the datastore pages: name / identifier validation (mirrors
- * `validate::resource_name` and `checks::pg_identifier`), `${{datastore.…}}`
- * references, and connection-string masking.
+ * Pure helpers for the datastore pages: their path, name / identifier
+ * validation (mirrors `validate::resource_name` and `checks::pg_identifier`),
+ * `${{datastore.…}}` references, and connection-string masking.
  */
 
 import type { DatastoreKind } from '@/lib/api/types'
+
+/**
+ * `/datastores/<ref>` with the ref encoded. `ref` is the datastore's
+ * qualified name (`qualifiedName(d)`: `db` in production, `db.staging`
+ * elsewhere) or its id.
+ */
+export function datastorePath(ref: string): string {
+  return `/datastores/${encodeURIComponent(ref)}`
+}
 
 /** Majors offered in the create dialog (server default first). */
 export const DATASTORE_VERSIONS: Record<DatastoreKind, { default: string; options: string[] }> = {
@@ -31,8 +40,10 @@ function looksLikeId(name: string): boolean {
 }
 
 /**
- * Service / datastore name (they share one namespace and double as private
- * hostnames). Returns an error message, or null when valid.
+ * Service / datastore name (they share one namespace per environment and
+ * double as private hostnames on its network): `taken` holds the names of
+ * the environment it is created in. Returns an error message, or null when
+ * valid.
  */
 export function resourceNameError(name: string, taken: ReadonlySet<string> = new Set()): string | null {
   if (name === '') return 'Name is required'
@@ -42,7 +53,7 @@ export function resourceNameError(name: string, taken: ReadonlySet<string> = new
   if (name.endsWith('-')) return 'Don’t end the name with “-”'
   if (RESERVED_NAMES.has(name)) return `“${name}” is reserved`
   if (looksLikeId(name)) return 'This looks like a resource id; choose another name'
-  if (taken.has(name)) return `A service or datastore named “${name}” already exists`
+  if (taken.has(name)) return `A service or datastore named “${name}” already exists in this environment`
   return null
 }
 

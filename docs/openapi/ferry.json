@@ -1288,7 +1288,7 @@
           "datastores"
         ],
         "summary": "Create a datastore",
-        "description": "Creates the row (`creating`) in its `environment` (omitted: `production`) and provisions the container on that environment's private network: only its services reach it. A failed provisioning still answers 201, with status `failed` and the reason in `error`. Datastores and services share one namespace of names. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit the container; omitted or `0` = the server default (see `GET /api/v1/info`).",
+        "description": "Creates the row (`creating`) in its `environment` (omitted: `production`) and provisions the container on that environment's private network: only its services reach it. A failed provisioning still answers 201, with status `failed` and the reason in `error`. A name is unique in its environment, which datastores and services share: another environment may use the same names. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit the container; omitted or `0` = the server default (see `GET /api/v1/info`).",
         "operationId": "createDatastore",
         "requestBody": {
           "content": {
@@ -1373,8 +1373,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Datastore id or name.",
+            "description": "Datastore id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -1391,6 +1400,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
             "content": {
@@ -1402,7 +1421,7 @@
             }
           },
           "404": {
-            "description": "No such datastore.",
+            "description": "No such datastore in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1442,8 +1461,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Datastore id or name.",
+            "description": "Datastore id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -1483,7 +1511,7 @@
             }
           },
           "404": {
-            "description": "No such datastore.",
+            "description": "No such datastore in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1533,8 +1561,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Datastore id or name.",
+            "description": "Datastore id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -1582,7 +1619,7 @@
             }
           },
           "404": {
-            "description": "No such datastore.",
+            "description": "No such datastore in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4382,7 +4419,7 @@
           "services"
         ],
         "summary": "Create a service",
-        "description": "Creates the service in its `environment` (omitted: `production`) with its own variables and env group links, then queues a first deploy (trigger `create`) when it has a repository or an image, unless `deploy` is `false`. Services and datastores share one namespace of names. Outside `production` a web service answers at `<service>.<environment>.<domain>`, and its variables reference the datastores and services of its environment only. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit every instance and job run of the service; omitted or `0` = the server default (see `GET /api/v1/info`).",
+        "description": "Creates the service in its `environment` (omitted: `production`) with its own variables and env group links, then queues a first deploy (trigger `create`) when it has a repository or an image, unless `deploy` is `false`. A name is unique in its environment, which services and datastores share: another environment may use the same names. Outside `production` a web service answers at `<service>.<environment>.<domain>`, and its variables reference the datastores and services of its environment only. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit every instance and job run of the service; omitted or `0` = the server default (see `GET /api/v1/info`).",
         "operationId": "createService",
         "requestBody": {
           "content": {
@@ -4467,8 +4504,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -4485,6 +4531,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
             "content": {
@@ -4496,7 +4552,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4536,8 +4592,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -4577,7 +4642,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4627,8 +4692,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -4676,7 +4750,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4728,8 +4802,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -4746,6 +4829,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
             "content": {
@@ -4757,7 +4850,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4799,8 +4892,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -4852,7 +4954,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4892,8 +4994,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -4941,7 +5052,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4993,8 +5104,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -5055,7 +5175,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5116,8 +5236,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -5137,6 +5266,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
             "content": {
@@ -5148,7 +5287,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5188,8 +5327,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -5240,7 +5388,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5291,7 +5439,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
             "schema": {
               "type": "string"
@@ -5302,6 +5450,15 @@
             "in": "path",
             "description": "The custom domain.",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -5321,6 +5478,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
             "content": {
@@ -5332,7 +5499,7 @@
             }
           },
           "404": {
-            "description": "No such service, or the domain isn't one of its custom domains.",
+            "description": "No such service in that environment, or no such environment, or the domain isn't one of its custom domains.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5374,8 +5541,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -5395,6 +5571,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
             "content": {
@@ -5406,7 +5592,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5446,8 +5632,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -5507,7 +5702,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5547,8 +5742,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -5608,7 +5812,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5650,8 +5854,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -5699,7 +5912,7 @@
             }
           },
           "404": {
-            "description": "No such service or env group.",
+            "description": "No such service in that environment, environment or env group.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5740,7 +5953,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
             "schema": {
               "type": "string"
@@ -5751,6 +5964,15 @@
             "in": "path",
             "description": "Env group id or name.",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -5767,6 +5989,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
             "content": {
@@ -5778,7 +6010,7 @@
             }
           },
           "404": {
-            "description": "No such service or env group, or the group isn't linked to it.",
+            "description": "No such service in that environment, environment or env group, or the group isn't linked to it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5820,8 +6052,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -5873,7 +6114,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5913,8 +6154,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -5962,7 +6212,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6014,8 +6264,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -6073,7 +6332,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6115,8 +6374,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -6133,6 +6401,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
             "content": {
@@ -6144,7 +6422,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6196,8 +6474,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -6214,6 +6501,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
             "content": {
@@ -6225,7 +6522,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6267,8 +6564,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -6316,7 +6622,7 @@
             }
           },
           "404": {
-            "description": "No such service or deploy.",
+            "description": "No such service in that environment, environment or deploy.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6368,8 +6674,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -6417,7 +6732,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6459,8 +6774,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -6477,6 +6801,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
             "content": {
@@ -6488,7 +6822,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6530,8 +6864,17 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Service id or name.",
+            "description": "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an\nid in the path, the environment must be that one's. 404 when there is no such environment.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -6548,6 +6891,16 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
             "content": {
@@ -6559,7 +6912,7 @@
             }
           },
           "404": {
-            "description": "No such service.",
+            "description": "No such service in that environment, or no such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6896,7 +7249,7 @@
           "server"
         ],
         "summary": "Metrics in the Prometheus format",
-        "description": "The server's numbers in the Prometheus text format (version 0.0.4), for a Prometheus that already runs somewhere: point a scrape job at this path with an API token as its bearer credentials. It needs an API token like the rest of the API, and answers at once from what ferryd already has: the host and the containers of its last reading (it reads them every 10 s; nothing when that reading is more than 30 s old) and the proxy's request counters. It never waits for Docker. `ferry_build_info{version}` is always 1. The host: `ferry_host_cpu_count`, `ferry_host_cpu_seconds_total{mode}` (the modes of /proc/stat), `ferry_host_memory_total_bytes`, `ferry_host_memory_available_bytes`, `ferry_host_disk_total_bytes`, `ferry_host_disk_used_bytes`, `ferry_host_disk_read_bytes_total` and `ferry_host_disk_written_bytes_total` (by `mount_point`), `ferry_host_network_receive_bytes_total` and `ferry_host_network_transmit_bytes_total` (by `device`: each interface but the loopback and Docker's own) — the CPU seconds and the disks' bytes count from the start of the machine, an interface's bytes from its own start. The containers, every running service instance and datastore by `kind`, `id`, `name` and `instance_id` (services only; not `instance`, which Prometheus gives the target): `ferry_container_cpu_percent` (100 = one core) and `ferry_container_memory_bytes`. The requests, by `target` (a service id, `dashboard` or `unrouted`) and `name`: `ferry_http_requests_total{status_class}` (`2xx` to `5xx`) and the histogram `ferry_http_request_duration_seconds` (until the response headers, WebSockets left out), counted from the start of ferryd. A value the server can't read (on macOS, most host values) is left out, never published as 0.",
+        "description": "The server's numbers in the Prometheus text format (version 0.0.4), for a Prometheus that already runs somewhere: point a scrape job at this path with an API token as its bearer credentials. It needs an API token like the rest of the API, and answers at once from what ferryd already has: the host and the containers of its last reading (it reads them every 10 s; nothing when that reading is more than 30 s old) and the proxy's request counters. It never waits for Docker. `ferry_build_info{version}` is always 1. The host: `ferry_host_cpu_count`, `ferry_host_cpu_seconds_total{mode}` (the modes of /proc/stat), `ferry_host_memory_total_bytes`, `ferry_host_memory_available_bytes`, `ferry_host_disk_total_bytes`, `ferry_host_disk_used_bytes`, `ferry_host_disk_read_bytes_total` and `ferry_host_disk_written_bytes_total` (by `mount_point`), `ferry_host_network_receive_bytes_total` and `ferry_host_network_transmit_bytes_total` (by `device`: each interface but the loopback and Docker's own) — the CPU seconds and the disks' bytes count from the start of the machine, an interface's bytes from its own start. The containers, every running service instance and datastore by `kind`, `id`, `name` (its qualified name: `api` in production, `api.staging` elsewhere) and `instance_id` (services only; not `instance`, which Prometheus gives the target): `ferry_container_cpu_percent` (100 = one core) and `ferry_container_memory_bytes`. The requests, by `target` (a service id, `dashboard` or `unrouted`) and `name` (a service's qualified name): `ferry_http_requests_total{status_class}` (`2xx` to `5xx`) and the histogram `ferry_http_request_duration_seconds` (until the response headers, WebSockets left out), counted from the start of ferryd. A value the server can't read (on macOS, most host values) is left out, never published as 0.",
         "operationId": "getPrometheusMetrics",
         "responses": {
           "200": {
@@ -7557,7 +7910,7 @@
           },
           "name": {
             "type": "string",
-            "description": "Name of the service or datastore."
+            "description": "Qualified name of the service or datastore: `api` in production,\n`api.staging` elsewhere."
           }
         }
       },
@@ -7618,7 +7971,7 @@
           },
           "name": {
             "type": "string",
-            "description": "Its name when it was last read."
+            "description": "Its qualified name (`api`, `api.staging`) when it was last read."
           },
           "points": {
             "type": "array",
@@ -8015,7 +8368,7 @@
           },
           "name": {
             "type": "string",
-            "description": "Unique DNS-label name; also the private-network hostname."
+            "description": "DNS-label name, unique in its environment (another environment may use\nit too); also the private-network hostname."
           },
           "password": {
             "type": "string"
@@ -8564,7 +8917,7 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "Names of linked services."
+                "description": "Qualified names of linked services (`api`, `api.staging`): env\ngroups are server-wide."
               },
               "vars": {
                 "type": "array",
@@ -8937,7 +9290,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Names of the services whose repository is cloned with this\nconnection."
+            "description": "Qualified names (`api`, `api.staging`) of the services whose\nrepository is cloned with this connection."
           },
           "status": {
             "$ref": "#/components/schemas/GitConnectionStatus"
@@ -9611,7 +9964,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "The service's name (its last one in the range); the target itself\nfor `dashboard` and `unrouted`."
+            "description": "The service's qualified name (`api`, `api.staging`; its last one in\nthe range); the target itself for `dashboard` and `unrouted`."
           },
           "p50_ms": {
             "type": [
@@ -10096,7 +10449,7 @@
           },
           "name": {
             "type": "string",
-            "description": "Unique DNS-label name; also the private-network hostname."
+            "description": "DNS-label name, unique in its environment (another environment may use\nit too); also the private-network hostname."
           },
           "port": {
             "type": [

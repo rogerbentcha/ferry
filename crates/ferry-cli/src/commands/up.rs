@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use ferry_core::dto::{EnvironmentView, LinkEnvGroup, PatchEnv, ServiceView};
+use ferry_core::dto::{LinkEnvGroup, PatchEnv, ServiceView};
 use ferry_core::{Deploy, EnvVar, ServiceType, SourceKind, validate};
 
 use super::services::{create_body, settings_labels, settings_update};
@@ -81,20 +81,19 @@ fn check_type(a: &UpArgs, existing: &ServiceView) -> Result<()> {
     }
 }
 
-/// `--environment` can only pick the environment of a new service.
-async fn check_environment(ctx: &Ctx, a: &UpArgs, existing: &ServiceView) -> Result<()> {
-    let current = &existing.service.environment;
-    let Some(wanted) = a.environment.as_deref().filter(|w| w != current) else { return Ok(()) };
-    // An id of its environment is fine too.
-    let named = ctx.client.get::<EnvironmentView>(&["environments", wanted], &[]).await.ok();
-    if named.is_some_and(|v| &v.data.environment.name == current) {
-        return Ok(());
+/// A name missing from production that another environment uses: `up`
+/// without `--environment` creates production's, so say so (best effort).
+async fn note_other_environments(ctx: &Ctx, name: &str) {
+    let Ok(all) = ctx.client.get::<Vec<ServiceView>>(&["services"], &[]).await else { return };
+    let elsewhere: Vec<&str> =
+        all.data.iter().filter(|v| v.service.name == name).map(|v| v.service.environment.as_str()).collect();
+    if let Some(first) = elsewhere.first() {
+        errln!(
+            "note: '{name}' exists in environment {}, not in production: this creates a new '{name}' in production \
+             (to deploy that one: ferry up {name} --environment {first})",
+            elsewhere.iter().map(|e| format!("'{e}'")).collect::<Vec<_>>().join(", ")
+        );
     }
-    bail!(
-        "service '{}' is in environment '{current}'; a service can't move to another environment \
-         (--environment {wanted} only applies when creating a service): deploy under another name",
-        existing.service.name,
-    )
 }
 
 /// Apply `ferry up`'s settings, variables and env groups to an existing
@@ -152,19 +151,20 @@ pub async fn up(ctx: &Ctx, a: UpArgs) -> Result<()> {
         None => default_service_name(&dir)?,
     };
 
-    // Look the service up first so a typo'd name fails before packing.
-    let existing = match ctx.client.get::<ServiceView>(&["services", &name], &[]).await {
+    // Look the service up first (in the environment of --environment) so a
+    // typo'd name fails before packing.
+    let existing = match ctx.client.get::<ServiceView>(&["services", &name], &ctx.scope()).await {
         Ok(v) => Some(v.data),
         Err(e) if is_not_found(&e) => None,
         Err(e) => return Err(e),
     };
     match &existing {
-        Some(svc) => {
-            check_type(&a, svc)?;
-            check_environment(ctx, &a, svc).await?;
-        }
+        Some(svc) => check_type(&a, svc)?,
         // Validate locally: the name will be used to create the service.
         None => validate::resource_name(&name).map_err(|e| anyhow!("{e}"))?,
+    }
+    if existing.is_none() && ctx.environment.is_none() {
+        note_other_environments(ctx, &name).await;
     }
 
     errln!("Packing {} …", dir.display());

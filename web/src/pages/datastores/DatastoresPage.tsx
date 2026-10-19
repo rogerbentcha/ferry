@@ -22,13 +22,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { copyText } from '@/hooks/useCopy'
 import { useDatastores } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { DATASTORE_KINDS, type DatastoreKind, type DatastoreView } from '@/lib/api/types'
 import { DATASTORE_KIND_LABELS } from '@/lib/format'
 import { useShownEnvironments } from '@/pages/environments/lib'
 import { EnvironmentBadge } from '@/pages/environments/parts'
 
 import { DeleteDatastoreDialog } from './DeleteDatastoreDialog'
-import { datastoreRef } from './lib'
+import { datastorePath, datastoreRef } from './lib'
 import { NewDatastoreDialog } from './NewDatastoreDialog'
 import { DatastoreStatusLine } from './parts'
 
@@ -47,7 +48,7 @@ function DatastoreCard({
   onDelete: () => void
 }) {
   const navigate = useNavigate()
-  const to = `/datastores/${encodeURIComponent(ds.name)}`
+  const to = datastorePath(qualifiedName(ds))
   return (
     <ResourceCard
       href={to}

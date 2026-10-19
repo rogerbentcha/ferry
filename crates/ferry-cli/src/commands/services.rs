@@ -8,7 +8,7 @@ use ferry_core::dto::{
 };
 use ferry_core::{Deploy, Service, ServiceType, SourceKind, resources, validate};
 
-use super::{Ctx, DefaultLimits, confirm, follow_deploy, limit_pairs, or_dash, print_json};
+use super::{Ctx, DefaultLimits, confirm, environment_flag, follow_deploy, limit_pairs, or_dash, print_json};
 use crate::cli::{CreateArgs, SettingsArgs, UpdateArgs};
 use crate::output::{self, Cell, Color, Table, errln, outln};
 use crate::repo;
@@ -253,10 +253,11 @@ pub async fn create(ctx: &Ctx, mut a: CreateArgs) -> Result<()> {
         }
         None => {
             if !ctx.json {
+                let f = environment_flag(&v.service.environment);
                 if v.service.source_kind() == SourceKind::Upload {
-                    outln!("Deploy local code with: ferry up {} --dir <DIR>", v.service.name)?;
+                    outln!("Deploy local code with: ferry up {}{f} --dir <DIR>", v.service.name)?;
                 } else {
-                    outln!("Deploy it with: ferry deploy {}", v.service.name)?;
+                    outln!("Deploy it with: ferry deploy {}{f}", v.service.name)?;
                 }
             }
             Ok(())
@@ -265,7 +266,7 @@ pub async fn create(ctx: &Ctx, mut a: CreateArgs) -> Result<()> {
 }
 
 pub async fn show(ctx: &Ctx, name: &str) -> Result<()> {
-    let resp = ctx.client.get::<ServiceView>(&["services", name], &[]).await?;
+    let resp = ctx.client.get::<ServiceView>(&["services", name], &ctx.scope()).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
@@ -379,12 +380,14 @@ fn update_hints(a: &UpdateArgs, svc: &Service) -> Vec<String> {
     let mut hints = Vec::new();
     if svc.service_type == ServiceType::CronJob && a.settings.start_cmd.is_some() {
         hints.push(format!(
-            "The new start command applies from the next run (scheduled, or now with: ferry run {})",
-            svc.name
+            "The new start command applies from the next run (scheduled, or now with: ferry run {}{})",
+            svc.name,
+            environment_flag(&svc.environment)
         ));
     }
     let limits = a.settings.memory.is_some() || a.settings.cpu.is_some();
-    let name = &svc.name;
+    // The commands to suggest name its environment.
+    let name = &format!("{}{}", svc.name, environment_flag(&svc.environment));
     if needs_redeploy(a, svc.service_type) {
         let what =
             if limits { "Build/deploy settings and resource limits apply" } else { "Build/deploy settings apply" };
@@ -416,7 +419,7 @@ pub async fn update(ctx: &Ctx, mut a: UpdateArgs) -> Result<()> {
         a.repo = repo_arg(a.repo.take())?;
     }
     let body = update_request(&a);
-    let resp = ctx.client.patch::<_, ServiceView>(&["services", &a.name], &[], &body).await?;
+    let resp = ctx.client.patch::<_, ServiceView>(&["services", &a.name], &ctx.scope(), &body).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
@@ -429,7 +432,7 @@ pub async fn update(ctx: &Ctx, mut a: UpdateArgs) -> Result<()> {
 
 pub async fn delete(ctx: &Ctx, name: &str, yes: bool, force: bool) -> Result<()> {
     // Resolve an id to the service's real name for the prompt and messages.
-    let service = ctx.client.get::<ServiceView>(&["services", name], &[]).await?.data.service;
+    let service = ctx.client.get::<ServiceView>(&["services", name], &ctx.scope()).await?.data.service;
     confirm(&format!("delete service '{}' with all its deploys", service.name), yes).await?;
     ctx.client
         .delete_no_content(&["services", &service.id], &super::force_query(force, false))
@@ -444,7 +447,7 @@ pub async fn delete(ctx: &Ctx, name: &str, yes: bool, force: bool) -> Result<()>
 
 pub async fn suspend(ctx: &Ctx, name: &str, suspend: bool) -> Result<()> {
     let action = if suspend { "suspend" } else { "resume" };
-    let resp = ctx.client.post_empty::<ServiceView>(&["services", name, action]).await?;
+    let resp = ctx.client.post_empty::<ServiceView>(&["services", name, action], &ctx.scope()).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
@@ -459,8 +462,10 @@ pub async fn suspend(ctx: &Ctx, name: &str, suspend: bool) -> Result<()> {
 }
 
 pub async fn scale(ctx: &Ctx, name: &str, instances: u32) -> Result<()> {
-    let resp =
-        ctx.client.post::<_, ServiceView>(&["services", name, "scale"], &[], &ScaleRequest { instances }).await?;
+    let resp = ctx
+        .client
+        .post::<_, ServiceView>(&["services", name, "scale"], &ctx.scope(), &ScaleRequest { instances })
+        .await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
@@ -473,7 +478,7 @@ pub async fn scale(ctx: &Ctx, name: &str, instances: u32) -> Result<()> {
 }
 
 pub async fn status(ctx: &Ctx, name: &str) -> Result<()> {
-    let resp = ctx.client.get::<RuntimeStatus>(&["services", name, "status"], &[]).await?;
+    let resp = ctx.client.get::<RuntimeStatus>(&["services", name, "status"], &ctx.scope()).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
@@ -576,7 +581,7 @@ fn instance_label(container_name: &str) -> String {
 }
 
 pub async fn open(ctx: &Ctx, name: &str) -> Result<()> {
-    let resp = ctx.client.get::<ServiceView>(&["services", name], &[]).await?;
+    let resp = ctx.client.get::<ServiceView>(&["services", name], &ctx.scope()).await?;
     let v = &resp.data;
     let Some(url) = v.url.clone() else {
         let kind = output::type_long(v.service.service_type);
@@ -626,7 +631,7 @@ pub(super) fn deploy_hook_url(ctx: &Ctx, v: &ServiceView) -> String {
 }
 
 pub async fn deploy_hook_show(ctx: &Ctx, name: &str) -> Result<()> {
-    let resp = ctx.client.get::<ServiceView>(&["services", name], &[]).await?;
+    let resp = ctx.client.get::<ServiceView>(&["services", name], &ctx.scope()).await?;
     let url = deploy_hook_url(ctx, &resp.data);
     if ctx.json {
         return print_json(&serde_json::json!({ "service": resp.data.service.name, "url": url }));
@@ -638,15 +643,16 @@ pub async fn deploy_hook_show(ctx: &Ctx, name: &str) -> Result<()> {
 /// `ferry deploy-hook rotate NAME`: a new secret key; the old URL stops working.
 pub async fn deploy_hook_rotate(ctx: &Ctx, name: &str, yes: bool) -> Result<()> {
     // Resolve an id to the service's real name for the prompt and messages.
-    let service = ctx.client.get::<ServiceView>(&["services", name], &[]).await?.data.service;
+    let service = ctx.client.get::<ServiceView>(&["services", name], &ctx.scope()).await?.data.service;
     confirm(&format!("rotate the deploy hook of '{}' (its current URL stops working)", service.name), yes).await?;
-    let resp = match ctx.client.post_empty::<ServiceView>(&["services", &service.id, "deploy-hook", "rotate"]).await {
-        Ok(r) => r,
-        Err(e) if crate::client::is_missing_route(&e) => {
-            return Err(e.context("this Ferry server can't rotate deploy hooks: upgrade ferryd"));
-        }
-        Err(e) => return Err(e),
-    };
+    let resp =
+        match ctx.client.post_empty::<ServiceView>(&["services", &service.id, "deploy-hook", "rotate"], &[]).await {
+            Ok(r) => r,
+            Err(e) if crate::client::is_missing_route(&e) => {
+                return Err(e.context("this Ferry server can't rotate deploy hooks: upgrade ferryd"));
+            }
+            Err(e) => return Err(e),
+        };
     if ctx.json {
         return print_json(&resp.raw);
     }
@@ -671,7 +677,7 @@ fn print_domains(ctx: &Ctx, name: &str, resp: &crate::client::Json<Vec<String>>)
 }
 
 pub async fn domains_list(ctx: &Ctx, name: &str) -> Result<()> {
-    let resp = ctx.client.get::<Vec<String>>(&["services", name, "domains"], &[]).await?;
+    let resp = ctx.client.get::<Vec<String>>(&["services", name, "domains"], &ctx.scope()).await?;
     print_domains(ctx, name, &resp)
 }
 
@@ -683,7 +689,7 @@ fn normalize_domain(domain: &str) -> String {
 pub async fn domains_add(ctx: &Ctx, name: &str, domain: &str) -> Result<()> {
     let domain = normalize_domain(domain);
     let body = DomainRequest { domain: domain.clone() };
-    let resp = ctx.client.post::<_, Vec<String>>(&["services", name, "domains"], &[], &body).await?;
+    let resp = ctx.client.post::<_, Vec<String>>(&["services", name, "domains"], &ctx.scope(), &body).await?;
     if !ctx.json {
         errln!("Added {domain}. Point its DNS (A/AAAA or CNAME) at this server.");
     }
@@ -692,7 +698,7 @@ pub async fn domains_add(ctx: &Ctx, name: &str, domain: &str) -> Result<()> {
 
 pub async fn domains_rm(ctx: &Ctx, name: &str, domain: &str) -> Result<()> {
     let domain = normalize_domain(domain);
-    let resp = ctx.client.delete::<Vec<String>>(&["services", name, "domains", &domain]).await?;
+    let resp = ctx.client.delete::<Vec<String>>(&["services", name, "domains", &domain], &ctx.scope()).await?;
     if !ctx.json {
         errln!("Removed {domain}.");
     }
