@@ -13,7 +13,7 @@ Run this command on the server, as <Term id="root" /> or with <Term id="sudo" />
 curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh
 ```
 
-The <Term id="install-script" /> works on Ubuntu 22.04 and 24.04, and on Debian 12 and 13, with an <Term id="x86-64" /> or an <Term id="arm64" /> CPU. If you are root and the server has no sudo, end the command with `| sh`.
+The <Term id="install-script" /> works on Ubuntu 22.04, 24.04 and 26.04, and on Debian 12 and 13, with an <Term id="x86-64" /> or an <Term id="arm64" /> CPU. If you are root and the server has no sudo, end the command with `| sh`.
 
 The script does all its checks before the first change. If a check fails, the server stays as it was. If the server has no <Term id="docker" /> or no git, the script installs them. Then it puts `ferryd` and `ferry` in `/usr/local/bin`, and creates the user `ferry` and a <Term id="systemd" /> unit. systemd starts `ferryd` now and at each boot.
 
