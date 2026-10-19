@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/api/client'
 import { useLinkEnvGroup, useUnlinkEnvGroup } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { EnvGroupView, ServiceView } from '@/lib/api/types'
 import { plural } from '@/lib/format'
 
@@ -30,8 +31,8 @@ function groupPath(name: string): string {
 /** Env groups linked to the service: link (select), unlink (confirm), open. */
 export function LinkedGroupsCard({ service, groups, loading, error, onRetry }: LinkedGroupsCardProps) {
   const name = service.name
-  const link = useLinkEnvGroup(name)
-  const unlink = useUnlinkEnvGroup(name)
+  const link = useLinkEnvGroup(qualifiedName(service))
+  const unlink = useUnlinkEnvGroup(qualifiedName(service))
   const [choice, setChoice] = React.useState<string>('')
   const [toUnlink, setToUnlink] = React.useState<string | null>(null)
   const selectId = React.useId()
@@ -56,7 +57,7 @@ export function LinkedGroupsCard({ service, groups, loading, error, onRetry }: L
     groups && available.length > 0 ? (
       <div className="flex w-full items-center gap-2 sm:w-auto">
         <label htmlFor={selectId} className="sr-only">
-          Environment group to link
+          Env group to link
         </label>
         <Select value={selected} onValueChange={setChoice}>
           <SelectTrigger id={selectId} size="sm" className="w-full min-w-44 sm:w-52">
@@ -84,7 +85,7 @@ export function LinkedGroupsCard({ service, groups, loading, error, onRetry }: L
   return (
     <FormCard
       asDiv
-      title="Linked environment groups"
+      title="Linked env groups"
       description="Shared variables merged in link order (a later group wins over an earlier one). Changes apply on the next deploy or restart."
       headerActions={linker}
     >
@@ -96,7 +97,7 @@ export function LinkedGroupsCard({ service, groups, loading, error, onRetry }: L
         </div>
       ) : error && !groups ? (
         <div className="px-5 py-4 md:px-6">
-          <ErrorState error={error} title="Could not load environment groups" onRetry={onRetry} />
+          <ErrorState error={error} title="Could not load env groups" onRetry={onRetry} />
         </div>
       ) : linked.length === 0 ? (
         <div className="flex items-center gap-3 px-5 py-5 text-[13px] text-foreground-light md:px-6">
@@ -163,7 +164,7 @@ export function LinkedGroupsCard({ service, groups, loading, error, onRetry }: L
         title={`Unlink ${toUnlink ?? ''} from ${name}?`}
         description={
           <p>
-            Its variables are removed from {name}’s environment at the next deploy or restart. The group itself is not
+            Its variables are removed from {name}’s variables at the next deploy or restart. The group itself is not
             deleted.
           </p>
         }

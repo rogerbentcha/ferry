@@ -59,17 +59,22 @@ function isApiErrorBody(v: unknown): v is ApiErrorBody {
   return typeof e === 'object' && e !== null && 'message' in e && typeof (e as { message: unknown }).message === 'string'
 }
 
-/** Build `/api/v1/...?a=b`, skipping null/undefined params. */
+/**
+ * Build `/api/v1/...?a=b`, skipping null/undefined params. A query already in
+ * `path` (the `?environment=` of a service or datastore) is kept, first.
+ */
 export function buildUrl(path: string, query?: Query): string {
   const url = `${API_BASE}${path}`
   if (!query) return url
-  const params = new URLSearchParams()
+  const mark = url.indexOf('?')
+  const params = new URLSearchParams(mark === -1 ? '' : url.slice(mark + 1))
   for (const [k, v] of Object.entries(query)) {
     if (v === undefined || v === null) continue
     params.set(k, String(v))
   }
+  const base = mark === -1 ? url : url.slice(0, mark)
   const qs = params.toString()
-  return qs ? `${url}?${qs}` : url
+  return qs ? `${base}?${qs}` : base
 }
 
 /** Encode one path segment (`{id}` = id or name, domains…). */

@@ -21,6 +21,7 @@ import { Hint } from '@/components/ui/tooltip'
 import { errorMessage } from '@/lib/api/client'
 import { streamPaths } from '@/lib/api/endpoints'
 import { useResumeService, useServiceStatus } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { isDeployActive, isDeployFailed, type ServiceView } from '@/lib/api/types'
 import { useLogStream, type LogEntry } from '@/lib/api/useLogStream'
 import { shortId } from '@/lib/format'
@@ -63,12 +64,12 @@ function noLogsReason(service: ServiceView): NoLogsReason | null {
 }
 
 function NoLogsState({ service, reason }: { service: ServiceView; reason: NoLogsReason }) {
-  const resume = useResumeService(service.name)
+  const resume = useResumeService(qualifiedName(service))
   const latest = service.latest_deploy
   const deployLink = (label: string) =>
     latest ? (
       <Button asChild size="tiny" icon={<ScrollText />}>
-        <Link to={servicePath(service.name, `/deploys/${encodeURIComponent(latest.id)}`)}>{label}</Link>
+        <Link to={servicePath(qualifiedName(service), `/deploys/${encodeURIComponent(latest.id)}`)}>{label}</Link>
       </Button>
     ) : null
 
@@ -86,7 +87,7 @@ function NoLogsState({ service, reason }: { service: ServiceView; reason: NoLogs
         }
         actions={
           <Button asChild size="tiny" variant="primary">
-            <Link to={servicePath(service.name, '/jobs')}>View job runs</Link>
+            <Link to={servicePath(qualifiedName(service), '/jobs')}>View job runs</Link>
           </Button>
         }
       />
@@ -148,7 +149,7 @@ function NoLogsState({ service, reason }: { service: ServiceView; reason: NoLogs
       description="Runtime logs stream here once a deploy goes live. Start one with Manual deploy."
       actions={
         <Button asChild size="tiny">
-          <Link to={servicePath(service.name, '/deploys')}>View deploys</Link>
+          <Link to={servicePath(qualifiedName(service), '/deploys')}>View deploys</Link>
         </Button>
       }
     />
@@ -159,9 +160,11 @@ function RuntimeLogs({ service }: { service: ServiceView }) {
   const [tail, setTail] = React.useState<TailOption>('500')
   const [live, setLive] = React.useState(true)
   const [instance, setInstance] = React.useState(ALL_INSTANCES)
-  const status = useServiceStatus(service.name, { intervalMs: 10000 })
+  const ref = qualifiedName(service)
+  const status = useServiceStatus(ref, { intervalMs: 10000 })
 
-  const stream = useLogStream(streamPaths.serviceLogs(service.name), {
+  // Outside production the path carries `?environment=`, kept ahead of the stream's own parameters.
+  const stream = useLogStream(streamPaths.serviceLogs(ref), {
     follow: live,
     tail: tail === 'all' ? undefined : Number(tail),
     maxLines: 10000,

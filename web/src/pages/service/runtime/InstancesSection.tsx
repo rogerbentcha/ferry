@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Hint } from '@/components/ui/tooltip'
 import { errorMessage } from '@/lib/api/client'
 import { useResumeService } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { InstanceStatus, RuntimeStatus, ServiceView } from '@/lib/api/types'
 import { bytes, dateTime, logTime, percent, relativeTime } from '@/lib/format'
 import { formatCpus } from '@/lib/resources'
@@ -326,7 +327,7 @@ export function InstancesSection({
   refreshSeconds,
 }: InstancesSectionProps) {
   const history = useCpuHistory(status, updatedAt)
-  const resume = useResumeService(service.name)
+  const resume = useResumeService(qualifiedName(service))
 
   const live = (
     <span className="inline-flex items-center gap-2 text-[12px] text-foreground-lighter">
@@ -349,7 +350,7 @@ export function InstancesSection({
         }
         actions={
           <Button asChild size="tiny">
-            <Link to={servicePath(service.name, '/jobs')}>View job runs</Link>
+            <Link to={servicePath(qualifiedName(service), '/jobs')}>View job runs</Link>
           </Button>
         }
       />
@@ -411,7 +412,7 @@ export function InstancesSection({
         actions={
           service.latest_deploy ? (
             <Button asChild size="tiny">
-              <Link to={servicePath(service.name, `/deploys/${encodeURIComponent(service.latest_deploy.id)}`)}>
+              <Link to={servicePath(qualifiedName(service), `/deploys/${encodeURIComponent(service.latest_deploy.id)}`)}>
                 View latest deploy
               </Link>
             </Button>
@@ -429,7 +430,7 @@ export function InstancesSection({
               key={inst.container_id}
               instance={inst}
               samples={history[inst.container_id] ?? []}
-              settingsPath={servicePath(service.name, '/settings')}
+              settingsPath={servicePath(qualifiedName(service), '/settings')}
             />
           ))}
         </div>

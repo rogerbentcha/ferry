@@ -14,9 +14,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { errorMessage } from '@/lib/api/client'
 import { useGitConnections, useServerInfo, useTriggerDeploy, useUpdateService } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { ServiceView, SourceKind } from '@/lib/api/types'
 import { RUNTIME_LABELS } from '@/lib/format'
 import { connectionLabel, GIT_PROVIDER_LABELS, pushDelivery } from '@/lib/git'
+import { cliName } from '@/pages/services/lib'
 
 import { servicePath } from '../../context'
 import { useReportDirty, useSyncedForm } from '../hooks'
@@ -43,9 +45,10 @@ export function BuildDeploySection({
   reportDirty: (id: string, dirty: boolean) => void
 }) {
   const name = service.name
+  const ref = qualifiedName(service)
   const navigate = useNavigate()
-  const update = useUpdateService(name)
-  const deploy = useTriggerDeploy(name)
+  const update = useUpdateService(ref)
+  const deploy = useTriggerDeploy(ref)
   const info = useServerInfo()
   const accounts = useGitConnections()
   const server = React.useMemo(() => buildFormFrom(service), [service])
@@ -68,7 +71,7 @@ export function BuildDeploySection({
   // (accounts belong to the server: nothing to choose here).
   const cloner =
     f.repo_url.trim() === form.base.repo_url.trim()
-      ? accounts.data?.find((c) => c.status === 'connected' && c.services.includes(name))
+      ? accounts.data?.find((c) => c.status === 'connected' && c.services.includes(ref))
       : undefined
 
   const set = <K extends keyof BuildForm>(k: K) => (v: BuildForm[K]) => form.patch({ [k]: v } as Partial<BuildForm>)
@@ -103,7 +106,7 @@ export function BuildDeploySection({
                   deploy.mutate(
                     {},
                     {
-                      onSuccess: (d) => void navigate(servicePath(name, `/deploys/${d.id}`)),
+                      onSuccess: (d) => void navigate(servicePath(ref, `/deploys/${d.id}`)),
                       onError: (e2) => toast.error('Could not start the deploy', { description: errorMessage(e2) }),
                     },
                   ),
@@ -217,7 +220,7 @@ export function BuildDeploySection({
             label="Upload code"
             description="Deploys use the most recent upload. Push new code from your machine with the CLI."
           >
-            <CodeBlock code={`ferry up ${name}`} prompt />
+            <CodeBlock code={`ferry up ${cliName(service)}`} prompt />
           </FormRow>
         )}
 

@@ -150,7 +150,7 @@ The file gives the full settings of a service. When you remove a key, the next a
 | `envVarGroups` | [Env groups](#env-vars-and-env-groups) |
 | `databases` | [Postgres databases](#postgres) |
 | `services` | [Services](#services), and [Redis datastores](#redis) with `type: redis` or `keyvalue` |
-| `projects` | The projects of Render. Ferry applies the `services`, `databases` and `envVarGroups` of each entry of `environments` to this server, with a warning. |
+| `projects` | The projects of Render. Ferry applies the `services`, `databases` and `envVarGroups` of each entry of `environments` to the environment `production` of this server, with a warning. |
 
 Ferry ignores each other top-level key with a warning. This includes the `x-` keys that hold a <Term id="yaml-anchor" />. The anchor continues to work.
 
@@ -320,7 +320,7 @@ Most `render.yaml` files apply with no change. A key that Ferry does not support
 | `ipAllowList`, `diskSizeGB`, `maxmemoryPolicy` on a datastore | Ignored, with a warning |
 | `previewValue` and other Render keys of `envVars` | Ignored, with a warning |
 | `image.creds` | Ignored, with a warning. Docker must pull the image with no credentials. |
-| Projects and environments | Ferry has none. It puts their resources on this server. |
+| Projects and environments | Ferry has no projects. A blueprint applies to the [environment](/docs/guides/environments) `production` only. Services and datastores of another environment with the same names do not change. |
 | An entry with no `repo` | Render uses the repository of the blueprint. Ferry has no default: set `repo`, or run `ferry up NAME`. |
 | `autoDeployTrigger: checksPass` | A deploy at each commit, with a warning. Ferry does not wait for checks. |
 | A runtime that Ferry cannot build, such as `elixir` | A warning. Ferry finds the runtime from your files: add a `Dockerfile`. |

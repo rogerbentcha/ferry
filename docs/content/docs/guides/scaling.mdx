@@ -82,7 +82,7 @@ INSTANCE   DEPLOY     STATE     PORT    CPU            MEMORY                 RE
 
 ### How the instances share the work
 
-The <Term id="proxy" /> gives the requests of a web service or a static site to each instance in turn. This is <Term id="round-robin" />. On the <Term id="private-network" />, the name of the service gives the addresses of all its instances. Each instance of a worker runs the same start command.
+The <Term id="proxy" /> gives the requests of a web service or a static site to each instance in turn. This is <Term id="round-robin" />. On the <Term id="private-network" /> of its environment, the name of the service gives the addresses of all its instances. Each instance of a worker runs the same start command.
 
 Two requests of one user can go to two different instances. Keep shared data, for example sessions, in a database and not in the memory of one instance.
 

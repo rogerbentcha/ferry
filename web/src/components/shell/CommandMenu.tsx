@@ -4,6 +4,7 @@ import {
   Braces,
   ExternalLink,
   History,
+  Layers,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -36,11 +37,13 @@ import { errorMessage } from '@/lib/api/client'
 import {
   useDatastores,
   useEnvGroups,
+  useEnvironments,
   useRestartService,
   useService,
   useServices,
   useTriggerDeploy,
 } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { DATASTORE_KIND_LABELS, SERVICE_TYPE_LABELS } from '@/lib/format'
 import { signOut } from '@/lib/api/session'
 import { useUi } from '@/stores/ui'
@@ -48,7 +51,7 @@ import { useUi } from '@/stores/ui'
 import { NAV_ITEMS } from './nav'
 import { useRouteResource } from './useRouteResource'
 
-/** ⌘K palette: jump to any service / datastore / env group / page, plus common actions. */
+/** ⌘K palette: jump to any service / datastore / env group / environment / page, plus common actions. */
 export function CommandMenu() {
   const open = useUi((s) => s.commandOpen)
   const setOpen = useUi((s) => s.setCommandOpen)
@@ -61,6 +64,7 @@ export function CommandMenu() {
   const services = useServices()
   const datastores = useDatastores()
   const groups = useEnvGroups()
+  const environments = useEnvironments()
   const { data: service } = useService(current)
   const deploy = useTriggerDeploy(current ?? '')
   const restart = useRestartService(current ?? '')
@@ -80,7 +84,8 @@ export function CommandMenu() {
   }
   const go = (to: string) => run(() => void navigate(to))
 
-  const svcPath = (name: string, sub = '') => `/services/${encodeURIComponent(name)}${sub}`
+  // `ref`: a qualified name (`api`, `api.staging`) or an id, like the route's `:name`.
+  const svcPath = (ref: string, sub = '') => `/services/${encodeURIComponent(ref)}${sub}`
 
   // Side-effect actions (deploy, restart) come last so the pre-highlighted item is harmless
   // (⌘K then Enter). Once the user types, they move first: typed intent ("restart") should win
@@ -155,9 +160,9 @@ export function CommandMenu() {
                 keywords={['jobs', 'run', 'one-off', 'migrate']} onSelect={() => go(svcPath(current, '/jobs'))}>
                 <ListChecks /> Jobs
               </CommandItem>
-              <CommandItem value={`Environment ${current}`}
-                keywords={['env', 'variables', 'secrets']} onSelect={() => go(svcPath(current, '/environment'))}>
-                <SlidersHorizontal /> Environment
+              <CommandItem value={`Variables ${current}`}
+                keywords={['env', 'environment variables', 'secrets']} onSelect={() => go(svcPath(current, '/environment'))}>
+                <SlidersHorizontal /> Variables
               </CommandItem>
               <CommandItem value={`Settings ${current}`}
                 keywords={['settings', 'domains', 'build']} onSelect={() => go(svcPath(current, '/settings'))}>
@@ -179,11 +184,13 @@ export function CommandMenu() {
 
         {(services.data?.length ?? 0) > 0 && (
           <CommandGroup heading="Services">
+            {/* Qualified names: `api` of production and `api` of staging are two services. */}
             {services.data?.map((s) => (
-              <CommandItem key={s.id} value={s.name}
-                keywords={['service', SERVICE_TYPE_LABELS[s.type]]} onSelect={() => go(svcPath(s.name))}>
+              <CommandItem key={s.id} value={qualifiedName(s)}
+                keywords={['service', SERVICE_TYPE_LABELS[s.type], s.environment]}
+                onSelect={() => go(svcPath(qualifiedName(s)))}>
                 <ServiceTypeIcon type={s.type} />
-                <span className="truncate">{s.name}</span>
+                <span className="truncate">{qualifiedName(s)}</span>
                 <span className="ml-auto flex items-center gap-2 text-[12px] text-foreground-lighter">
                   {SERVICE_TYPE_LABELS[s.type]}
                   <StatusDot tone={SERVICE_STATE_TONE[s.state].tone} />
@@ -196,10 +203,11 @@ export function CommandMenu() {
         {(datastores.data?.length ?? 0) > 0 && (
           <CommandGroup heading="Datastores">
             {datastores.data?.map((d) => (
-              <CommandItem key={d.id} value={`datastore ${d.name}`}
-                keywords={[d.name, d.kind, 'database']} onSelect={() => go(`/datastores/${encodeURIComponent(d.name)}`)}>
+              <CommandItem key={d.id} value={`datastore ${qualifiedName(d)}`}
+                keywords={[d.name, d.kind, 'database', d.environment]}
+                onSelect={() => go(`/datastores/${encodeURIComponent(qualifiedName(d))}`)}>
                 <DatastoreKindIcon kind={d.kind} />
-                <span className="truncate">{d.name}</span>
+                <span className="truncate">{qualifiedName(d)}</span>
                 <span className="ml-auto text-[12px] text-foreground-lighter">
                   {DATASTORE_KIND_LABELS[d.kind]} {d.version}
                 </span>
@@ -212,11 +220,27 @@ export function CommandMenu() {
           <CommandGroup heading="Env groups">
             {groups.data?.map((g) => (
               <CommandItem key={g.id} value={`env group ${g.name}`}
-                keywords={[g.name, 'environment']} onSelect={() => go(`/env-groups/${encodeURIComponent(g.name)}`)}>
+                keywords={[g.name, 'variables']} onSelect={() => go(`/env-groups/${encodeURIComponent(g.name)}`)}>
                 <Braces />
                 <span className="truncate">{g.name}</span>
                 <span className="ml-auto text-[12px] text-foreground-lighter">
                   {g.vars.length} var{g.vars.length === 1 ? '' : 's'}
+                </span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {/* Production alone is the Environments page itself. */}
+        {(environments.data?.length ?? 0) > 1 && (
+          <CommandGroup heading="Environments">
+            {environments.data?.map((e) => (
+              <CommandItem key={e.id} value={`environment ${e.name}`}
+                keywords={[e.name, 'network', 'staging']} onSelect={() => go(`/environments/${encodeURIComponent(e.name)}`)}>
+                <Layers />
+                <span className="truncate">{e.name}</span>
+                <span className="ml-auto text-[12px] text-foreground-lighter">
+                  {e.services.length} service{e.services.length === 1 ? '' : 's'}
                 </span>
               </CommandItem>
             ))}

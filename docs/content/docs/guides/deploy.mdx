@@ -175,7 +175,7 @@ The build gets the <Term id="env-var">environment variables</Term> of the servic
 RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN npm ci
 ```
 
-This needs Docker Engine 27.3 or newer on the server. The build does not get `PORT` and the other variables that Ferry adds when the app runs. See [Environment variables and secrets](/docs/guides/environment).
+This needs Docker Engine 27.3 or newer on the server. The build does not get `PORT` and the other variables that Ferry adds when the app runs. See [Variables and secrets](/docs/guides/variables).
 
 ### The build cache
 

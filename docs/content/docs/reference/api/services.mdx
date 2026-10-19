@@ -74,17 +74,22 @@ _openapi:
       - content: Runtime logs (SSE)
         id: runtime-logs-sse
     contents:
-      - content: Every service with its computed fields. The `state` of live services
-          reflects their running instances (`degraded` when some are down), from
-          counts refreshed at most every few seconds.
+      - content: Every service with its computed fields, or those of one `environment`.
+          The `state` of live services reflects their running instances
+          (`degraded` when some are down), from counts refreshed at most every
+          few seconds.
         heading: list-services
-      - content: Creates the service with its own variables and env group links, then
-          queues a first deploy (trigger `create`) when it has a repository or
-          an image, unless `deploy` is `false`. Services and datastores share
-          one namespace of names. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and
-          `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit every instance
-          and job run of the service; omitted or `0` = the server default (see
-          `GET /api/v1/info`).
+      - content: 'Creates the service in its `environment` (omitted: `production`) with
+          its own variables and env group links, then queues a first deploy
+          (trigger `create`) when it has a repository or an image, unless
+          `deploy` is `false`. A name is unique in its environment, which
+          services and datastores share: another environment may use the same
+          names. Outside `production` a web service answers at
+          `<service>.<environment>.<domain>`, and its variables reference the
+          datastores and services of its environment only. `memory_limit_mb`
+          (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to
+          0.01) limit every instance and job run of the service; omitted or `0`
+          = the server default (see `GET /api/v1/info`).'
         heading: create-a-service
       - content: "Every field is optional; for optional string settings an empty string
           clears the value. `instances` scales, `suspended` suspends or resumes,

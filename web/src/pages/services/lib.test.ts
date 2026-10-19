@@ -2,12 +2,22 @@ import { describe, expect, it } from 'vitest'
 
 import type { ServiceView } from '@/lib/api/types'
 
-import { countByState, matchesQuery, parseStatusParam, previewServiceUrl, since, sortServices, sourceLine } from './lib'
+import {
+  cliName,
+  countByState,
+  matchesQuery,
+  parseStatusParam,
+  previewServiceUrl,
+  since,
+  sortServices,
+  sourceLine,
+} from './lib'
 
 function svc(patch: Partial<ServiceView>): ServiceView {
   return {
     id: 'srv-1',
     name: 'web',
+    environment: 'production',
     type: 'web_service',
     repo_url: null,
     branch: 'main',
@@ -102,6 +112,11 @@ describe('services list helpers', () => {
     expect(previewServiceUrl('api', { ...info, default_domain: 'example.com', tls_enabled: true })).toBe(
       'https://api.example.com',
     )
+  })
+
+  it('names a service of another environment to the CLI with --environment', () => {
+    expect(cliName(svc({ name: 'api' }))).toBe('api')
+    expect(cliName(svc({ name: 'api', environment: 'staging' }))).toBe('api --environment staging')
   })
 
   it('never shows future times for fresh deploys', () => {

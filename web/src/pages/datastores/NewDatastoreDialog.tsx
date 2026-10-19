@@ -19,15 +19,19 @@ import {
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { errorMessage } from '@/lib/api/client'
-import { useCreateDatastore, useDatastores, useServerInfo, useServices } from '@/lib/api/queries'
-import { DATASTORE_KINDS, type CreateDatastore, type DatastoreKind, type DatastoreView } from '@/lib/api/types'
+import { useCreateDatastore, useDatastores, useEnvironments, useServerInfo, useServices } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
+import { DATASTORE_KINDS, PRODUCTION, type CreateDatastore, type DatastoreKind, type DatastoreView } from '@/lib/api/types'
 import { DATASTORE_KIND_LABELS } from '@/lib/format'
 import { DEFAULT_LIMIT, limitError, limitValue, type LimitField } from '@/lib/resources'
 import { cn } from '@/lib/utils'
+import { inEnvironment } from '@/pages/environments/lib'
+import { EnvironmentSelect } from '@/pages/environments/parts'
 
 import {
   DATASTORE_KIND_DESCRIPTIONS,
   DATASTORE_VERSIONS,
+  datastorePath,
   defaultDatabaseName,
   pgIdentifierError,
   resourceNameError,
@@ -85,15 +89,29 @@ function notifyProvisioned(result: Settled, toastId?: string | number) {
   }
 }
 
-/** "New datastore" modal: name, kind, version, database / user for Postgres, and optional resource limits. */
-export function NewDatastoreDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+/**
+ * "New datastore" modal: name, environment, kind, version, database / user for
+ * Postgres, and optional resource limits. `environment` is the one picked
+ * when it opens (default production).
+ */
+export function NewDatastoreDialog({
+  open,
+  onOpenChange,
+  environment: initialEnvironment = PRODUCTION,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  environment?: string
+}) {
   const navigate = useNavigate()
   const create = useCreateDatastore()
   const { data: datastores } = useDatastores()
   const { data: services } = useServices()
+  const { data: environments } = useEnvironments()
   const { data: info } = useServerInfo()
   const ids = {
     name: React.useId(),
+    environment: React.useId(),
     version: React.useId(),
     database: React.useId(),
     username: React.useId(),
@@ -103,6 +121,7 @@ export function NewDatastoreDialog({ open, onOpenChange }: { open: boolean; onOp
   }
 
   const [name, setName] = React.useState('')
+  const [environment, setEnvironment] = React.useState(initialEnvironment)
   const [kind, setKind] = React.useState<DatastoreKind>('postgres')
   const [version, setVersion] = React.useState(DATASTORE_VERSIONS.postgres.default)
   const [database, setDatabase] = React.useState('')
@@ -117,6 +136,7 @@ export function NewDatastoreDialog({ open, onOpenChange }: { open: boolean; onOp
 
   const reset = () => {
     setName('')
+    setEnvironment(initialEnvironment)
     setKind('postgres')
     setVersion(DATASTORE_VERSIONS.postgres.default)
     setDatabase('')
@@ -129,9 +149,14 @@ export function NewDatastoreDialog({ open, onOpenChange }: { open: boolean; onOp
     setPending(false)
   }
 
+  // Names are unique in an environment only (shared by its services and datastores).
   const taken = React.useMemo(
-    () => new Set([...(datastores ?? []).map((d) => d.name), ...(services ?? []).map((s) => s.name)]),
-    [datastores, services],
+    () =>
+      new Set([
+        ...inEnvironment(datastores ?? [], environment).map((d) => d.name),
+        ...inEnvironment(services ?? [], environment).map((s) => s.name),
+      ]),
+    [datastores, services, environment],
   )
   const trimmed = name.trim()
   const nameError = resourceNameError(trimmed, taken)
@@ -151,6 +176,8 @@ export function NewDatastoreDialog({ open, onOpenChange }: { open: boolean; onOp
     setSubmitError(null)
     setPending(true)
     const body: CreateDatastore = { name: trimmed, kind }
+    // Production is the server's default: left out, like an older client.
+    if (environment !== PRODUCTION) body.environment = environment
     if (version) body.version = version
     if (kind === 'postgres') {
       if (database.trim()) body.database = database.trim()
@@ -168,7 +195,7 @@ export function NewDatastoreDialog({ open, onOpenChange }: { open: boolean; onOp
       settled,
       new Promise<null>((resolve) => setTimeout(() => resolve(null), FOREGROUND_MS)),
     ])
-    const path = `/datastores/${encodeURIComponent(trimmed)}`
+    const path = datastorePath(qualifiedName({ name: trimmed, environment }))
     if (first === null) {
       // Still provisioning (image pull, readiness probe): continue in the background.
       const toastId = toast.loading(`Provisioning ${trimmed}…`, {
@@ -235,6 +262,20 @@ export function NewDatastoreDialog({ open, onOpenChange }: { open: boolean; onOp
                 onChange={(e) => setName(e.target.value.toLowerCase())}
                 aria-invalid={shownNameError ? true : undefined}
                 aria-describedby={`${ids.name}-${shownNameError ? 'error' : 'hint'}`}
+              />
+            </Field>
+
+            <Field
+              id={ids.environment}
+              label="Environment"
+              hint="Only the services of this environment reach it. It can’t be changed later."
+            >
+              <EnvironmentSelect
+                id={ids.environment}
+                value={environment}
+                onChange={setEnvironment}
+                environments={environments}
+                describedBy={`${ids.environment}-hint`}
               />
             </Field>
 

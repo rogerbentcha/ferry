@@ -6,13 +6,13 @@ use std::net::IpAddr;
 
 use ferry_core::config::is_local_host;
 use ferry_core::dto::{
-    CertificateState, CertificateView, DatastoreView, DomainView, EnvGroupView, GitConnectionStatus, GitConnectionView,
-    ServiceView,
+    CertificateState, CertificateView, DatastoreView, DomainView, EnvGroupView, EnvironmentDns, EnvironmentView,
+    GitConnectionStatus, GitConnectionView, ServiceView,
 };
 use ferry_core::tls::{CertificateStatus, Certificates};
 use ferry_core::{
-    Config, Datastore, Deploy, DeploySource, Domain, EnvGroup, GitAuth, GitConnection, Result, Service, Store,
-    compute_service_state, git, git_connection_for,
+    Config, Datastore, Deploy, DeploySource, Domain, EnvGroup, Environment, GitAuth, GitConnection, Result, Service,
+    Store, compute_service_state, git, git_connection_for, host_label,
 };
 
 use crate::runtime;
@@ -67,6 +67,46 @@ pub fn public_deploy(mut deploy: Deploy) -> Deploy {
     deploy
 }
 
+/// Build the [`EnvironmentView`] of an environment: what it holds, where
+/// its services are found and, outside `production`, the wildcard DNS
+/// record each domain of the server that is not local needs for them
+/// (`*.staging`, pointing at `addresses`; production's are covered by the
+/// domain's own `*`).
+pub async fn environment_view(
+    store: &Store,
+    config: &Config,
+    environment: Environment,
+    addresses: &[IpAddr],
+) -> Result<EnvironmentView> {
+    let (services, datastores) = store.environment_members(&environment.name).await?;
+    let label = host_label("<service>", &environment.name);
+    let dns = if environment.is_production() {
+        Vec::new()
+    } else {
+        config
+            .claimed_domains()
+            .into_iter()
+            .filter(|d| !is_local_host(d))
+            .map(|domain| EnvironmentDns {
+                wildcard: format!("*.{}.{domain}", environment.name),
+                records: ferry_core::domains::dns_records(addresses)
+                    .into_iter()
+                    .filter(|r| r.name == "*")
+                    .map(|r| ferry_core::dto::DnsRecord { name: format!("*.{}", environment.name), ..r })
+                    .collect(),
+                domain,
+            })
+            .collect()
+    };
+    Ok(EnvironmentView {
+        url_pattern: config.url_for_host(&format!("{label}.{}", config.primary_domain())),
+        services: services.into_iter().map(|s| s.name).collect(),
+        datastores: datastores.into_iter().map(|d| d.name).collect(),
+        dns,
+        environment,
+    })
+}
+
 /// Build the [`DatastoreView`] of a datastore.
 pub fn datastore_view(config: &Config, datastore: Datastore) -> DatastoreView {
     DatastoreView {
@@ -90,7 +130,7 @@ pub async fn git_connection_users(
         if let Some(repo) = service.repo_url.as_deref()
             && let Some(connection) = git_connection_for(connections, repo)
         {
-            users.entry(connection.id.clone()).or_default().push(service.name);
+            users.entry(connection.id.clone()).or_default().push(service.qualified_name());
         }
     }
     for names in users.values_mut() {
@@ -200,7 +240,7 @@ pub fn certificate_view(
 /// Build the [`EnvGroupView`] of an env group.
 pub async fn env_group_view(store: &Store, group: EnvGroup) -> Result<EnvGroupView> {
     let vars = store.list_env(&group.id).await?;
-    let services = store.env_group_services(&group.id).await?.into_iter().map(|s| s.name).collect();
+    let services = store.env_group_services(&group.id).await?.iter().map(Service::qualified_name).collect();
     Ok(EnvGroupView { group, vars, services })
 }
 

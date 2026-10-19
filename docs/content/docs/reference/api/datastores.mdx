@@ -34,12 +34,18 @@ _openapi:
       - content: Delete a datastore
         id: delete-a-datastore
     contents:
-      - content: Creates the row (`creating`) and provisions the container. A failed
-          provisioning still answers 201, with status `failed` and the reason in
-          `error`. Datastores and services share one namespace of names.
-          `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01
-          to 512, rounded to 0.01) limit the container; omitted or `0` = the
-          server default (see `GET /api/v1/info`).
+      - content: Every datastore with its connection info, or those of one
+          `environment`.
+        heading: list-datastores
+      - content: "Creates the row (`creating`) in its `environment` (omitted:
+          `production`) and provisions the container on that environment's
+          private network: only its services reach it. A failed provisioning
+          still answers 201, with status `failed` and the reason in `error`. A
+          name is unique in its environment, which datastores and services
+          share: another environment may use the same names. `memory_limit_mb`
+          (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to
+          0.01) limit the container; omitted or `0` = the server default (see
+          `GET /api/v1/info`)."
         heading: create-a-datastore
       - content: "Every field is optional: `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and
           `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01); `0` = back to the

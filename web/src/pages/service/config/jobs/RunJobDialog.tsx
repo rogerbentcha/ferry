@@ -17,6 +17,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { errorMessage } from '@/lib/api/client'
 import { useRunJob } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { ServiceView } from '@/lib/api/types'
 import { shortId } from '@/lib/format'
 
@@ -36,8 +37,9 @@ interface RunJobDialogProps {
  */
 export function RunJobDialog({ service, open, onOpenChange, initialCommand = '' }: RunJobDialogProps) {
   const name = service.name
+  const ref = qualifiedName(service)
   const navigate = useNavigate()
-  const run = useRunJob(name)
+  const run = useRunJob(ref)
   const [command, setCommand] = React.useState(initialCommand)
   const [error, setError] = React.useState<string | null>(null)
   const [touched, setTouched] = React.useState(false)
@@ -61,7 +63,7 @@ export function RunJobDialog({ service, open, onOpenChange, initialCommand = '' 
         onSuccess: (job) => {
           onOpenChange(false)
           toast.success('Job started', { description: trimmed || 'Running the scheduled command' })
-          void navigate(servicePath(name, `/jobs/${encodeURIComponent(job.id)}`), { state: { focus: 'heading' } })
+          void navigate(servicePath(ref, `/jobs/${encodeURIComponent(job.id)}`), { state: { focus: 'heading' } })
         },
         onError: (err) => setError(errorMessage(err)),
       },
@@ -89,7 +91,7 @@ export function RunJobDialog({ service, open, onOpenChange, initialCommand = '' 
             <DialogTitle>Run a job on {name}</DialogTitle>
             <DialogDescription>
               Runs in a new container from the live deploy
-              {service.live_deploy_id ? ` (${shortId(service.live_deploy_id)})` : ''}, with the service’s environment and
+              {service.live_deploy_id ? ` (${shortId(service.live_deploy_id)})` : ''}, with the service’s variables and
               private network{service.disk_mount_path ? ' and its disk' : ''}. No port is exposed.
             </DialogDescription>
           </DialogHeader>

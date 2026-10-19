@@ -105,16 +105,17 @@ _openapi:
           but the loopback and Docker's own) — the CPU seconds and the disks'
           bytes count from the start of the machine, an interface's bytes from
           its own start. The containers, every running service instance and
-          datastore by `kind`, `id`, `name` and `instance_id` (services only;
+          datastore by `kind`, `id`, `name` (its qualified name: `api` in
+          production, `api.staging` elsewhere) and `instance_id` (services only;
           not `instance`, which Prometheus gives the target):
           `ferry_container_cpu_percent` (100 = one core) and
           `ferry_container_memory_bytes`. The requests, by `target` (a service
-          id, `dashboard` or `unrouted`) and `name`:
-          `ferry_http_requests_total{status_class}` (`2xx` to `5xx`) and the
-          histogram `ferry_http_request_duration_seconds` (until the response
-          headers, WebSockets left out), counted from the start of ferryd. A
-          value the server can't read (on macOS, most host values) is left out,
-          never published as 0."
+          id, `dashboard` or `unrouted`) and `name` (a service's qualified
+          name): `ferry_http_requests_total{status_class}` (`2xx` to `5xx`) and
+          the histogram `ferry_http_request_duration_seconds` (until the
+          response headers, WebSockets left out), counted from the start of
+          ferryd. A value the server can't read (on macOS, most host values) is
+          left out, never published as 0."
         heading: metrics-in-the-prometheus-format
 ---
 

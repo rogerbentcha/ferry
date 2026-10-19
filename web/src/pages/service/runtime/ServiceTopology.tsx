@@ -8,9 +8,11 @@ import { StatusDot } from '@/components/patterns/StatusBadge'
 import { DATASTORE_STATUS_TONE, SERVICE_STATE_TONE, type StatusTone } from '@/components/patterns/status-tones'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDatastores, useEnvGroups, useServiceEnv, useServices } from '@/lib/api/queries'
+import { findInEnvironment, qualifiedName } from '@/lib/api/refs'
 import type { ServiceView } from '@/lib/api/types'
 import { DATASTORE_KIND_LABELS, displayUrl, plural, SERVICE_TYPE_LABELS } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { datastorePath } from '@/pages/datastores/lib'
 
 import { servicePath } from '../context'
 import { referencedResources } from './env-refs'
@@ -30,7 +32,7 @@ interface TopologyNode {
 }
 
 function useTopologyNodes(service: ServiceView) {
-  const env = useServiceEnv(service.name)
+  const env = useServiceEnv(qualifiedName(service))
   const datastores = useDatastores()
   const groups = useEnvGroups()
   const services = useServices()
@@ -45,21 +47,22 @@ function useTopologyNodes(service: ServiceView) {
         name: group?.name ?? g,
         to: `/env-groups/${encodeURIComponent(group?.name ?? g)}`,
         icon: <Braces />,
-        subtitle: 'Environment group',
+        subtitle: 'Env group',
         meta: group ? plural(group.vars.length, 'variable') : undefined,
         tone: null,
         missing: groups.isSuccess && !group,
       })
     }
+    // A reference names a datastore or service of the service's own environment.
     for (const ref of referencedResources(env.data ?? [])) {
       const via = `via ${ref.keys.join(', ')}`
       if (ref.kind === 'datastore') {
-        const ds = datastores.data?.find((d) => d.name === ref.name)
+        const ds = findInEnvironment(datastores.data, ref.name, service.environment)
         out.push({
           id: `datastore:${ref.name}`,
           kind: 'datastore',
           name: ref.name,
-          to: ds ? `/datastores/${encodeURIComponent(ds.name)}` : null,
+          to: ds ? datastorePath(qualifiedName(ds)) : null,
           icon: <DatastoreKindIcon kind={ds?.kind ?? 'postgres'} />,
           subtitle: ds ? `${DATASTORE_KIND_LABELS[ds.kind]} ${ds.version}` : 'Datastore',
           meta: via,
@@ -67,12 +70,12 @@ function useTopologyNodes(service: ServiceView) {
           missing: datastores.isSuccess && !ds,
         })
       } else if (ref.name !== service.name) {
-        const svc = services.data?.find((s) => s.name === ref.name)
+        const svc = findInEnvironment(services.data, ref.name, service.environment)
         out.push({
           id: `service:${ref.name}`,
           kind: 'service',
           name: ref.name,
-          to: svc ? servicePath(svc.name) : null,
+          to: svc ? servicePath(qualifiedName(svc)) : null,
           icon: <ServiceTypeIcon type={svc?.type ?? 'web_service'} />,
           subtitle: svc ? SERVICE_TYPE_LABELS[svc.type] : 'Service',
           meta: via,
@@ -85,6 +88,7 @@ function useTopologyNodes(service: ServiceView) {
   }, [
     service.env_groups,
     service.name,
+    service.environment,
     env.data,
     datastores.data,
     datastores.isSuccess,
@@ -305,7 +309,7 @@ export function ServiceTopology({ service }: { service: ServiceView }) {
         <MonoLabel>{nodes.length > 0 ? `Depends on ${nodes.length}` : 'No connections'}</MonoLabel>
         <span className="text-[12px] text-foreground-lighter">
           {error ? (
-            <span className="text-destructive">Could not read the environment</span>
+            <span className="text-destructive">Could not read the variables</span>
           ) : nodes.length > 0 ? (
             'Env groups and ${{…}} references'
           ) : (

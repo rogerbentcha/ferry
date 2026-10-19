@@ -7,8 +7,9 @@
 #   curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh
 #   curl -fsSL .../install.sh | sudo sh -s -- --base-domain apps.example.com --acme-email you@example.com
 #
-# Ubuntu 22.04 / 24.04 and Debian 12 / 13, x86_64 and arm64. Every check runs
-# before the first change: a server the script refuses is left as it was.
+# Ubuntu 22.04 / 24.04 / 26.04 and Debian 12 / 13, x86_64 and arm64. Every
+# check runs before the first change: a server the script refuses is left as
+# it was.
 #
 # FERRY_RELEASE_URL replaces the release it downloads from (the release
 # workflow points it at the assets it just built, with file://).
@@ -18,7 +19,7 @@ PATH=$PATH:/usr/local/sbin:/usr/sbin:/sbin
 
 INSTALL_URL=https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh
 RELEASE_URL=${FERRY_RELEASE_URL:-https://github.com/rogerbentcha/ferry/releases/latest/download}
-SUPPORTED='Ubuntu 22.04 and 24.04, Debian 12 and 13, on x86_64 and arm64 (aarch64)'
+SUPPORTED='Ubuntu 22.04, 24.04 and 26.04, Debian 12 and 13, on x86_64 and arm64 (aarch64)'
 BIN_DIR=/usr/local/bin
 DATA_DIR=/var/lib/ferry
 CONFIG_DIR=/etc/ferry
@@ -109,7 +110,7 @@ check_system() {
     *) cpu= ;;
   esac
   case "$os_id $os_version" in
-    "ubuntu 22.04" | "ubuntu 24.04" | "debian 12" | "debian 13") ;;
+    "ubuntu 22.04" | "ubuntu 24.04" | "ubuntu 26.04" | "debian 12" | "debian 13") ;;
     *) cpu= ;;
   esac
   [ -n "$cpu" ] || fail "Ferry installs on $SUPPORTED." "This server runs $os_name on $arch. The script changed nothing."

@@ -9,7 +9,7 @@
 //! ```
 //!
 //! `kind` is `service`, `deploy`, `datastore`, `env_group`, `job`,
-//! `git_connection` or `domain`; `action` is `created`, `updated` or `deleted`;
+//! `git_connection`, `domain` or `environment`; `action` is `created`, `updated` or `deleted`;
 //! `service_id` is set for services (their own id), deploys and jobs, `null`
 //! otherwise. A subscriber that falls
 //! behind gets `{"kind":"all","id":"*","service_id":null,"action":"resync"}`
@@ -24,7 +24,7 @@
 //! the feed **polls** the store: one shared detector task (started with the
 //! first subscriber, stopped when the last one leaves) fingerprints every
 //! service (row, own variables, env group links), datastore, env group (row,
-//! variables, linked services), git connection, domain and the recent / active
+//! variables, linked services), git connection, domain, environment and the recent / active
 //! deploys and job runs every [`POLL`], and broadcasts the differences. Every
 //! mutating request also nudges it, so API-driven changes are reported at once.
 
@@ -299,6 +299,7 @@ struct Snapshot {
     env_groups: HashMap<String, u64>,
     git_connections: HashMap<String, u64>,
     domains: HashMap<String, u64>,
+    environments: HashMap<String, u64>,
     deploys: Window,
     jobs: Window,
 }
@@ -344,6 +345,7 @@ impl Snapshot {
         // The whole row: a verification that finds what the last one found
         // still says when the domain was looked at.
         let domains = rows_by_id(&mut tx, "domains", "*").await?;
+        let environments = rows_by_id(&mut tx, "environments", "*").await?;
         let deploys = window(&mut tx, "deploys", "('queued', 'building', 'deploying')").await?;
         let jobs = window(&mut tx, "job_runs", "('pending', 'running')").await?;
         tx.rollback().await?;
@@ -363,16 +365,18 @@ impl Snapshot {
                 (id, fp)
             })
             .collect();
-        Ok(Snapshot { services, datastores, env_groups, git_connections, domains, deploys, jobs })
+        Ok(Snapshot { services, datastores, env_groups, git_connections, domains, environments, deploys, jobs })
     }
 
-    /// What changed from `self` to `next`, in a stable order: env groups,
-    /// datastores, git connections, domains, services, deploys, jobs;
-    /// creations and updates before deletions.
+    /// What changed from `self` to `next`, in a stable order: environments,
+    /// env groups, datastores, git connections, domains, services, deploys,
+    /// jobs; creations and updates before deletions.
     fn diff(&self, next: &Snapshot) -> Vec<Change> {
         let mut out = Vec::new();
         let mut deleted = Vec::new();
         for (kind, before, after) in [
+            // Before what they hold.
+            ("environment", &self.environments, &next.environments),
             ("env_group", &self.env_groups, &next.env_groups),
             ("datastore", &self.datastores, &next.datastores),
             ("git_connection", &self.git_connections, &next.git_connections),

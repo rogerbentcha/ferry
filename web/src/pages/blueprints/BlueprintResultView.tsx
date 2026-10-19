@@ -8,12 +8,14 @@ import { DeployStatusBadge } from '@/components/patterns/StatusBadge'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useDeploy, useServices } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { BlueprintResult, Deploy } from '@/lib/api/types'
 import { DEPLOY_TRIGGER_LABELS, plural, relativeTime, shortId } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { countActions } from './lib'
 
+// A blueprint applies to production: its names are production's (their own qualified names).
 const RESOURCE_META: Record<string, { label: string; icon: typeof Boxes; path: (name: string) => string }> = {
   service: { label: 'Service', icon: Boxes, path: (n) => `/services/${encodeURIComponent(n)}` },
   datastore: { label: 'Datastore', icon: Database, path: (n) => `/datastores/${encodeURIComponent(n)}` },
@@ -172,7 +174,7 @@ function DeployRow({ deploy, serviceName }: { deploy: Deploy; serviceName: strin
 
 function DeploysTable({ deploys }: { deploys: Deploy[] }) {
   const { data: services } = useServices()
-  const names = new Map((services ?? []).map((s) => [s.id, s.name]))
+  const names = new Map((services ?? []).map((s) => [s.id, qualifiedName(s)]))
   return (
     <Table>
       <TableHeader>

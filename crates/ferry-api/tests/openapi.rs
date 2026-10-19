@@ -95,6 +95,10 @@ const ROUTES: &[(&str, &str)] = &[
     ("PATCH", "/api/v1/datastores/{id}"),
     ("DELETE", "/api/v1/datastores/{id}"),
     // env groups
+    ("GET", "/api/v1/environments"),
+    ("POST", "/api/v1/environments"),
+    ("GET", "/api/v1/environments/{id}"),
+    ("DELETE", "/api/v1/environments/{id}"),
     ("GET", "/api/v1/env-groups"),
     ("POST", "/api/v1/env-groups"),
     ("GET", "/api/v1/env-groups/{id}"),
@@ -138,6 +142,7 @@ const TAGS: &[&str] = &[
     "services",
     "deploys",
     "env",
+    "environments",
     "env-groups",
     "domains",
     "jobs",
@@ -364,7 +369,7 @@ async fn streams_and_special_bodies_are_documented() {
     let logs = op("GET", "/api/v1/services/{id}/logs");
     let names: BTreeSet<&str> =
         logs["parameters"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
-    assert_eq!(names, BTreeSet::from(["id", "follow", "tail"]));
+    assert_eq!(names, BTreeSet::from(["id", "environment", "follow", "tail"]));
 
     let server_logs = op("GET", "/api/v1/server/logs");
     let names: BTreeSet<&str> =
@@ -382,6 +387,31 @@ async fn streams_and_special_bodies_are_documented() {
         hook["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/GithubHookResponse"
     );
+}
+
+/// Names are unique in an environment only: every route that names one
+/// service or datastore in its path documents `?environment=` (DESIGN.md
+/// §23), and nothing else does.
+#[tokio::test]
+async fn routes_of_one_service_or_datastore_take_an_environment() {
+    let app = TestApp::new().await;
+    let doc = document(&app).await;
+    let mut scoped = Vec::new();
+    for ((method, path), op) in operations(&doc) {
+        let params = op["parameters"].as_array().cloned().unwrap_or_default();
+        let environment = params.iter().find(|p| p["name"] == "environment");
+        let names_one = path.starts_with("/api/v1/services/{id}") || path.starts_with("/api/v1/datastores/{id}");
+        let listing = matches!(path.as_str(), "/api/v1/services" | "/api/v1/datastores") && method == "GET";
+        if names_one {
+            let p = environment.unwrap_or_else(|| panic!("{method} {path} has no environment parameter"));
+            assert_eq!((p["in"].as_str(), p["required"].as_bool()), (Some("query"), Some(false)), "{method} {path}");
+            assert!(p["description"].as_str().unwrap().contains("`production`"), "{method} {path}");
+            scoped.push(format!("{method} {path}"));
+        } else if !listing {
+            assert!(environment.is_none(), "{method} {path} documents an environment it doesn't take");
+        }
+    }
+    assert!(scoped.len() >= 25, "{scoped:?}");
 }
 
 /// The router's answer to an unrouted request: 405, or the JSON 404 of a

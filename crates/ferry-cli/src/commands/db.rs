@@ -21,6 +21,7 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(180);
 pub fn create_request(a: &DbCreateArgs) -> CreateDatastore {
     CreateDatastore {
         name: a.name.clone(),
+        environment: a.environment.clone(),
         kind: a.kind,
         version: a.version.clone(),
         database: a.database.clone(),
@@ -62,7 +63,9 @@ pub async fn create(ctx: &Ctx, a: DbCreateArgs) -> Result<()> {
         )?;
         match d.status {
             DatastoreStatus::Available => outln!("Internal URL: {}", resp.data.internal_url)?,
-            DatastoreStatus::Creating => outln!("Check progress with: ferry db show {}", d.name)?,
+            DatastoreStatus::Creating => {
+                outln!("Check progress with: ferry db show {}{}", d.name, super::environment_flag(&d.environment))?
+            }
             DatastoreStatus::Failed => {}
         }
     }
@@ -75,20 +78,36 @@ pub async fn create(ctx: &Ctx, a: DbCreateArgs) -> Result<()> {
     Ok(())
 }
 
-pub async fn list(ctx: &Ctx) -> Result<()> {
-    let resp = ctx.client.get::<Vec<DatastoreView>>(&["datastores"], &[]).await?;
+pub async fn list(ctx: &Ctx, environment: Option<&str>) -> Result<()> {
+    let query: Vec<(&str, String)> = environment.map(|e| ("environment", e.to_string())).into_iter().collect();
+    let resp = ctx.client.get::<Vec<DatastoreView>>(&["datastores"], &query).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
     if resp.data.is_empty() {
-        outln!("No datastores yet. Create one with: ferry db create NAME [--kind postgres|redis]")?;
+        match environment {
+            Some(e) => outln!(
+                "No datastores in environment '{e}' yet. Create one with: ferry db create NAME --environment {e}"
+            )?,
+            None => outln!("No datastores yet. Create one with: ferry db create NAME [--kind postgres|redis]")?,
+        }
         return Ok(());
     }
-    let mut t = Table::new(&["NAME", "KIND", "VERSION", "STATUS", "INTERNAL", "HOST PORT", "CREATED"]);
+    // The environment of each, once there is more than production.
+    let environments = resp.data.iter().any(|v| v.datastore.environment != ferry_core::PRODUCTION);
+    let mut header = vec!["NAME"];
+    if environments {
+        header.push("ENVIRONMENT");
+    }
+    header.extend(["KIND", "VERSION", "STATUS", "INTERNAL", "HOST PORT", "CREATED"]);
+    let mut t = Table::new(&header);
     for v in &resp.data {
         let d = &v.datastore;
-        t.row(vec![
-            Cell::new(d.name.as_str()),
+        let mut row = vec![Cell::new(d.name.as_str())];
+        if environments {
+            row.push(Cell::new(d.environment.as_str()));
+        }
+        row.extend([
             Cell::new(d.kind.as_str()),
             Cell::new(d.version.as_str()),
             Cell::colored(d.status.as_str(), output::datastore_status_color(d.status)),
@@ -96,6 +115,7 @@ pub async fn list(ctx: &Ctx) -> Result<()> {
             Cell::new(d.host_port.map(|p| p.to_string()).unwrap_or_else(|| "-".into())),
             Cell::new(output::relative_time(d.created_at, Utc::now())),
         ]);
+        t.row(row);
     }
     outln!("{}", t.render(output::stdout_color()).trim_end())?;
     Ok(())
@@ -106,7 +126,7 @@ pub async fn list(ctx: &Ctx) -> Result<()> {
 /// still provisioning).
 pub async fn update(ctx: &Ctx, a: DbUpdateArgs) -> Result<()> {
     let body = update_request(&a);
-    let resp = match ctx.client.patch::<_, DatastoreView>(&["datastores", &a.name], &[], &body).await {
+    let resp = match ctx.client.patch::<_, DatastoreView>(&["datastores", &a.name], &ctx.scope(), &body).await {
         Ok(r) => r,
         Err(e) if is_unsupported_route(&e) => {
             return Err(e.context("this Ferry server can't change datastore limits: upgrade ferryd"));
@@ -141,7 +161,7 @@ fn limits_summary(a: &DbUpdateArgs, d: &Datastore, defaults: DefaultLimits) -> S
 }
 
 pub async fn show(ctx: &Ctx, name: &str) -> Result<()> {
-    let resp = ctx.client.get::<DatastoreView>(&["datastores", name], &[]).await?;
+    let resp = ctx.client.get::<DatastoreView>(&["datastores", name], &ctx.scope()).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
@@ -150,6 +170,7 @@ pub async fn show(ctx: &Ctx, name: &str) -> Result<()> {
     let mut pairs: Vec<(&str, Cell)> = vec![
         ("Name", Cell::new(d.name.as_str())),
         ("ID", Cell::new(d.id.as_str())),
+        ("Environment", Cell::new(d.environment.as_str())),
         ("Kind", Cell::new(format!("{} {}", d.kind, d.version))),
         ("Status", Cell::colored(d.status.as_str(), output::datastore_status_color(d.status))),
     ];
@@ -181,7 +202,7 @@ fn reference(d: &ferry_core::Datastore) -> String {
 
 pub async fn remove(ctx: &Ctx, name: &str, yes: bool, force: bool) -> Result<()> {
     // Resolve an id to the datastore's real name for the prompt and messages.
-    let ds = ctx.client.get::<DatastoreView>(&["datastores", name], &[]).await?.data.datastore;
+    let ds = ctx.client.get::<DatastoreView>(&["datastores", name], &ctx.scope()).await?.data.datastore;
     confirm(&format!("delete datastore '{}' and all its data", ds.name), yes).await?;
     ctx.client
         .delete_no_content(&["datastores", &ds.id], &super::force_query(force, false))

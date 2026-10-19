@@ -12,8 +12,10 @@ import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Hint } from '@/components/ui/tooltip'
 import { useJobCanceling, useJobs } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { isJobTerminal, type JobRun, type ServiceView } from '@/lib/api/types'
 import { dateTime, relativeTime, shortId } from '@/lib/format'
+import { cliName } from '@/pages/services/lib'
 
 import { useNow } from './config/hooks'
 import { CancelJobDialog, ExitCode, JobCommand, JobTriggerBadge } from './config/jobs/job-parts'
@@ -33,9 +35,10 @@ export function JobsPage() {
 
 function JobsView({ service }: { service: ServiceView }) {
   const name = service.name
+  const ref = qualifiedName(service)
   const navigate = useNavigate()
   const [limit, setLimit] = React.useState(PAGE)
-  const jobs = useJobs(name, limit)
+  const jobs = useJobs(ref, limit)
   const [runOpen, setRunOpen] = React.useState(false)
   const [toCancel, setToCancel] = React.useState<JobRun | null>(null)
 
@@ -63,7 +66,7 @@ function JobsView({ service }: { service: ServiceView }) {
         description={
           isCron
             ? 'Scheduled and manual runs of this cron job. Each run starts a fresh container from the live deploy.'
-            : 'One-off commands (migrations, scripts, backfills) in a fresh container with the service’s image and environment.'
+            : 'One-off commands (migrations, scripts, backfills) in a fresh container with the service’s image and variables.'
         }
         // one CTA at a time: the empty state carries its own
         actions={list && list.length === 0 ? undefined : runButton}
@@ -86,7 +89,7 @@ function JobsView({ service }: { service: ServiceView }) {
             <CodeBlock
               className="mt-2 max-w-md"
               prompt
-              code={isCron ? `ferry run ${name}` : `ferry run ${name} -- <command>`}
+              code={isCron ? `ferry run ${cliName(service)}` : `ferry run ${cliName(service)} -- <command>`}
             />
           </EmptyState>
         ) : (
@@ -111,7 +114,7 @@ function JobsView({ service }: { service: ServiceView }) {
                 <TableErrorRow colSpan={7} error={jobs.error} />
               ) : (
                 list?.map((job) => {
-                  const to = servicePath(name, `/jobs/${job.id}`)
+                  const to = servicePath(ref, `/jobs/${job.id}`)
                   const active = !isJobTerminal(job.status)
                   return (
                     <TableRow key={job.id} {...rowLinkProps(() => void navigate(to))}>
@@ -220,7 +223,7 @@ function ScheduleStrip({ service }: { service: ServiceView }) {
         </div>
       </div>
       <Button asChild size="tiny" variant="ghost" className="self-start sm:self-auto">
-        <Link to={servicePath(service.name, '/settings')}>Edit schedule</Link>
+        <Link to={servicePath(qualifiedName(service), '/settings')}>Edit schedule</Link>
       </Button>
     </div>
   )

@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ApiError, errorMessage } from '@/lib/api/client'
 import { useDeleteService, useResumeService, useSuspendService } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { ServiceView } from '@/lib/api/types'
 import { cn } from '@/lib/utils'
 
@@ -38,8 +39,9 @@ function ActionRow({
 /** Suspend / resume, and delete with typed confirmation (+ force when referenced). */
 export function DangerZoneSection({ service, onDeleted }: { service: ServiceView; onDeleted: () => void }) {
   const name = service.name
-  const suspend = useSuspendService(name)
-  const resume = useResumeService(name)
+  const ref = qualifiedName(service)
+  const suspend = useSuspendService(ref)
+  const resume = useResumeService(ref)
   const del = useDeleteService()
   const [confirmSuspend, setConfirmSuspend] = React.useState(false)
   const [confirmDelete, setConfirmDelete] = React.useState(false)
@@ -148,7 +150,7 @@ export function DangerZoneSection({ service, onDeleted }: { service: ServiceView
         confirmLabel={force ? 'Delete anyway' : 'Delete service'}
         onConfirm={() =>
           del
-            .mutateAsync({ ref: name, force })
+            .mutateAsync({ ref, force })
             .then(() => {
               toast.success(`Deleted ${name}`)
               onDeleted()

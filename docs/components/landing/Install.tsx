@@ -30,7 +30,7 @@ export function Install() {
           <Heading id="install-title" strong="One command on a fresh server" quiet="or build it on your own machine" />
           <Reveal delay={0.12}>
             <p className="mt-5 max-w-[34rem] text-foreground-lighter">
-              On Ubuntu 22.04 or 24.04, or Debian 12 or 13 (x86_64 or arm64), the install script sets up Docker, git and Ferry
+              On Ubuntu 22.04, 24.04 or 26.04, or Debian 12 or 13 (x86_64 or arm64), the install script sets up Docker, git and Ferry
               as a systemd service. Elsewhere you need Docker, and Docker Desktop is fine on a Mac. To build from source
               you also need Rust 1.89 or later and Node.js 20 or later.
             </p>

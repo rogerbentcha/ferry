@@ -1,6 +1,59 @@
 //! Validation rules shared by the REST handlers and blueprints.
 
-use ferry_core::{Config, EnvVar, Error, Result, Service, Store, env, validate};
+use ferry_core::{Config, EnvVar, Environment, Error, PRODUCTION, Result, Service, Store, env, validate};
+
+/// A service of `production` named like another environment (`staging`)
+/// would lose its hostname `staging.<domain>` once the environment's DNS
+/// record `*.staging.<domain>` exists: that name then exists in DNS with no
+/// record of its own, and the domain's `*.<domain>` no longer answers for it
+/// (RFC 4592). So the two never share a name, and neither do an environment
+/// and the dashboard's host (`ferry.<domain>`). Call it under the names and
+/// domain locks.
+pub async fn check_environment_name_free(store: &Store, config: &Config, environment: &str) -> Result<()> {
+    if let Some(host) =
+        config.claimed_domains().iter().map(|d| format!("{environment}.{d}")).find(|h| is_dashboard_host(config, h))
+    {
+        return Err(Error::conflict(format!(
+            "'{environment}' would hide the Ferry dashboard: its services are served at <service>.{environment}.<domain>, and that DNS record would hide {host}; choose another name"
+        )));
+    }
+    match store.find_service(environment).await? {
+        Some(s) if s.environment == PRODUCTION && s.name == environment => Err(Error::conflict(format!(
+            "'{environment}' is the name of service '{environment}' of production: an environment of that name would hide its hostname {environment}.<domain> (its services are served at <service>.{environment}.<domain>); choose another name"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// The other side of [`check_environment_name_free`]: a new service of
+/// `production` can't take the name of another environment.
+pub async fn check_service_name_free(store: &Store, svc: &Service) -> Result<()> {
+    if svc.environment != PRODUCTION || svc.name == PRODUCTION {
+        return Ok(());
+    }
+    match store.find_environment(&svc.name).await? {
+        Some(e) if e.name == svc.name => Err(Error::conflict(format!(
+            "name '{0}' is the name of an environment: its services are served at <service>.{0}.<domain>, and that DNS record would hide {0}.<domain>; choose another name",
+            svc.name
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// The environment a new service or datastore goes to: `requested` (an id
+/// or a name), else `production`. Call it under the names lock, which
+/// deleting an environment takes too.
+pub async fn environment_for(store: &Store, requested: Option<&str>) -> Result<String> {
+    match requested.map(str::trim).filter(|e| !e.is_empty()) {
+        None => Ok(PRODUCTION.to_string()),
+        Some(e) => match store.find_environment(e).await? {
+            Some(env) => Ok(env.name),
+            None => Err(Error::invalid(format!(
+                "environment '{e}' not found (create it first: ferry environments create {e})"
+            ))),
+        },
+    }
+}
 
 /// Size of a set of variables as counted by [`validate::env_vars`].
 fn env_bytes(vars: &[EnvVar]) -> usize {
@@ -121,17 +174,20 @@ pub fn references(value: &str) -> Vec<(RefKind, String)> {
     out
 }
 
-/// Services (other than `exclude`) whose environment references the
-/// datastore or service `name`, as `service 'web' (DATABASE_URL, ...)`.
-/// Deleting the target would make every later deploy / restart of them fail.
+/// Services of `environment` (other than `exclude`) whose environment
+/// references the datastore or service `name` of that environment, as
+/// `service 'web' (DATABASE_URL, ...)`. Deleting the target would make every
+/// later deploy / restart of them fail. Another environment's references to
+/// the same name resolve to its own.
 pub async fn referencing_services(
     store: &Store,
     kind: RefKind,
     name: &str,
+    environment: &str,
     exclude: Option<&str>,
 ) -> Result<Vec<String>> {
     let mut out = Vec::new();
-    for svc in store.list_services().await? {
+    for svc in store.environment_members(environment).await?.0 {
         if exclude == Some(svc.id.as_str()) {
             continue;
         }
@@ -182,18 +238,20 @@ fn is_dashboard_host(config: &Config, host: &str) -> bool {
     config.dashboard_host.as_deref().is_some_and(|h| h.trim().trim_end_matches('.').eq_ignore_ascii_case(host))
 }
 
-/// Check that custom `domains` (already normalized) of the service named
-/// `own_name` are free: not the dashboard host, not a default host of any
-/// service — `<name>.<domain>` under every domain of the server, served or
-/// still waiting for its DNS (§21) — and not a custom domain of one of the
-/// `others` (every service except this one).
+/// Check that custom `domains` (already normalized) of the service `own`
+/// are free: not the dashboard host, not a default host of any service —
+/// `<name>.<domain>` (`<name>.<environment>.<domain>` outside production)
+/// under every domain of the server, served or still waiting for its DNS
+/// (§21) — and not a custom domain of one of the `others` (every service
+/// except this one).
 pub fn check_domains<'a>(
     config: &Config,
     others: impl IntoIterator<Item = &'a Service> + Clone,
-    own_name: &str,
+    own: &Service,
     domains: &[String],
 ) -> Result<()> {
-    let own_hosts = config.claimed_hosts(own_name);
+    let own_name = own.name.as_str();
+    let own_hosts = config.claimed_hosts(&own.host_label());
     for d in domains {
         if is_dashboard_host(config, d) {
             return Err(Error::conflict(format!("domain '{d}' is reserved for the Ferry dashboard")));
@@ -202,7 +260,7 @@ pub fn check_domains<'a>(
             return Err(Error::conflict(format!("domain '{d}' is already the default host of service '{own_name}'")));
         }
         for s in others.clone() {
-            if config.claimed_hosts(&s.name).contains(d) {
+            if config.claimed_hosts(&s.host_label()).contains(d) {
                 return Err(Error::conflict(format!("domain '{d}' is the default host of service '{}'", s.name)));
             }
             if s.custom_domains.iter().any(|c| c.eq_ignore_ascii_case(d)) {
@@ -213,15 +271,15 @@ pub fn check_domains<'a>(
     Ok(())
 }
 
-/// Check that the default hosts of a new service named `name` (one under
-/// every domain of the server) aren't already claimed as a custom domain by
+/// Check that the default hosts of a new service `svc` (one under every
+/// domain of the server) aren't already claimed as a custom domain by
 /// another service (or by the dashboard).
 pub fn check_default_host_free<'a>(
     config: &Config,
     others: impl IntoIterator<Item = &'a Service>,
-    name: &str,
+    svc: &Service,
 ) -> Result<()> {
-    let hosts = config.claimed_hosts(name);
+    let hosts = config.claimed_hosts(&svc.host_label());
     if let Some(host) = hosts.iter().find(|h| is_dashboard_host(config, h)) {
         return Err(Error::conflict(format!("host '{host}' is reserved for the Ferry dashboard; choose another name")));
     }
@@ -236,12 +294,28 @@ pub fn check_default_host_free<'a>(
     Ok(())
 }
 
+/// Check that a domain to connect doesn't put an environment other than
+/// production at the dashboard's host: `*.staging.<domain>` would hide
+/// `staging.<domain>` (see [`check_environment_name_free`]).
+pub fn check_domain_free_of_environments(config: &Config, environments: &[Environment], domain: &str) -> Result<()> {
+    for e in environments.iter().filter(|e| !e.is_production()) {
+        let host = format!("{}.{domain}", e.name);
+        if is_dashboard_host(config, &host) {
+            return Err(Error::conflict(format!(
+                "with '{domain}', the services of environment '{}' would be served at <service>.{host}, and that DNS record would hide the Ferry dashboard at {host}",
+                e.name
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Check that a domain to connect takes no hostname that is in use: with it
 /// every service is served at `<service>.<domain>`, which must not be the
 /// dashboard's host or the custom domain of another service.
 pub fn check_domain_free(config: &Config, services: &[Service], domain: &str) -> Result<()> {
     for s in services {
-        let host = format!("{}.{domain}", s.name);
+        let host = format!("{}.{domain}", s.host_label());
         if is_dashboard_host(config, &host) {
             return Err(Error::conflict(format!(
                 "with '{domain}', service '{}' would be served at '{host}', which is the host of the Ferry dashboard",
@@ -271,15 +345,47 @@ mod tests {
         let mut a = Service::new("a", ServiceType::WebService);
         a.custom_domains = vec!["app.example.com".into()];
         let others = [a];
-        assert!(check_domains(&cfg, &others, "b", &["new.example.com".into()]).is_ok());
-        assert!(matches!(check_domains(&cfg, &others, "b", &["app.example.com".into()]), Err(Error::Conflict(_))));
-        assert!(matches!(check_domains(&cfg, &others, "b", &["a.localhost".into()]), Err(Error::Conflict(_))));
-        assert!(matches!(check_domains(&cfg, &others, "b", &["b.localhost".into()]), Err(Error::Conflict(_))));
-        assert!(matches!(check_domains(&cfg, &others, "b", &["ferry.localhost".into()]), Err(Error::Conflict(_))));
-        assert!(check_default_host_free(&cfg, &others, "c").is_ok());
+        let (b, c) = (Service::new("b", ServiceType::WebService), Service::new("c", ServiceType::WebService));
+        assert!(check_domains(&cfg, &others, &b, &["new.example.com".into()]).is_ok());
+        assert!(matches!(check_domains(&cfg, &others, &b, &["app.example.com".into()]), Err(Error::Conflict(_))));
+        assert!(matches!(check_domains(&cfg, &others, &b, &["a.localhost".into()]), Err(Error::Conflict(_))));
+        assert!(matches!(check_domains(&cfg, &others, &b, &["b.localhost".into()]), Err(Error::Conflict(_))));
+        assert!(matches!(check_domains(&cfg, &others, &b, &["ferry.localhost".into()]), Err(Error::Conflict(_))));
+        assert!(check_default_host_free(&cfg, &others, &c).is_ok());
         let mut x = Service::new("x", ServiceType::WebService);
         x.custom_domains = vec!["c.localhost".into()];
-        assert!(check_default_host_free(&cfg, &[x], "c").is_err());
+        assert!(check_default_host_free(&cfg, &[x], &c).is_err());
+    }
+
+    #[test]
+    fn hosts_outside_production_carry_the_environment() {
+        let cfg = Config::default();
+        let shop = Service { environment: "staging".into(), ..Service::new("shop", ServiceType::WebService) };
+        let others = [shop.clone()];
+        let web = Service::new("web", ServiceType::WebService);
+        let e = check_domains(&cfg, &others, &web, &["shop.staging.localhost".into()]).unwrap_err().to_string();
+        assert!(e.contains("default host of service 'shop'"), "{e}");
+        assert!(check_domains(&cfg, &others, &web, &["shop.localhost".into()]).is_ok());
+        // Its own staging host is already its default host.
+        assert!(check_domains(&cfg, &[], &shop, &["shop.staging.localhost".into()]).is_err());
+        // A domain connected later would put it at `shop.staging.<domain>`.
+        let mut site = Service::new("site", ServiceType::WebService);
+        site.custom_domains = vec!["shop.staging.example.com".into()];
+        let e = check_domain_free(&cfg, &[shop, site], "example.com").unwrap_err().to_string();
+        assert!(e.contains("shop.staging.example.com"), "{e}");
+    }
+
+    #[test]
+    fn environments_never_hide_the_dashboard() {
+        let cfg = Config { dashboard_host: Some("ferry.apps.example.com".into()), ..Config::default() };
+        let envs = [Environment::new("production"), Environment::new("ferry"), Environment::new("staging")];
+        let e = check_domain_free_of_environments(&cfg, &envs, "apps.example.com").unwrap_err().to_string();
+        assert!(e.contains("environment 'ferry'") && e.contains("ferry.apps.example.com"), "{e}");
+        assert!(
+            check_domain_free_of_environments(&cfg, &envs[..1], "apps.example.com").is_ok(),
+            "production has no record"
+        );
+        assert!(check_domain_free_of_environments(&cfg, &envs[2..], "apps.example.com").is_ok());
     }
 
     #[test]
@@ -292,13 +398,14 @@ mod tests {
         let mut a = Service::new("a", ServiceType::WebService);
         a.custom_domains = vec!["c.example.com".into()];
         let b = Service::new("b", ServiceType::WebService);
+        let c = Service::new("c", ServiceType::WebService);
         let others = [a.clone()];
         for taken in ["a.example.com", "b.example.com", "a.localhost"] {
-            assert!(matches!(check_domains(&cfg, &others, "b", &[taken.into()]), Err(Error::Conflict(_))), "{taken}");
+            assert!(matches!(check_domains(&cfg, &others, &b, &[taken.into()]), Err(Error::Conflict(_))), "{taken}");
         }
-        assert!(check_domains(&cfg, &others, "b", &["b.example.org".into()]).is_ok());
+        assert!(check_domains(&cfg, &others, &b, &["b.example.org".into()]).is_ok());
         // A new service named `c` would be served where `a` has a custom domain.
-        let err = check_default_host_free(&cfg, &others, "c").unwrap_err().to_string();
+        let err = check_default_host_free(&cfg, &others, &c).unwrap_err().to_string();
         assert!(err.contains("c.example.com") && err.contains("'a'"), "{err}");
         // Connecting a domain: no service may land on another one's custom domain...
         let all = [a, b];

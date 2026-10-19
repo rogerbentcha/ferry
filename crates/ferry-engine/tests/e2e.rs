@@ -17,8 +17,8 @@ use ferry_build::Builder;
 use ferry_core::dto::MetricsRange;
 use ferry_core::{
     CancellationToken, Config, Datastore, DatastoreKind, DatastoreStatus, Deploy, DeployRequest, DeploySource,
-    DeployStatus, DeployTrigger, Engine, JobStatus, JobTrigger, LogLine, LogOptions, Service, ServiceState,
-    ServiceType, Store, ids, validate,
+    DeployStatus, DeployTrigger, Engine, Environment, JobStatus, JobTrigger, LogLine, LogOptions, Service,
+    ServiceState, ServiceType, Store, ids, validate,
 };
 use ferry_docker::Docker;
 use ferry_engine::FerryEngine;
@@ -83,6 +83,11 @@ impl Drop for Cleanup {
         let (_, images) = docker_cli(&["images", "--format", "{{.Repository}}:{{.Tag}}"]);
         for i in images.lines().filter(|i| i.starts_with(&format!("{}/", self.prefix))) {
             docker_cli(&["rmi", "-f", i]);
+        }
+        // The networks of environments, then production's.
+        let (_, networks) = docker_cli(&["network", "ls", "--format", "{{.Name}}"]);
+        for n in networks.lines().filter(|n| n.starts_with(&format!("{}-env-", self.prefix))) {
+            docker_cli(&["network", "rm", n]);
         }
         docker_cli(&["network", "rm", &self.prefix]);
     }
@@ -703,6 +708,189 @@ async fn postgres_datastore() {
     h.engine.delete_datastore(&ds.id).await.unwrap();
     assert!(!docker_cli(&["inspect", &container]).0);
     assert!(!docker_cli(&["volume", "inspect", &format!("{}-ds-pg-data", h.prefix)]).0);
+}
+
+/// Environments (DESIGN.md §3): a staging job reaches staging's datastore
+/// by name and nothing of production's by name, nor an unpublished port of
+/// production by address, while a production job reaches production's and
+/// not staging's. Deleting the environment removes its network. (A port
+/// Ferry publishes on the host stays reachable at the container's address
+/// from another network on Docker 28 and later: DESIGN.md §15.)
+#[tokio::test(flavor = "multi_thread")]
+async fn environments_are_cut_off_from_each_other() {
+    require_e2e!();
+    let h = harness(|_| {}).await;
+    let staging = Environment::new("staging");
+    h.store.create_environment(&staging).await.unwrap();
+    h.engine.create_environment("staging").await.unwrap();
+    let network = format!("{}-env-staging", h.prefix);
+    assert!(docker_cli(&["network", "inspect", &network]).0, "the environment has its network");
+    // Removed behind Ferry's back: the first container of the environment makes it again.
+    assert!(docker_cli(&["network", "rm", &network]).0);
+
+    // Redis: small and quick to start. `db` in production, `cache` in staging.
+    let db = Datastore::new("db", DatastoreKind::Redis);
+    let cache = Datastore { environment: "staging".into(), ..Datastore::new("cache", DatastoreKind::Redis) };
+    for ds in [&db, &cache] {
+        h.store.create_datastore(ds).await.unwrap();
+        h.engine.provision_datastore(&ds.id).await.unwrap();
+    }
+    for ds in [&db, &cache] {
+        h.wait_datastore(&ds.id, Duration::from_secs(180)).await;
+    }
+    assert!(docker_cli(&["network", "inspect", &network]).0, "made again when `cache` started");
+    let ip_of = |container: &str| {
+        let format = "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}";
+        docker_cli(&["inspect", "-f", format, container]).1
+    };
+    let db_ip = ip_of(&format!("{}-ds-db", h.prefix));
+    assert!(!db_ip.is_empty() && !db_ip.contains(' '), "one address on one network: '{db_ip}'");
+
+    // Workers publish nothing: they listen on 7000 for the address checks.
+    let probe = |name: &'static str, environment: &'static str| {
+        h.create_service(name, ServiceType::BackgroundWorker, move |s| {
+            s.environment = environment.into();
+            s.image = Some("busybox:stable".into());
+            s.start_command = Some("exec nc -lk -p 7000 -e cat".into());
+        })
+    };
+    let (in_staging, in_production) = (probe("probe-staging", "staging").await, probe("probe", "production").await);
+    for svc in [&in_staging, &in_production] {
+        h.deploy_live(svc, DeployRequest::new(DeployTrigger::Create)).await;
+    }
+    // The instance is on its environment's network only.
+    let instance = h.containers(&format!("ferry.service={}", in_staging.id));
+    let (_, networks) =
+        docker_cli(&["inspect", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", &instance[0]]);
+    assert_eq!(networks.trim(), network);
+
+    let probe_ip = ip_of(&h.containers(&format!("ferry.service={}", in_production.id))[0]);
+    let reaches = |svc: &Service, target: String| {
+        let id = svc.id.clone();
+        let h = &h;
+        async move {
+            let command = format!("nc -z -w 3 {target}");
+            let job = h.engine.run_job(&id, Some(command), JobTrigger::Manual).await.unwrap();
+            h.wait_job(&job.id).await.status == JobStatus::Succeeded
+        }
+    };
+    assert!(reaches(&in_staging, "cache 6379".into()).await, "staging reaches its own datastore");
+    assert!(!reaches(&in_staging, "db 6379".into()).await, "staging can't reach production's datastore by name");
+    assert!(!reaches(&in_staging, "probe 7000".into()).await, "nor production's services");
+    assert!(!reaches(&in_staging, format!("{probe_ip} 7000")).await, "nor by address");
+    assert!(reaches(&in_production, "db 6379".into()).await, "production reaches its own datastore");
+    assert!(reaches(&in_production, format!("{probe_ip} 7000")).await, "and its services by address");
+    assert!(!reaches(&in_production, "cache 6379".into()).await, "production can't reach staging's by name");
+    // Not asserted (it depends on the Docker version): a published port.
+    let published = reaches(&in_staging, format!("{db_ip} 6379")).await;
+    eprintln!("a published port of production at its container's address, from staging: reachable = {published}");
+
+    // Emptied, the environment goes with its network; production's stays.
+    h.engine.delete_service(&in_staging.id).await.unwrap();
+    h.engine.delete_datastore(&cache.id).await.unwrap();
+    h.engine.delete_environment("staging").await.unwrap();
+    h.store.delete_environment(&staging.id).await.unwrap();
+    assert!(!docker_cli(&["network", "inspect", &network]).0, "the network is removed");
+    assert!(docker_cli(&["network", "inspect", &h.prefix]).0);
+    assert!(h.engine.delete_environment("production").await.is_err());
+
+    // A server that starts makes the network of every environment, also one
+    // whose network was never made.
+    h.store.create_environment(&Environment::new("qa")).await.unwrap();
+    let qa = format!("{}-env-qa", h.prefix);
+    assert!(!docker_cli(&["network", "inspect", &qa]).0);
+    h.shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(40), h.engine.stopped()).await.expect("the engine stops");
+    let docker = Docker::connect().await.unwrap();
+    let builder = Builder::new(h.config.builds_dir(), h.config.repos_dir(), h.config.docker_bin.clone());
+    let engine = FerryEngine::new(h.config.clone(), h.store.clone(), docker, builder, RouteTable::new());
+    let shutdown = CancellationToken::new();
+    engine.start(shutdown.clone()).await.expect("the second start");
+    assert!(docker_cli(&["network", "inspect", &qa]).0, "made at start");
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(40), engine.stopped()).await.expect("the second engine stops");
+}
+
+/// The same names in every environment (DESIGN.md §23): `api` and `db` in
+/// production and in staging run side by side, each with its own image,
+/// containers, volume and route, and a container of each environment
+/// reaches its own `api` and `db` by name. Production keeps its names.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_same_names_run_in_two_environments() {
+    require_e2e!();
+    let h = harness(|_| {}).await;
+    let staging = Environment::new("staging");
+    h.store.create_environment(&staging).await.unwrap();
+    h.engine.create_environment("staging").await.unwrap();
+
+    let db = Datastore::new("db", DatastoreKind::Redis);
+    let staging_db = Datastore { environment: "staging".into(), ..Datastore::new("db", DatastoreKind::Redis) };
+    for ds in [&db, &staging_db] {
+        h.store.create_datastore(ds).await.unwrap();
+        h.engine.provision_datastore(&ds.id).await.unwrap();
+    }
+    for ds in [&db, &staging_db] {
+        h.wait_datastore(&ds.id, Duration::from_secs(180)).await;
+    }
+    for suffix in ["", ".staging"] {
+        let (container, volume) = (format!("{}-ds-db{suffix}", h.prefix), format!("{}-ds-db{suffix}-data", h.prefix));
+        assert_eq!(inspect(&container, "{{.State.Running}}"), "true", "{container}");
+        assert!(docker_cli(&["volume", "inspect", &volume]).0, "{volume}");
+    }
+
+    // `api` in both, answering with its environment; a probe in both too.
+    let service = |name: &'static str, kind: ServiceType, environment: &'static str, start: String| {
+        h.create_service(name, kind, move |s| {
+            s.environment = environment.into();
+            s.image = Some("busybox:stable".into());
+            s.port = (kind == ServiceType::WebService).then_some(8080);
+            s.start_command = Some(start);
+        })
+    };
+    let mut apis = Vec::new();
+    let mut probes = Vec::new();
+    for environment in ["production", "staging"] {
+        let start = format!("mkdir -p /www && echo {environment} > /www/index.html && exec httpd -f -p 8080 -h /www");
+        apis.push(service("api", ServiceType::WebService, environment, start).await);
+        probes.push(service("probe", ServiceType::BackgroundWorker, environment, "exec sleep 3600".into()).await);
+    }
+    for svc in apis.iter().chain(&probes) {
+        h.deploy_live(svc, DeployRequest::new(DeployTrigger::Create)).await;
+    }
+
+    // Public: api.<domain> and api.staging.<domain>.
+    assert_eq!(h.wait_ok("api", "/", Duration::from_secs(60)).await.trim(), "production");
+    assert_eq!(h.wait_ok("api.staging", "/", Duration::from_secs(60)).await.trim(), "staging");
+    // Their own images and containers: production keeps its names.
+    let (images, staging_images) = (h.own_images("api"), h.own_images("api.staging"));
+    assert!(images.len() == 1 && staging_images.len() == 1, "{images:?} {staging_images:?}");
+    for (svc, name) in [(&apis[0], format!("/{}-api-", h.prefix)), (&apis[1], format!("/{}-api.staging-", h.prefix))] {
+        let instance = h.containers(&format!("ferry.service={}", svc.id));
+        assert_eq!(instance.len(), 1);
+        assert!(inspect(&instance[0], "{{.Name}}").starts_with(&name), "{name}");
+    }
+
+    // Private: each probe reaches its own environment's `api` and `db`.
+    for ((probe, environment), ds) in probes.iter().zip(["production", "staging"]).zip([&db, &staging_db]) {
+        let command = format!(
+            "test \"$(wget -qO- http://api:8080/)\" = {environment} && \
+             printf 'AUTH {}\\r\\nPING\\r\\n' | nc -w 3 db 6379 | grep -q PONG",
+            ds.password
+        );
+        let job = h.engine.run_job(&probe.id, Some(command), JobTrigger::Manual).await.unwrap();
+        let job = h.wait_job(&job.id).await;
+        let log = job_lines(&h, &job.id, false).await.join("\n");
+        assert_eq!(job.status, JobStatus::Succeeded, "{environment}: {log}");
+    }
+
+    // Deleting staging's leaves production's alone.
+    h.engine.delete_service(&apis[1].id).await.unwrap();
+    h.engine.delete_datastore(&staging_db.id).await.unwrap();
+    assert!(h.own_images("api.staging").is_empty());
+    assert_eq!(h.own_images("api"), images);
+    assert!(!docker_cli(&["volume", "inspect", &format!("{}-ds-db.staging-data", h.prefix)]).0);
+    assert!(docker_cli(&["volume", "inspect", &format!("{}-ds-db-data", h.prefix)]).0);
+    assert_eq!(h.wait_ok("api", "/", Duration::from_secs(30)).await.trim(), "production");
 }
 
 // ---------------------------------------------------------------------------

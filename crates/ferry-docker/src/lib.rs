@@ -382,6 +382,24 @@ impl Docker {
         }
     }
 
+    /// Remove a network. One that doesn't exist is fine; one that containers
+    /// are still attached to is a Conflict (Docker refuses to remove it).
+    pub async fn remove_network(&self, name: &str) -> Result<()> {
+        errors::check_object_ref("network", name)?;
+        match self.inner.remove_network(name).await {
+            Ok(()) => {
+                info!(network = name, "removed Docker network");
+                Ok(())
+            }
+            Err(e) if errors::is_not_found(&e) => Ok(()),
+            // "error while removing network: network x has active endpoints"
+            Err(e) if errors::status(&e) == Some(403) => {
+                Err(Error::Conflict(format!("removing network {name}: {}", errors::detail(&e))))
+            }
+            Err(e) => Err(errors::map_docker(e, &format!("removing network {name}"))),
+        }
+    }
+
     /// Create a named volume if it doesn't exist.
     pub async fn ensure_volume(&self, name: &str, labels: &BTreeMap<String, String>) -> Result<()> {
         errors::check_object_ref("volume", name)?;
@@ -977,6 +995,27 @@ mod tests {
         }
         let err = exec_env(&[("TOKEN", "s3cret\0x")]).unwrap_err();
         assert!(matches!(&err, Error::Invalid(m) if m.contains("TOKEN") && !m.contains("s3cret")), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn removing_networks() {
+        let daemon = FakeDaemon::start(|req: &Request| match (req.method.as_str(), req.target.as_str()) {
+            ("DELETE", "/networks/ferry-env-staging") => (204, String::new()),
+            ("DELETE", "/networks/ferry-env-busy") => {
+                api_error(403, "error while removing network: network ferry-env-busy has active endpoints")
+            }
+            ("DELETE", "/networks/ferry-env-broken") => api_error(500, "boom"),
+            _ => api_error(404, "network gone not found"),
+        })
+        .await;
+        daemon.docker.remove_network("ferry-env-staging").await.unwrap();
+        daemon.docker.remove_network("gone").await.expect("already gone is fine");
+        let err = daemon.docker.remove_network("ferry-env-busy").await.unwrap_err();
+        assert!(matches!(&err, Error::Conflict(m) if m.contains("has active endpoints")), "{err:?}");
+        let err = daemon.docker.remove_network("ferry-env-broken").await.unwrap_err();
+        assert!(matches!(&err, Error::Docker(m) if m == "removing network ferry-env-broken: boom"), "{err:?}");
+        assert!(matches!(daemon.docker.remove_network("../x").await, Err(Error::Invalid(_))));
+        assert_eq!(daemon.requests().len(), 4, "an invalid name never reaches the daemon");
     }
 
     /// Regression: exec errors used to embed the whole argv ("running

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Tests of install.sh on this machine: a CI runner (Ubuntu 22.04, x86_64 or
-# arm64, with Docker and systemd, and sudo without a password), against the
-# release assets in DIR (.github/workflows/release.yml). It changes the
-# machine: run it only on a runner that is thrown away after the job.
+# Tests of install.sh on this machine: a CI runner (Ubuntu 22.04 or 26.04,
+# x86_64 or arm64, with Docker and systemd, and sudo without a password),
+# against the release assets in DIR (.github/workflows/release.yml). It
+# changes the machine: run it only on a runner that is thrown away after the
+# job.
 #
 #   .github/scripts/install.test.sh DIR
 #
@@ -18,8 +19,11 @@ script=$dist/install.sh
 # The archive of this runner's CPU: uname -m gives x86_64 or aarch64, as the names do.
 archive=ferry-$(uname -m)-unknown-linux-gnu.tar.gz
 work=$(mktemp -d)
-supported='Ferry installs on Ubuntu 22.04 and 24.04, Debian 12 and 13, on x86_64 and arm64 (aarch64).'
+supported='Ferry installs on Ubuntu 22.04, 24.04 and 26.04, Debian 12 and 13, on x86_64 and arm64 (aarch64).'
 api=http://127.0.0.1:7878
+# The system of this runner, as the script names it: "Ubuntu 26.04.1 LTS".
+# shellcheck disable=SC1091
+os_name=$(. /etc/os-release && echo "$PRETTY_NAME")
 
 fail() {
   echo "::error::$*"
@@ -100,7 +104,7 @@ ok "Fedora: stops and names the supported systems"
 for cpu in armv7l riscv64; do
   run_install "PATH=$(fake_uname "$cpu"):$PATH"
   expect_stop "$supported"
-  has "This server runs Ubuntu 22.04"
+  has "This server runs $os_name on"
   has "on $cpu. The script changed nothing."
   ok "$cpu: stops, names the supported systems and changes nothing"
 done

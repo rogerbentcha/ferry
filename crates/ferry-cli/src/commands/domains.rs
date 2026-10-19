@@ -123,7 +123,7 @@ pub async fn connect(ctx: &Ctx, domain: &str) -> Result<()> {
 
 /// `ferry domains verify DOMAIN`: exit 1 while its names don't reach the server.
 pub async fn verify(ctx: &Ctx, domain: &str) -> Result<()> {
-    let resp = ctx.client.post_empty::<DomainView>(&["domains", domain, "verify"]).await?;
+    let resp = ctx.client.post_empty::<DomainView>(&["domains", domain, "verify"], &[]).await?;
     let d = &resp.data;
     let reached = d.local || d.domain.status == DomainStatus::Active;
     if ctx.json {

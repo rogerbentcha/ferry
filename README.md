@@ -21,7 +21,7 @@ ferry up                      # deploy the current directory → http://my-app.l
 | **Builds** | your Dockerfile, or auto-detected Node / Python / Go / Rust / Ruby / static (no Dockerfile needed) |
 | **Deploys** | zero-downtime blue/green with health checks, deploy history, one-click rollbacks, cancel |
 | **Triggers** | CLI / dashboard / API, a push to a connected GitHub account's repository (auto-deploy, nothing to add to the repository), secret deploy-hook URLs, blueprints |
-| **Networking** | built-in reverse proxy (HTTP/1.1, HTTP/2, websockets), `<service>.<your-domain>` under the domains you connect (Ferry checks their DNS), custom domains, Let's Encrypt HTTPS, private network (`http://api:3000`) |
+| **Networking** | built-in reverse proxy (HTTP/1.1, HTTP/2, websockets), `<service>.<your-domain>` under the domains you connect (Ferry checks their DNS), custom domains, Let's Encrypt HTTPS, private network (`http://api:3000`), environments (staging next to production with the same service names, each on its own network, at `<service>.staging.<your-domain>`) |
 | **Data** | managed Postgres & Redis, persistent disks, env vars with references (`${{datastore.db.connectionString}}`), env groups |
 | **Ops** | instance scaling, suspend/resume, restart, self-healing reconciler, live build & runtime logs, CPU/memory, one-off jobs |
 | **Guardrails** | memory/CPU limits per service and datastore (server defaults 512 MiB / 1 CPU), pids limit and log rotation on every container, out-of-memory kills reported, free-disk check before deploys |
@@ -29,7 +29,7 @@ ferry up                      # deploy the current directory → http://my-app.l
 
 ## Quick start
 
-On a fresh Ubuntu 22.04/24.04 or Debian 12/13 server (x86_64 or arm64), one command installs Docker and git
+On a fresh Ubuntu 22.04/24.04/26.04 or Debian 12/13 server (x86_64 or arm64), one command installs Docker and git
 when they are missing, the latest `ferryd` and `ferry`, and a systemd service, then prints the link
 that creates your account:
 
@@ -118,7 +118,7 @@ ferry db update app-db --memory 1G                   # datastores: applied right
 
 ## Production setup
 
-On Ubuntu 22.04/24.04 or Debian 12/13 (x86_64 or arm64), the install command of [Quick start](#quick-start),
+On Ubuntu 22.04/24.04/26.04 or Debian 12/13 (x86_64 or arm64), the install command of [Quick start](#quick-start),
 with `--base-domain apps.example.com --acme-email you@example.com`, does the software of step 1 and
 step 2 for you: Docker, a `ferry` user in the `docker` group, `/var/lib/ferry`, the settings in
 `/etc/ferry/ferryd.env`, and a unit like the one below, started at boot. Point the DNS first.
@@ -358,9 +358,10 @@ the host, ferryd or your databases.
   rollbacks and recreating an existing datastore's container still work.
 
 Not covered: builds (BuildKit has no per-build memory limit), disk space
-used by volumes and containers (no quotas), and network traffic (all apps
-share one private network). See [DESIGN.md](DESIGN.md) §14–15 for the
-details.
+used by volumes and containers (no quotas), and network traffic (the apps
+of an environment share one private network; from Docker 28 the ports
+Ferry publishes stay reachable at their container's address from another
+environment). See [DESIGN.md](DESIGN.md) §14–15 and §23 for the details.
 
 ## How it works
 
@@ -418,7 +419,7 @@ Releases (`.github/workflows/release.yml`): every push to `main` with a `feat`, 
 the last `vX.Y.Z` tag publishes the next version (`fix` → patch, `feat` → minor, breaking → major, minor while
 on 0.x), with `ferry-x86_64-unknown-linux-gnu.tar.gz` and `ferry-aarch64-unknown-linux-gnu.tar.gz` (`ferryd`,
 `ferry`, built on Ubuntu 22.04 x86_64 and arm64), `install.sh` and `SHA256SUMS`. Before it publishes, a job runs
-`install.sh` with the new assets on a fresh Ubuntu 22.04 runner of each CPU (`.github/scripts/install.test.sh`):
+`install.sh` with the new assets on a fresh Ubuntu 22.04 and 26.04 runner of each CPU (`.github/scripts/install.test.sh`):
 the cases that must stop, a first install, a rerun and an upgrade. If one build fails, nothing is published.
 The version is set in the release build only: `Cargo.toml` keeps `0.1.0`.
 

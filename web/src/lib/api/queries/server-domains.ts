@@ -9,12 +9,14 @@ import type { DomainView } from '../types'
 
 /**
  * A domain that starts or stops being served changes the default domain of
- * `/info` and the hosts and URL of every service.
+ * `/info`, the hosts and URL of every service, and the URL pattern and DNS
+ * records of every environment.
  */
 function invalidateDomains(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: keys.domains() })
   void qc.invalidateQueries({ queryKey: keys.info() })
   void qc.invalidateQueries({ queryKey: keys.services() })
+  void qc.invalidateQueries({ queryKey: keys.environments() })
 }
 
 function upsert(qc: QueryClient, domain: DomainView): void {

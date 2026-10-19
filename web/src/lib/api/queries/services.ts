@@ -4,17 +4,19 @@ import { ApiError } from '../client'
 import { endpoints } from '../endpoints'
 import { usePollInterval } from '../events'
 import { keys } from '../keys'
+import { isRef, qualifiedName } from '../refs'
 import type { CreateService, Deploy, ServiceView, UpdateService } from '../types'
 
-/** Find a service in the cached list by name or id (instant placeholder for details). */
+/** Find a service in the cached list by qualified name or id (instant placeholder for details). */
 export function cachedService(qc: QueryClient, ref: string): ServiceView | undefined {
-  return qc.getQueryData<ServiceView[]>(keys.serviceList())?.find((s) => s.name === ref || s.id === ref)
+  return qc.getQueryData<ServiceView[]>(keys.serviceList())?.find((s) => isRef(s, ref))
 }
 
-/** Store a fresh ServiceView everywhere it is cached (detail + list). */
+/** Store a fresh ServiceView everywhere it is cached (detail under `ref` and its qualified name, list). */
 export function putService(qc: QueryClient, ref: string, view: ServiceView): void {
   qc.setQueryData(keys.service(ref), view)
-  if (ref !== view.name) qc.setQueryData(keys.service(view.name), view)
+  const qualified = qualifiedName(view)
+  if (ref !== qualified) qc.setQueryData(keys.service(qualified), view)
   qc.setQueryData<ServiceView[]>(keys.serviceList(), (list) =>
     list ? list.map((s) => (s.id === view.id ? view : s)) : list,
   )
@@ -69,8 +71,10 @@ export function useCreateService() {
   return useMutation({
     mutationFn: (body: CreateService) => endpoints.createService(body),
     onSuccess: (view) => {
-      qc.setQueryData(keys.service(view.name), view)
+      qc.setQueryData(keys.service(qualifiedName(view)), view)
       void qc.invalidateQueries({ queryKey: keys.serviceList() })
+      // Environments list their services.
+      void qc.invalidateQueries({ queryKey: keys.environments() })
       if (view.env_groups.length > 0) void qc.invalidateQueries({ queryKey: keys.envGroups() })
       // Git connections list the services whose repository they clone.
       if (view.repo_url) void qc.invalidateQueries({ queryKey: keys.gitConnections() })
@@ -98,13 +102,12 @@ export function useDeleteService() {
     mutationFn: ({ ref, force = false }: { ref: string; force?: boolean }) => endpoints.deleteService(ref, force),
     onSuccess: (_void, { ref }) => {
       const cached = cachedService(qc, ref)
-      qc.setQueryData<ServiceView[]>(keys.serviceList(), (list) =>
-        list?.filter((s) => s.name !== ref && s.id !== ref),
-      )
+      qc.setQueryData<ServiceView[]>(keys.serviceList(), (list) => list?.filter((s) => !isRef(s, ref)))
       qc.removeQueries({ queryKey: keys.service(ref) })
-      if (cached) qc.removeQueries({ queryKey: keys.service(cached.name) })
+      if (cached) qc.removeQueries({ queryKey: keys.service(qualifiedName(cached)) })
       void qc.invalidateQueries({ queryKey: keys.services() })
       void qc.invalidateQueries({ queryKey: keys.envGroups() })
+      void qc.invalidateQueries({ queryKey: keys.environments() })
       void qc.invalidateQueries({ queryKey: keys.gitConnections() })
     },
   })

@@ -19,6 +19,7 @@ use futures::StreamExt;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
+use crate::environments;
 use crate::health::{LastExit, SIGKILL_EXIT_CODE};
 use crate::images;
 use crate::instances;
@@ -154,7 +155,7 @@ async fn execute(
     running: &RunningJob,
 ) {
     let image = job.image.clone().unwrap_or_default();
-    let container_name = inner.naming.job_container(&svc.name, &job.id);
+    let container_name = inner.naming.job_container(&svc.qualified_name(), &job.id);
     let prepared = async {
         let spec = spec?;
         if !inner.docker.image_exists(&image).await? {
@@ -199,7 +200,8 @@ async fn execute(
         cmd: command.as_deref().map(instances::sh_c),
         entrypoint: None,
         labels: inner.naming.job_labels(&svc.id, &job.id),
-        network: Some(inner.naming.network()),
+        // The service's environment: a job reaches what its service reaches.
+        network: Some(inner.naming.environment_network(&svc.environment)),
         network_aliases: Vec::new(),
         publish: None,
         volumes: volume.into_iter().collect(),
@@ -227,7 +229,7 @@ async fn execute(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .saturating_sub(Duration::from_secs(1));
-    let info = match inner.docker.run_container(&container_spec).await {
+    let info = match environments::run_container(inner, &container_spec).await {
         Ok(info) => info,
         Err(e) => {
             let m = format!("starting the job container failed: {}", error_message(&e));
@@ -559,7 +561,7 @@ pub(crate) async fn run_scheduler(inner: Arc<Inner>) {
             }
         };
         for id in ticker.due(Utc::now(), &services) {
-            let name = services.iter().find(|s| s.id == id).map(|s| s.name.clone()).unwrap_or_default();
+            let name = services.iter().find(|s| s.id == id).map(Service::qualified_name).unwrap_or_default();
             let running = inner.running_jobs_of(&id);
             if let Some(previous) = running.iter().min_by_key(|j| j.started) {
                 // Runs never overlap: a hung run blocks the schedule until it

@@ -160,7 +160,7 @@ For a service that exists, set the variable. The service restarts with it:
 ferry env set api 'DATABASE_URL=${{datastore.notes-db.connectionString}}'
 ```
 
-[Environment variables](/docs/guides/environment#connect-to-a-datastore-or-a-service) lists the other properties, for example `host`, `port`, `user` and `password`.
+[Environment variables](/docs/guides/variables#connect-to-a-datastore-or-a-service) lists the other properties, for example `host`, `port`, `user` and `password`.
 
 ## Create the table
 
@@ -203,7 +203,7 @@ saved
 
 ## Connect from your machine
 
-On the server, open <Term id="psql" /> in the container of the datastore. With the default prefix, the name of the container is `ferry-ds-notes-db`.
+On the server, open <Term id="psql" /> in the container of the datastore. With the default prefix, the name of the container is `ferry-ds-notes-db`. Outside production, it also has the name of the environment: `ferry-ds-notes-db.staging`.
 
 ```bash title="Terminal"
 docker exec -it ferry-ds-notes-db psql -U notes_db notes_db

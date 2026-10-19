@@ -196,7 +196,8 @@ impl RequestCounts {
 pub struct TargetRequests {
     /// A service id, [`DASHBOARD`] or [`UNROUTED`].
     pub target: String,
-    /// The service's name (the target itself for the others).
+    /// The service's qualified name (`api`, `api.staging`; the target itself
+    /// for the others).
     pub name: String,
     pub counts: RequestCounts,
 }
@@ -207,8 +208,8 @@ pub struct TargetRequests {
 pub struct TargetRequestTotals {
     /// A service id, [`DASHBOARD`] or [`UNROUTED`].
     pub target: String,
-    /// The service's name (the target itself for the others, and the id of
-    /// a service deleted since).
+    /// The service's qualified name (`api`, `api.staging`; the target itself
+    /// for the others, and the id of a service deleted since).
     pub name: String,
     pub counts: RequestCounts,
     /// The time the requests of `counts.latency` took, all together.

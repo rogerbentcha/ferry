@@ -32,8 +32,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Hint } from '@/components/ui/tooltip'
 import { ApiError, errorMessage } from '@/lib/api/client'
 import { useEnvGroup, useReplaceEnvGroupEnv, useServices } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { EnvGroupView, EnvVar, ServiceView } from '@/lib/api/types'
 import { dateTime, plural, relativeTime, SERVICE_TYPE_LABELS } from '@/lib/format'
+import { servicePath } from '@/pages/service/context'
 
 import { DeleteEnvGroupDialog } from './DeleteEnvGroupDialog'
 import { useServiceGroupLink } from './lib'
@@ -160,12 +162,13 @@ function LinkServiceDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const link = useServiceGroupLink(group.name)
+  /** The qualified name of the picked service (a group links services of any environment). */
   const [service, setService] = React.useState('')
   const [error, setError] = React.useState<string | null>(null)
   const selectId = React.useId()
   const candidates = services
-    .filter((s) => !group.services.includes(s.name))
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .filter((s) => !group.services.includes(qualifiedName(s)))
+    .sort((a, b) => qualifiedName(a).localeCompare(qualifiedName(b)))
 
   const close = () => {
     onOpenChange(false)
@@ -216,9 +219,9 @@ function LinkServiceDialog({
                   </SelectTrigger>
                   <SelectContent position="popper">
                     {candidates.map((s) => (
-                      <SelectItem key={s.id} value={s.name}>
+                      <SelectItem key={s.id} value={qualifiedName(s)}>
                         <ServiceTypeIcon type={s.type} className="size-4 text-foreground-lighter" />
-                        {s.name}
+                        {qualifiedName(s)}
                         <span className="text-foreground-lighter">· {SERVICE_TYPE_LABELS[s.type]}</span>
                       </SelectItem>
                     ))}
@@ -251,7 +254,8 @@ function LinkedServicesSection({ group }: { group: EnvGroupView }) {
   const unlink = useServiceGroupLink(group.name)
   const [linkOpen, setLinkOpen] = React.useState(false)
   const [unlinking, setUnlinking] = React.useState<string | null>(null)
-  const byName = new Map((services ?? []).map((s) => [s.name, s]))
+  // The group lists qualified names (`api`, `api.staging`).
+  const byName = new Map((services ?? []).map((s) => [qualifiedName(s), s]))
 
   return (
     <PageSection
@@ -286,7 +290,7 @@ function LinkedServicesSection({ group }: { group: EnvGroupView }) {
                 <TableRow key={name}>
                   <TableCell>
                     <Link
-                      to={`/services/${encodeURIComponent(name)}/environment`}
+                      to={servicePath(name, '/environment')}
                       className="inline-flex items-center gap-2 rounded-sm font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       {s && <ServiceTypeIcon type={s.type} className="size-4 text-foreground-lighter" />}

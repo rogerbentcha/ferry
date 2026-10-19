@@ -68,7 +68,7 @@ pub async fn deploy_hook(
         return Err(ApiError::unauthorized("invalid deploy hook URL or key"));
     };
     let d = st.engine.deploy(&svc.id, DeployRequest::new(DeployTrigger::DeployHook)).await?;
-    tracing::info!(service = %svc.name, deploy = %d.id, "deploy hook triggered a deploy");
+    tracing::info!(service = %svc.qualified_name(), deploy = %d.id, "deploy hook triggered a deploy");
     Ok((StatusCode::ACCEPTED, Json(public_deploy(d))))
 }
 
@@ -354,17 +354,17 @@ async fn handle_push(st: &AppState, payload: &Value, delivery: &Delivery) -> Api
             continue;
         }
         if svc.suspended {
-            tracing::info!(service = %svc.name, "push matches a suspended service; not deploying");
+            tracing::info!(service = %svc.qualified_name(), "push matches a suspended service; not deploying");
             continue;
         }
         let req =
             DeployRequest { trigger: DeployTrigger::Webhook, source: None, commit: commit.clone(), clear_cache: false };
         match st.engine.deploy(&svc.id, req).await {
             Ok(d) => {
-                tracing::info!(service = %svc.name, deploy = %d.id, branch, "git push triggered a deploy");
+                tracing::info!(service = %svc.qualified_name(), deploy = %d.id, branch, "git push triggered a deploy");
                 deploys.push(d);
             }
-            Err(e) => tracing::warn!(service = %svc.name, "deploy after git push failed: {e}"),
+            Err(e) => tracing::warn!(service = %svc.qualified_name(), "deploy after git push failed: {e}"),
         }
     }
 

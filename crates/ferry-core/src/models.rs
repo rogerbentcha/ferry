@@ -525,8 +525,14 @@ pub enum SourceKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Service {
     pub id: String,
-    /// Unique DNS-label name; also the private-network hostname.
+    /// DNS-label name, unique in its environment (another environment may use
+    /// it too); also the private-network hostname.
     pub name: String,
+    /// The name of the environment the service belongs to (picked when it is
+    /// created, never changed). Its instances and jobs join that
+    /// environment's private network only.
+    #[serde(default = "production")]
+    pub environment: String,
     #[serde(rename = "type")]
     pub service_type: ServiceType,
     /// Git URL (https, ssh, or local path / file://). Mutually exclusive with `image`.
@@ -588,6 +594,7 @@ impl Service {
         Service {
             id: ids::new_id(ids::SERVICE),
             name: name.into(),
+            environment: PRODUCTION.to_string(),
             service_type,
             repo_url: None,
             branch: "main".to_string(),
@@ -613,6 +620,20 @@ impl Service {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    /// The part of its hostnames before a domain: `<name>` in `production`,
+    /// `<name>.<environment>` in any other environment
+    /// (`shop.staging.example.com`).
+    pub fn host_label(&self) -> String {
+        host_label(&self.name, &self.environment)
+    }
+
+    /// The name that tells it apart on the whole server
+    /// ([`qualified_name`]): `web`, `web.staging`. Its images and containers
+    /// are named with it.
+    pub fn qualified_name(&self) -> String {
+        qualified_name(&self.name, &self.environment)
     }
 
     /// Publicly routed through the proxy (web services and static sites).
@@ -747,8 +768,13 @@ impl JobRun {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Datastore {
     pub id: String,
-    /// Unique DNS-label name; also the private-network hostname.
+    /// DNS-label name, unique in its environment (another environment may use
+    /// it too); also the private-network hostname.
     pub name: String,
+    /// The name of the environment the datastore belongs to (picked when it
+    /// is created, never changed): only that environment's services reach it.
+    #[serde(default = "production")]
+    pub environment: String,
     pub kind: DatastoreKind,
     /// Major version / image tag, e.g. "16" (postgres) or "7" (redis).
     pub version: String,
@@ -785,6 +811,7 @@ impl Datastore {
         Datastore {
             id: ids::new_id(ids::DATASTORE),
             name,
+            environment: PRODUCTION.to_string(),
             kind,
             version,
             status: DatastoreStatus::Creating,
@@ -798,6 +825,13 @@ impl Datastore {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    /// The name that tells it apart on the whole server
+    /// ([`qualified_name`]): `db`, `db.staging`. Its container and volume are
+    /// named with it.
+    pub fn qualified_name(&self) -> String {
+        qualified_name(&self.name, &self.environment)
     }
 
     /// Hostname on the private network (same as the name).
@@ -874,6 +908,54 @@ impl EnvGroup {
     pub fn new(name: impl Into<String>) -> Self {
         let now = now();
         EnvGroup { id: ids::new_id(ids::ENV_GROUP), name: name.into(), created_at: now, updated_at: now }
+    }
+}
+
+/// The environment every server has, and the one of everything created
+/// without picking one. It can't be deleted.
+pub const PRODUCTION: &str = "production";
+
+/// [`PRODUCTION`], for `#[serde(default)]`: rows sent by a server older
+/// than environments are in production.
+fn production() -> String {
+    PRODUCTION.to_string()
+}
+
+/// `<name>` in `production`, `<name>.<environment>` elsewhere: what comes
+/// before a domain in the hostnames of a service ([`Service::host_label`]).
+pub fn host_label(name: &str, environment: &str) -> String {
+    qualified_name(name, environment)
+}
+
+/// The name of a service or datastore on the whole server: `<name>` in
+/// `production`, `<name>.<environment>` elsewhere (`api.staging`), like its
+/// hostnames. Names are unique in their environment and hold no dot, so two
+/// resources never share one; production keeps the plain name, so the
+/// Docker names of a server set up before environments don't change.
+pub fn qualified_name(name: &str, environment: &str) -> String {
+    if environment == PRODUCTION { name.to_string() } else { format!("{name}.{environment}") }
+}
+
+/// A group of services and datastores with a private network of its own
+/// (`production`, `staging`…): they reach each other by name, and nothing
+/// of another environment. Only public URLs cross.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct Environment {
+    pub id: String,
+    /// Unique DNS-label name (the rules of service names), never changed.
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl Environment {
+    pub fn new(name: impl Into<String>) -> Self {
+        Environment { id: ids::new_id(ids::ENVIRONMENT), name: name.into(), created_at: now() }
+    }
+
+    /// `production` can't be deleted, and keeps the network, Docker names and
+    /// hostnames of a server set up before environments.
+    pub fn is_production(&self) -> bool {
+        self.name == PRODUCTION
     }
 }
 

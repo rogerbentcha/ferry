@@ -222,7 +222,7 @@ export const DEPLOY_TRIGGER_LABELS: Record<DeployTrigger, string> = {
   blueprint: 'Blueprint',
   rollback: 'Rollback',
   restart: 'Restart',
-  env_change: 'Environment change',
+  env_change: 'Variables change',
   upload: 'Upload',
 }
 

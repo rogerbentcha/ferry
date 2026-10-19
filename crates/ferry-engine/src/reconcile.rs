@@ -25,6 +25,7 @@ use futures::StreamExt;
 use futures::future::join_all;
 use tracing::{debug, error, info, warn};
 
+use crate::environments;
 use crate::health::{TCP_SETTLE, tcp_accepting};
 use crate::instances::{self, STOP_GRACE_SECS};
 use crate::spec;
@@ -343,7 +344,7 @@ async fn start_missing(
     let mut started = 0;
     for _ in 0..count {
         let spec = instances::service_spec(&inner.naming, svc, &live.id, &plan);
-        match inner.docker.run_container(&spec).await {
+        match environments::run_container(inner, &spec).await {
             Ok(info) => {
                 started += 1;
                 debug!(service = %svc.name, instance = %instance_id(&info.name), "started instance");
@@ -560,11 +561,11 @@ async fn report_oom(inner: &Inner, container_id: String, attributes: HashMap<Str
     let label = |k: &str| attributes.get(k).map(String::as_str);
     let owner = match label(LABEL_ROLE) {
         Some(ROLE_SERVICE | ROLE_JOB) => match label(LABEL_SERVICE) {
-            Some(id) => inner.store.get_service(id).await.ok().flatten().map(|s| s.name),
+            Some(id) => inner.store.get_service(id).await.ok().flatten().map(|s| s.qualified_name()),
             None => None,
         },
         Some(ROLE_DATASTORE) => match label(LABEL_DATASTORE) {
-            Some(id) => inner.store.find_datastore(id).await.ok().flatten().map(|d| d.name),
+            Some(id) => inner.store.find_datastore(id).await.ok().flatten().map(|d| d.qualified_name()),
             None => None,
         },
         _ => None,
@@ -656,7 +657,7 @@ async fn reconcile_datastores(inner: &Arc<Inner>, datastores: &[Datastore], all:
             // Being provisioned (or about to be, at boot).
             DatastoreStatus::Creating => continue,
         }
-        let name = inner.naming.datastore_container(&ds.name);
+        let name = inner.naming.datastore_container(&ds.qualified_name());
         let container = all.iter().find(|c| {
             c.name == name
                 || (c.labels.get(LABEL_ROLE).map(String::as_str) == Some(ROLE_DATASTORE)

@@ -9,8 +9,10 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { errorMessage } from '@/lib/api/client'
 import { useRestartService, useResumeService, useSuspendService, useTriggerDeploy } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { isPublicHttp, sourceKind, type ServiceView } from '@/lib/api/types'
 import { plural } from '@/lib/format'
+import { cliName } from '@/pages/services/lib'
 
 import { deployActionLabel } from './utils'
 
@@ -30,11 +32,12 @@ interface AvailabilityCardProps {
  */
 export function AvailabilityCard({ service, onScale, onRunJob }: AvailabilityCardProps) {
   const name = service.name
+  const ref = qualifiedName(service)
   const kind = sourceKind(service)
-  const deploy = useTriggerDeploy(name)
-  const restart = useRestartService(name)
-  const suspend = useSuspendService(name)
-  const resume = useResumeService(name)
+  const deploy = useTriggerDeploy(ref)
+  const restart = useRestartService(ref)
+  const suspend = useSuspendService(ref)
+  const resume = useResumeService(ref)
   const [clearCache, setClearCache] = React.useState(false)
   const [confirmSuspend, setConfirmSuspend] = React.useState(false)
   const clearCacheId = React.useId()
@@ -88,7 +91,7 @@ export function AvailabilityCard({ service, onScale, onRunJob }: AvailabilityCar
             ) : (
               <>
                 Rebuild the last uploaded archive. Push new code with{' '}
-                <span className="font-mono text-foreground">ferry up {name}</span>.
+                <span className="font-mono text-foreground">ferry up {cliName(service)}</span>.
               </>
             )
           }
@@ -124,7 +127,7 @@ export function AvailabilityCard({ service, onScale, onRunJob }: AvailabilityCar
         <FormRow
           className={ROW}
           label="Restart service"
-          description="Start fresh containers from the live image with the current environment and settings. Nothing is rebuilt."
+          description="Start fresh containers from the live image with the current variables and settings. Nothing is rebuilt."
         >
           <div className="flex md:justify-end">
             <div className="flex items-center">
@@ -228,8 +231,8 @@ export function AvailabilityCard({ service, onScale, onRunJob }: AvailabilityCar
             label="Suspend service"
             description={
               isCron
-                ? 'Skip scheduled runs until you resume it. Settings, environment and deploys are kept.'
-                : `Stop every instance${isPublicHttp(service.type) ? '; the proxy answers 503' : ''} until you resume it. Settings, environment and deploys are kept.`
+                ? 'Skip scheduled runs until you resume it. Settings, variables and deploys are kept.'
+                : `Stop every instance${isPublicHttp(service.type) ? '; the proxy answers 503' : ''} until you resume it. Settings, variables and deploys are kept.`
             }
           >
             <div className="flex md:justify-end">

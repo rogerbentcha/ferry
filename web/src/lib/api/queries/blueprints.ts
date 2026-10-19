@@ -14,6 +14,8 @@ export function useApplyBlueprint() {
       void qc.invalidateQueries({ queryKey: keys.services() })
       void qc.invalidateQueries({ queryKey: keys.datastores() })
       void qc.invalidateQueries({ queryKey: keys.envGroups() })
+      // What it creates lands in production.
+      void qc.invalidateQueries({ queryKey: keys.environments() })
     },
   })
 }

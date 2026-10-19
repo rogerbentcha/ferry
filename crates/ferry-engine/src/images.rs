@@ -103,7 +103,9 @@ pub(crate) async fn missing_reason(inner: &Inner, svc: &Service, image: &str, li
         return MissingImage::RemovedFromDocker;
     }
     match inner.store.deploys_with_images(&svc.id).await {
-        Ok(deploys) => classify_missing(&deploys, &inner.naming.image_repo(&svc.name), inner.config.keep_images, image),
+        Ok(deploys) => {
+            classify_missing(&deploys, &inner.naming.image_repo(&svc.qualified_name()), inner.config.keep_images, image)
+        }
         Err(e) => {
             debug!(service = %svc.name, "cannot tell why image {image} is missing: {e}");
             MissingImage::RemovedFromDocker

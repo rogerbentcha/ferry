@@ -63,7 +63,7 @@ A run uses the <Term id="snapshot" /> of the live deploy:
 | Image | The image of the live deploy |
 | Variables | The variables of the live deploy, without `PORT`. A job listens on no port. |
 | Limits | The memory and CPU limits of the live deploy |
-| Network | The <Term id="private-network" />. The job can connect to your services and datastores by name. |
+| Network | The <Term id="private-network" /> of the environment of the service. The job can connect to the services and datastores of that environment by name. |
 | Disk | A one-off job gets the <Term id="disk" /> of the service, at the same path. |
 
 If you changed the variables or the limits after the live deploy, restart the service first. Then the job gets the new values:

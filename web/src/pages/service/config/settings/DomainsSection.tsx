@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Hint } from '@/components/ui/tooltip'
 import { errorMessage } from '@/lib/api/client'
 import { useAddDomain, useRemoveDomain, useServerInfo, useServiceDomains } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { ServiceView } from '@/lib/api/types'
 
 import { checkDomain } from './forms'
@@ -42,9 +43,10 @@ function urlHost(serviceUrl: string | null): string | null {
 /** Custom domains (add / remove) and every host the proxy routes to the service. */
 export function DomainsSection({ service }: { service: ServiceView }) {
   const name = service.name
-  const domainsQuery = useServiceDomains(name)
-  const add = useAddDomain(name)
-  const remove = useRemoveDomain(name)
+  const ref = qualifiedName(service)
+  const domainsQuery = useServiceDomains(ref)
+  const add = useAddDomain(ref)
+  const remove = useRemoveDomain(ref)
   const info = useServerInfo()
   const [input, setInput] = React.useState('')
   const [touched, setTouched] = React.useState(false)

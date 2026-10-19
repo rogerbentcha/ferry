@@ -2,6 +2,7 @@ import * as React from 'react'
 
 import { isDeployActive, sourceKind, type Deploy, type InstanceStatus, type ServiceView } from '@/lib/api/types'
 import { repoName } from '@/lib/format'
+import { cliName } from '@/pages/services/lib'
 
 /**
  * Current time, refreshed every `intervalMs` while `enabled` (live durations,
@@ -62,7 +63,7 @@ export function sourceSummary(service: ServiceView): {
     return { kind, label: `${repoName(service.repo_url)}@${service.branch}`, detail: service.repo_url ?? '' }
   }
   if (kind === 'image') return { kind, label: service.image ?? '', detail: 'Prebuilt image' }
-  return { kind, label: 'Uploaded archive', detail: `ferry up ${service.name}` }
+  return { kind, label: 'Uploaded archive', detail: `ferry up ${cliName(service)}` }
 }
 
 /** Label of the manual deploy action for this source. */

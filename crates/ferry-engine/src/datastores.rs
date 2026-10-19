@@ -16,6 +16,7 @@ use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use crate::environments;
 use crate::instances::{self, STOP_GRACE_SECS};
 use crate::limits::{self, Resources};
 use crate::state::{Inner, SetGuard, deleting_datastores_set};
@@ -88,20 +89,23 @@ pub(crate) fn datastore_spec(
         ),
     };
     let mut spec = ContainerSpec {
-        name: naming.datastore_container(&ds.name),
+        name: naming.datastore_container(&ds.qualified_name()),
         image: ds.image(),
         env,
         cmd,
         entrypoint,
         labels: naming.datastore_labels(&ds.id),
-        network: Some(naming.network()),
+        network: Some(naming.environment_network(&ds.environment)),
         network_aliases: vec![ds.name.clone()],
         publish: Some(PortPublish {
             container_port: ds.internal_port(),
             host_ip: bind_ip.to_string(),
             host_port: Some(host_port),
         }),
-        volumes: vec![VolumeMount { volume: naming.datastore_volume(&ds.name), target: data_dir(ds.kind).to_string() }],
+        volumes: vec![VolumeMount {
+            volume: naming.datastore_volume(&ds.qualified_name()),
+            target: data_dir(ds.kind).to_string(),
+        }],
         restart_policy: RestartPolicy::UnlessStopped,
         memory_limit_bytes: None,
         nano_cpus: None,
@@ -224,7 +228,7 @@ async fn provision_task(inner: &Arc<Inner>, id: &str, cancel: &CancellationToken
         ds = inner.store.update_datastore(&ds).await?;
     }
     let naming = &inner.naming;
-    let name = naming.datastore_container(&ds.name);
+    let name = naming.datastore_container(&ds.qualified_name());
     let existing = inner.docker.inspect_container(&name).await?;
     let running = existing.as_ref().is_some_and(|c| c.state.is_running() || c.state == ContainerState::Restarting);
     // Only show "creating" when there is something to (re)create or retry.
@@ -244,7 +248,10 @@ async fn provision_task(inner: &Arc<Inner>, id: &str, cancel: &CancellationToken
     if new_volume {
         limits::check_free_disk(inner).await?;
     }
-    inner.docker.ensure_volume(&naming.datastore_volume(&ds.name), &naming.datastore_labels(&ds.id)).await?;
+    inner
+        .docker
+        .ensure_volume(&naming.datastore_volume(&ds.qualified_name()), &naming.datastore_labels(&ds.id))
+        .await?;
     // An existing stopped container is started; one that can't be (its host
     // port was taken meanwhile, it is paused, dead...) is recreated with the
     // same volume, which keeps the data.
@@ -319,7 +326,7 @@ async fn check_volume_owner(inner: &Inner, ds: &Datastore) -> Result<VolumeOwner
     match volume_owner(inner, ds).await? {
         owner @ (VolumeOwner::Missing | VolumeOwner::Datastore) => Ok(owner),
         VolumeOwner::Foreign => {
-            let name = inner.naming.datastore_volume(&ds.name);
+            let name = inner.naming.datastore_volume(&ds.qualified_name());
             Err(Error::conflict(format!(
                 "a Docker volume named {name} already exists and was not created for this datastore \
                  (it may hold another database's data): remove it with `docker volume rm {name}` \
@@ -342,7 +349,7 @@ enum VolumeOwner {
 }
 
 async fn volume_owner(inner: &Inner, ds: &Datastore) -> Result<VolumeOwner> {
-    let name = inner.naming.datastore_volume(&ds.name);
+    let name = inner.naming.datastore_volume(&ds.qualified_name());
     if !inner.docker.volume_exists(&name).await? {
         return Ok(VolumeOwner::Missing);
     }
@@ -366,7 +373,7 @@ async fn run_container(inner: &Inner, ds: &mut Datastore) -> Result<String> {
     let bind_ip = inner.config.datastore_bind_ip.clone();
     let port = ds.host_port.ok_or_else(|| Error::internal("datastore host port not allocated"))?;
     let resources = resources(inner, ds).await;
-    match inner.docker.run_container(&datastore_spec(&inner.naming, ds, &bind_ip, port, &resources)).await {
+    match environments::run_container(inner, &datastore_spec(&inner.naming, ds, &bind_ip, port, &resources)).await {
         Ok(info) => Ok(info.id),
         Err(e) if is_port_conflict(&e) => {
             let new_port = free_host_port()?;
@@ -374,7 +381,7 @@ async fn run_container(inner: &Inner, ds: &mut Datastore) -> Result<String> {
             ds.host_port = Some(new_port);
             *ds = inner.store.update_datastore(ds).await?;
             let spec = datastore_spec(&inner.naming, ds, &bind_ip, new_port, &resources);
-            let info = inner.docker.run_container(&spec).await?;
+            let info = environments::run_container(inner, &spec).await?;
             Ok(info.id)
         }
         Err(e) => Err(e),
@@ -466,7 +473,7 @@ pub(crate) async fn update_limits(inner: &Arc<Inner>, datastore_id: &str) -> Res
     if inner.with_rt(|rt| rt.deleting_datastores.contains(&ds.id)) {
         return Err(Error::conflict(format!("datastore '{}' is being deleted", ds.name)));
     }
-    let name = inner.naming.datastore_container(&ds.name);
+    let name = inner.naming.datastore_container(&ds.qualified_name());
     let container = match inner.docker.inspect_container(&name).await? {
         Some(c)
             if c.labels.get(LABEL_DATASTORE) == Some(&ds.id)
@@ -555,14 +562,14 @@ pub(crate) async fn delete(inner: &Arc<Inner>, datastore_id: &str) -> Result<()>
         token.cancel();
     }
     let _lock = inner.datastore_locks.lock(&ds.id).await;
-    let name = inner.naming.datastore_container(&ds.name);
+    let name = inner.naming.datastore_container(&ds.qualified_name());
     if let Some(c) = inner.docker.inspect_container(&name).await?
         && c.labels.get(LABEL_DATASTORE) == Some(&ds.id)
         && c.labels.get(LABEL_INSTANCE).map(String::as_str) == Some(inner.naming.prefix())
     {
         instances::retire(inner, &[c], STOP_GRACE_SECS).await?;
     }
-    let volume = inner.naming.datastore_volume(&ds.name);
+    let volume = inner.naming.datastore_volume(&ds.qualified_name());
     match volume_owner(inner, &ds).await? {
         VolumeOwner::Datastore => instances::remove_volume_retrying(inner, &volume).await?,
         VolumeOwner::Missing => {}
@@ -618,7 +625,17 @@ mod tests {
         assert!(spec.env.contains(&("POSTGRES_PASSWORD".into(), "pw".into())));
         assert!(spec.env.contains(&("POSTGRES_DB".into(), "main_db".into())));
         assert_eq!((spec.cmd, spec.entrypoint), (None, None));
+        assert_eq!(spec.network.as_deref(), Some("ferry"), "production keeps the server's network");
         assert_eq!(spec.network_aliases, vec!["main-db"]);
+        let mut staging = ds.clone();
+        staging.environment = "staging".into();
+        let spec_staging = datastore_spec(&naming, &staging, "127.0.0.1", 15433, &resources);
+        assert_eq!(spec_staging.network.as_deref(), Some("ferry-env-staging"));
+        // The same name: its own container and data, the same private hostname.
+        assert_eq!(spec_staging.name, "ferry-ds-main-db.staging");
+        assert_eq!(spec_staging.volumes[0].volume, "ferry-ds-main-db.staging-data");
+        assert_eq!(spec.volumes[0].volume, "ferry-ds-main-db-data");
+        assert_eq!(spec_staging.network_aliases, vec!["main-db"]);
         assert_eq!(
             spec.publish,
             Some(PortPublish { container_port: 5432, host_ip: "127.0.0.1".into(), host_port: Some(15432) })

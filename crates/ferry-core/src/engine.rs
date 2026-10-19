@@ -125,6 +125,23 @@ pub trait Engine: Send + Sync + 'static {
         Err(crate::Error::invalid("changing datastore limits is not supported by this engine"))
     }
 
+    /// An environment was created: make its private network (a Docker
+    /// bridge network of its own, `Naming::environment_network`). Idempotent;
+    /// the engine also makes the networks of every environment when it
+    /// starts.
+    async fn create_environment(&self, environment: &str) -> Result<()> {
+        let _ = environment;
+        Ok(())
+    }
+
+    /// An environment is about to be deleted (it holds nothing): remove its
+    /// private network. Never touches `production`'s. A network that is
+    /// already gone is fine.
+    async fn delete_environment(&self, environment: &str) -> Result<()> {
+        let _ = environment;
+        Ok(())
+    }
+
     /// The domains in the store changed (one was connected, removed or made
     /// the default): read them again, so every service is served — proxy
     /// routes, certificate requests — under the domains that are served now,

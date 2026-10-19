@@ -14,6 +14,7 @@ import { bytes, percent } from '@/lib/format'
 import { formatCpus } from '@/lib/resources'
 import { cn } from '@/lib/utils'
 
+import { datastorePath } from '../datastores/lib'
 import { servicePath } from '../service/context'
 
 // The charts and their library load when the section is opened.
@@ -132,8 +133,9 @@ function SubLine({ children, className }: { children: React.ReactNode; className
   return <span className={cn('mb-1 text-[12px] text-foreground-lighter', className)}>{children}</span>
 }
 
+/** `c.name` is the qualified name (`api.staging` outside production), what the routes take. */
 function containerPath(c: ContainerMetrics): string {
-  return c.kind === 'service' ? servicePath(c.name) : `/datastores/${encodeURIComponent(c.name)}`
+  return c.kind === 'service' ? servicePath(c.name) : datastorePath(c.name)
 }
 
 /** Every running service instance and datastore, in the order of the API (the busiest first). */

@@ -208,8 +208,8 @@ impl Client {
     }
 
     /// POST without a body (actions such as restart, suspend, cancel).
-    pub async fn post_empty<T: DeserializeOwned>(&self, segments: &[&str]) -> Result<Json<T>> {
-        self.request(Method::POST, segments, &[], None).await
+    pub async fn post_empty<T: DeserializeOwned>(&self, segments: &[&str], query: Query<'_>) -> Result<Json<T>> {
+        self.request(Method::POST, segments, query, None).await
     }
 
     pub async fn patch<B: Serialize, T: DeserializeOwned>(
@@ -222,8 +222,8 @@ impl Client {
     }
 
     /// DELETE returning a JSON body.
-    pub async fn delete<T: DeserializeOwned>(&self, segments: &[&str]) -> Result<Json<T>> {
-        self.request(Method::DELETE, segments, &[], None).await
+    pub async fn delete<T: DeserializeOwned>(&self, segments: &[&str], query: Query<'_>) -> Result<Json<T>> {
+        self.request(Method::DELETE, segments, query, None).await
     }
 
     /// DELETE expecting no content (204); any body is ignored.

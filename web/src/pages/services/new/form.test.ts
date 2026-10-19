@@ -224,6 +224,21 @@ describe('toCreateRequest', () => {
     )
     expect(limited).toMatchObject({ memory_limit_mb: 1024, cpu_limit: 0.75 })
   })
+  it('names its environment, except production (the default, left out)', () => {
+    expect(INITIAL_FORM.environment).toBe('production')
+    expect(toCreateRequest(form({ name: 'shop', source: 'upload' }), [])).not.toHaveProperty('environment')
+    const body = toCreateRequest(form({ name: 'shop', source: 'upload', environment: 'staging' }), [])
+    expect(body).toMatchObject({ name: 'shop', environment: 'staging' })
+    // a draft keeps the pick
+    const f = form({ name: 'shop', environment: 'staging' })
+    expect(formFromDraft(JSON.stringify(draftOf(f)))?.environment).toBe('staging')
+  })
+  it('the picked environment must exist once the environments are known', () => {
+    const f = form({ name: 'shop', source: 'upload', environment: 'staging' })
+    expect(validateForm(f, none)).toEqual({})
+    expect(validateForm(f, none, null, ['production', 'staging'])).toEqual({})
+    expect(validateForm(f, none, null, ['production']).environment).toMatch(/staging/)
+  })
   it('upload services are created without a deploy', () => {
     const body = toCreateRequest(form({ name: 'app', source: 'upload' }), [])
     expect(body.deploy).toBe(false)
@@ -285,6 +300,15 @@ describe('fieldForServerError', () => {
     expect(fieldForServerError("invalid repo_url 'x': must not be empty")).toBe('repoUrl')
     expect(fieldForServerError('memory limit must be between 16 MiB and 1024 GiB (got 8 MiB)')).toBe('memoryLimit')
     expect(fieldForServerError('CPU limit must be between 0.01 and 512 CPUs (got 0)')).toBe('cpuLimit')
+    expect(
+      fieldForServerError("environment 'qa' not found (create it first: ferry environments create qa)"),
+    ).toBe('environment')
+    // a reference to a datastore of another environment is about the variables
+    expect(
+      fieldForServerError(
+        "env var DATABASE_URL: datastore 'db' is not in environment 'staging' (it is in 'production'): a service only reaches the datastores and services of its own environment",
+      ),
+    ).toBe('env')
     expect(fieldForServerError('something else entirely')).toBeNull()
   })
 })

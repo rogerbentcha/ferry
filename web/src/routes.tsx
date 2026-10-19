@@ -55,6 +55,7 @@ export const routes: RouteObject[] = [
             lazy: async () => ({ Component: (await import('@/pages/services/NewServicePage')).NewServicePage }),
           },
           {
+            // `:name` = the qualified name (`api`, `api.staging` outside production) or the id.
             path: 'services/:name',
             element: <ServiceLayout />,
             children: [
@@ -98,9 +99,22 @@ export const routes: RouteObject[] = [
             lazy: async () => ({ Component: (await import('@/pages/datastores/DatastoresPage')).DatastoresPage }),
           },
           {
+            // `:name` = the qualified name (`db`, `db.staging` outside production) or the id.
             path: 'datastores/:name',
             lazy: async () => ({
               Component: (await import('@/pages/datastores/DatastoreDetailPage')).DatastoreDetailPage,
+            }),
+          },
+          {
+            path: 'environments',
+            lazy: async () => ({
+              Component: (await import('@/pages/environments/EnvironmentsPage')).EnvironmentsPage,
+            }),
+          },
+          {
+            path: 'environments/:name',
+            lazy: async () => ({
+              Component: (await import('@/pages/environments/EnvironmentDetailPage')).EnvironmentDetailPage,
             }),
           },
           {

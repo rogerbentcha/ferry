@@ -3,7 +3,8 @@ import type { MetricsRange } from './types'
 /**
  * TanStack Query key factory. Hierarchical so a prefix invalidates a subtree:
  * `keys.service(ref)` covers the service's status, deploys, env, domains and jobs.
- * `ref` is whatever identifies the resource in the URL (name or id).
+ * `ref` is whatever identifies the resource in the URL (name or id; for a
+ * service or a datastore, its qualified name or id: see `refs`).
  */
 export const keys = {
   info: () => ['info'] as const,
@@ -46,6 +47,11 @@ export const keys = {
   envGroups: () => ['env-groups'] as const,
   envGroupList: () => ['env-groups', 'list'] as const,
   envGroup: (ref: string) => ['env-groups', 'detail', ref] as const,
+
+  /** Environments list their services and datastores, and the DNS records of the server's domains. */
+  environments: () => ['environments'] as const,
+  environmentList: () => ['environments', 'list'] as const,
+  environment: (ref: string) => ['environments', 'detail', ref] as const,
 
   /** The server's domains, and the certificates of the hosts they give services. */
   domains: () => ['domains'] as const,

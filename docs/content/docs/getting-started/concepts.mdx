@@ -9,7 +9,7 @@ This page gives each main name of Ferry in a few sentences, with a link to the g
 
 ## Services
 
-A <Term id="service" /> is one app that Ferry builds and runs as one or more Docker <Term id="container">containers</Term>. Each service has a unique name, a type, a <Term id="source" />, settings and <Term id="env-var">environment variables</Term>. The source is a git repository, a Docker image or a folder that you upload. The type tells who can reach the service.
+A <Term id="service" /> is one app that Ferry builds and runs as one or more Docker <Term id="container">containers</Term>. Each service has a name that is unique in its <Term id="environment" />, a type, a <Term id="source" />, settings and <Term id="env-var">environment variables</Term>. The source is a git repository, a Docker image or a folder that you upload. The type tells who can reach the service.
 
 <Diagram
   nodes={[
@@ -78,15 +78,21 @@ A service from a prebuilt image has no build. See [Deploy an app](/docs/guides/d
 
 ## Networking and domains
 
-Each server runs one <Term id="proxy" />. The proxy receives all the public traffic and sends each request to a container of the correct service. Behind the proxy, the containers share a <Term id="private-network" />. There, a service calls another service by its name and port, for example `api:3000`. Each web service and static site gets a URL. You can add your own domain with automatic HTTPS.
+Each server runs one <Term id="proxy" />. The proxy receives all the public traffic and sends each request to a container of the correct service. Behind the proxy, the containers of an <Term id="environment" /> share a <Term id="private-network" />. There, a service calls another service by its name and port, for example `api:3000`. Each web service and static site gets a URL. You can add your own domain with automatic HTTPS.
 
 See [Domains and HTTPS](/docs/guides/domains).
 
-## Environment variables
+## Environments
+
+Each service and each datastore belongs to one environment. Each server has `production`. Create `staging` next to it to test a change before it goes live. Staging can use the same names as production. The containers of staging cannot reach production by name. Outside production, the URL of a service has the name of its environment: `shop.staging.example.com`.
+
+See [Environments](/docs/guides/environments).
+
+## Variables
 
 Each service has its own environment variables. To share variables, put them in an <Term id="env-group" /> and link the group to your services. A value can be a <Term id="reference" /> to a datastore or to another service, in the form `${{…}}`. Ferry puts the real value there when the service starts. `ferry env set` restarts the service to apply a change.
 
-See [Environment variables and secrets](/docs/guides/environment).
+See [Variables and secrets](/docs/guides/variables).
 
 ## Datastores
 

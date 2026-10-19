@@ -6,6 +6,7 @@ import { PageSection } from '@/components/patterns/Page'
 import { Input } from '@/components/ui/input'
 import { errorMessage } from '@/lib/api/client'
 import { useUpdateService } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { ServiceView } from '@/lib/api/types'
 import { cn } from '@/lib/utils'
 
@@ -33,7 +34,7 @@ export function CronSection({
   service: ServiceView
   reportDirty: (id: string, dirty: boolean) => void
 }) {
-  const update = useUpdateService(service.name)
+  const update = useUpdateService(qualifiedName(service))
   const server = React.useMemo<CronForm>(() => ({ schedule: service.schedule ?? '' }), [service.schedule])
   const form = useSyncedForm<CronForm>(server, sameForm)
   const [saveError, setSaveError] = React.useState<string | null>(null)

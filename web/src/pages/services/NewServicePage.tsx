@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Link, useLocation, useNavigate } from 'react-router'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router'
 import { AlertTriangle, ArrowLeft, Box, ChevronDown, GitBranch, Rocket, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -19,16 +19,26 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { errorMessage } from '@/lib/api/client'
-import { useCreateService, useDatastores, useGitConnections, useServerInfo, useServices } from '@/lib/api/queries'
-import { RUNTIMES, type GitRepository, type Runtime, type ServiceType } from '@/lib/api/types'
+import {
+  useCreateService,
+  useDatastores,
+  useEnvironments,
+  useGitConnections,
+  useServerInfo,
+  useServices,
+} from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
+import { PRODUCTION, RUNTIMES, type GitRepository, type Runtime, type ServiceType } from '@/lib/api/types'
 import { RUNTIME_LABELS, SERVICE_TYPE_LABELS } from '@/lib/format'
 import { pushDelivery, serviceNameFromRepository } from '@/lib/git'
 import { connectedFromState } from '@/lib/gitAuthorize'
 import { LIMIT_DEFAULT, limitValue, memoryHostWarning, type LimitField } from '@/lib/resources'
 import { cn } from '@/lib/utils'
+import { inEnvironment } from '@/pages/environments/lib'
+import { EnvironmentSelect } from '@/pages/environments/parts'
 import { servicePath } from '@/pages/service/context'
 
-import { previewServiceUrl } from './lib'
+import { cliName, previewServiceUrl } from './lib'
 import { ChoiceCards, type Choice } from './new/ChoiceCards'
 import { CronField } from './new/CronField'
 import { DatastoreRefMenu } from './new/DatastoreRefMenu'
@@ -135,11 +145,20 @@ export function NewServicePage() {
   const accounts = useGitConnections()
   const services = useServices()
   const datastores = useDatastores()
+  const environments = useEnvironments()
   const env = useKeyValueRows([])
+  const [params] = useSearchParams()
 
   // Back from GitHub / GitLab after connecting an account: the form is as it was left.
+  // Otherwise `?environment=staging` (an environment's "New service") picks the environment.
   const justConnected = connectedFromState(location.state)
-  const [form, setForm] = React.useState<NewServiceForm>(() => (justConnected ? readDraft() : null) ?? INITIAL_FORM)
+  const [form, setForm] = React.useState<NewServiceForm>(
+    () =>
+      (justConnected ? readDraft() : null) ?? {
+        ...INITIAL_FORM,
+        environment: params.get('environment')?.trim() || PRODUCTION,
+      },
+  )
   React.useEffect(() => saveDraft(form), [form])
   const [touched, setTouched] = React.useState<ReadonlySet<FieldKey>>(() => new Set())
   const [submitted, setSubmitted] = React.useState(false)
@@ -149,15 +168,20 @@ export function NewServicePage() {
   /** The name last filled in from a picked repository (replaced by the next pick, never a typed one). */
   const suggestedName = React.useRef('')
 
+  // Names are unique in an environment only (shared by its services and datastores).
   const taken = React.useMemo(
     () => ({
-      services: services.data?.map((s) => s.name) ?? [],
-      datastores: datastores.data?.map((d) => d.name) ?? [],
+      services: inEnvironment(services.data ?? [], form.environment).map((s) => s.name),
+      datastores: inEnvironment(datastores.data ?? [], form.environment).map((d) => d.name),
     }),
-    [services.data, datastores.data],
+    [services.data, datastores.data, form.environment],
   )
   const hostCpus = info.data?.docker_cpus
-  const errors = React.useMemo(() => validateForm(form, taken, hostCpus), [form, taken, hostCpus])
+  const environmentNames = React.useMemo(() => environments.data?.map((e) => e.name), [environments.data])
+  const errors = React.useMemo(
+    () => validateForm(form, taken, hostCpus, environmentNames),
+    [form, taken, hostCpus, environmentNames],
+  )
   const vis = visibleFields(form)
 
   const update = <K extends keyof NewServiceForm>(key: K, value: NewServiceForm[K]) => {
@@ -263,7 +287,10 @@ export function NewServicePage() {
   const memoryWarning = errors.memoryLimit ? null : memoryHostWarning(limitValue('memory', form.memoryLimit), info.data)
 
   const name = form.name.trim()
-  const publicUrl = vis.domains ? previewServiceUrl(name || 'my-service', info.data) : null
+  const upload = `ferry up ${cliName({ name: name || '<name>', environment: form.environment })}`
+  const publicUrl = vis.domains ? previewServiceUrl(name || 'my-service', info.data, form.environment) : null
+  // References resolve inside the service's environment only.
+  const envDatastores = (datastores.data ?? []).filter((d) => d.environment === form.environment)
   const deploys = form.source !== 'upload'
 
   const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -282,9 +309,10 @@ export function NewServicePage() {
         clearDraft()
         const deploy = view.latest_deploy
         toast.success(`${view.name} created`, {
-          description: deploy ? 'The first deploy is on its way.' : `Upload your code with: ferry up ${view.name}`,
+          description: deploy ? 'The first deploy is on its way.' : `Upload your code with: ferry up ${cliName(view)}`,
         })
-        void navigate(deploy ? servicePath(view.name, `/deploys/${encodeURIComponent(deploy.id)}`) : servicePath(view.name))
+        const ref = qualifiedName(view)
+        void navigate(deploy ? servicePath(ref, `/deploys/${encodeURIComponent(deploy.id)}`) : servicePath(ref))
       },
       onError: (err) => {
         const message = errorMessage(err)
@@ -310,6 +338,7 @@ export function NewServicePage() {
     typeLabel,
     form.source === 'git' ? (picked?.fullName ?? 'Git') : form.source === 'image' ? 'Docker image' : 'Upload via CLI',
     vis.instances && form.instances.trim() ? `×${form.instances.trim()}` : null,
+    form.environment !== PRODUCTION ? form.environment : null,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -368,6 +397,36 @@ export function NewServicePage() {
                   </>
                 )}
               </p>
+            </FormRow>
+            <FormRow
+              label="Environment"
+              htmlFor={fieldId('environment')}
+              description={
+                <>
+                  Its private network: the service reaches the datastores and services of this environment only. It
+                  can’t be changed later.
+                  {environments.data?.length === 1 && (
+                    <>
+                      {' '}
+                      Create others in{' '}
+                      <Link to="/environments" className="text-primary underline-offset-4 hover:underline">
+                        Environments
+                      </Link>
+                      .
+                    </>
+                  )}
+                </>
+              }
+              error={errNode('environment')}
+            >
+              <EnvironmentSelect
+                id={fieldId('environment')}
+                value={form.environment}
+                onChange={(e) => update('environment', e)}
+                environments={environments.data}
+                invalid={Boolean(errorFor('environment'))}
+                describedBy={errorFor('environment') ? errorId('environment') : undefined}
+              />
             </FormRow>
           </FormCard>
         </PageSection>
@@ -483,7 +542,7 @@ export function NewServicePage() {
                 label="Upload with the CLI"
                 description="Run this from your project directory once the service exists. It uploads the directory and deploys it."
               >
-                <CodeBlock code={`ferry up ${name || '<name>'}`} prompt />
+                <CodeBlock code={upload} prompt />
               </FormRow>
             )}
           </FormCard>
@@ -705,20 +764,21 @@ export function NewServicePage() {
           </PageSection>
         )}
 
-        <PageSection title="Environment">
+        <PageSection title="Variables">
           <FormCard asDiv>
             <FormRow
               label={
                 <span className="flex items-center justify-between gap-3">
                   Environment variables
-                  <DatastoreRefMenu rows={env.rows} onChange={env.setRows} />
+                  <DatastoreRefMenu rows={env.rows} onChange={env.setRows} datastores={envDatastores} />
                 </span>
               }
               layout="vertical"
               description={
                 <>
-                  Available at build and run time. Datastores and services can be referenced, e.g.{' '}
-                  <code className="font-mono text-[12.5px] whitespace-nowrap">{`\${{datastore.${datastores.data?.[0]?.name ?? 'my-db'}.connectionString}}`}</code>
+                  Available at build and run time. Datastores and services of its environment can be referenced,
+                  e.g.{' '}
+                  <code className="font-mono text-[12.5px] whitespace-nowrap">{`\${{datastore.${envDatastores[0]?.name ?? 'my-db'}.connectionString}}`}</code>
                 </>
               }
             >

@@ -81,6 +81,21 @@ fn check_type(a: &UpArgs, existing: &ServiceView) -> Result<()> {
     }
 }
 
+/// A name missing from production that another environment uses: `up`
+/// without `--environment` creates production's, so say so (best effort).
+async fn note_other_environments(ctx: &Ctx, name: &str) {
+    let Ok(all) = ctx.client.get::<Vec<ServiceView>>(&["services"], &[]).await else { return };
+    let elsewhere: Vec<&str> =
+        all.data.iter().filter(|v| v.service.name == name).map(|v| v.service.environment.as_str()).collect();
+    if let Some(first) = elsewhere.first() {
+        errln!(
+            "note: '{name}' exists in environment {}, not in production: this creates a new '{name}' in production \
+             (to deploy that one: ferry up {name} --environment {first})",
+            elsewhere.iter().map(|e| format!("'{e}'")).collect::<Vec<_>>().join(", ")
+        );
+    }
+}
+
 /// Apply `ferry up`'s settings, variables and env groups to an existing
 /// service before deploying, so re-running `ferry up --start-cmd …` fixes it.
 async fn update_existing(ctx: &Ctx, mut svc: ServiceView, a: &UpArgs) -> Result<ServiceView> {
@@ -136,8 +151,9 @@ pub async fn up(ctx: &Ctx, a: UpArgs) -> Result<()> {
         None => default_service_name(&dir)?,
     };
 
-    // Look the service up first so a typo'd name fails before packing.
-    let existing = match ctx.client.get::<ServiceView>(&["services", &name], &[]).await {
+    // Look the service up first (in the environment of --environment) so a
+    // typo'd name fails before packing.
+    let existing = match ctx.client.get::<ServiceView>(&["services", &name], &ctx.scope()).await {
         Ok(v) => Some(v.data),
         Err(e) if is_not_found(&e) => None,
         Err(e) => return Err(e),
@@ -146,6 +162,9 @@ pub async fn up(ctx: &Ctx, a: UpArgs) -> Result<()> {
         Some(svc) => check_type(&a, svc)?,
         // Validate locally: the name will be used to create the service.
         None => validate::resource_name(&name).map_err(|e| anyhow!("{e}"))?,
+    }
+    if existing.is_none() && ctx.environment.is_none() {
+        note_other_environments(ctx, &name).await;
     }
 
     errln!("Packing {} …", dir.display());
@@ -191,6 +210,7 @@ pub async fn up(ctx: &Ctx, a: UpArgs) -> Result<()> {
         }
         None => {
             let mut body = create_body(&name, Some(a.service_type.unwrap_or(ServiceType::WebService)), &a.settings);
+            body.environment = a.environment.clone();
             body.env = (!a.env.is_empty()).then(|| a.env.clone());
             body.env_groups = (!a.env_groups.is_empty()).then(|| a.env_groups.clone());
             body.deploy = Some(false);

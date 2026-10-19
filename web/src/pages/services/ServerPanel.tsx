@@ -11,6 +11,7 @@ import { endpoints } from '@/lib/api/endpoints'
 import { useLive, type LiveMode } from '@/lib/api/events'
 import { keys } from '@/lib/api/keys'
 import { useDatastores, useEnvGroups, useServerInfo } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { ServiceView } from '@/lib/api/types'
 import { defaultDomain } from '@/lib/domains'
 import { displayUrl } from '@/lib/format'
@@ -98,8 +99,8 @@ function useInstanceCounts(services: ServiceView[] | undefined) {
   const degraded = running.filter((s) => s.state === 'degraded')
   const statuses = useQueries({
     queries: degraded.map((s) => ({
-      queryKey: keys.serviceStatus(s.name),
-      queryFn: ({ signal }: { signal: AbortSignal }) => endpoints.serviceStatus(s.name, signal),
+      queryKey: keys.serviceStatus(qualifiedName(s)),
+      queryFn: ({ signal }: { signal: AbortSignal }) => endpoints.serviceStatus(qualifiedName(s), signal),
       refetchInterval: 10_000,
     })),
   })

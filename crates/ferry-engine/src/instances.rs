@@ -121,12 +121,12 @@ pub(crate) fn port_env_mismatch(port: u16, user_env: &[EnvVar]) -> Option<String
     ))
 }
 
-/// Build args: the service's env with references resolved. Variables whose
-/// references cannot be resolved (yet) are skipped; the second value lists
-/// them with the reason.
+/// Build args: the service's env with references resolved (inside its
+/// environment). Variables whose references cannot be resolved (yet) are
+/// skipped; the second value lists them with the reason.
 pub(crate) async fn build_args(inner: &Inner, svc: &Service) -> Result<(Vec<(String, String)>, Vec<String>)> {
     let user = inner.store.effective_env(&svc.id).await?;
-    let (datastores, services) = inner.store.reference_targets(&inner.config).await?;
+    let (datastores, services) = inner.store.environment_reference_targets(&inner.config, &svc.environment).await?;
     let ctx = RefContext { datastores: &datastores, services: &services, advertise_host: &inner.config.advertise_host };
     let mut args = Vec::with_capacity(user.len());
     let mut skipped = Vec::new();
@@ -171,13 +171,13 @@ pub(crate) struct Plan {
 /// Container spec of one instance.
 pub(crate) fn service_spec(naming: &Naming, svc: &Service, deploy_id: &str, plan: &Plan) -> ContainerSpec {
     let mut spec = ContainerSpec {
-        name: naming.service_container(&svc.name, deploy_id, &ids::random_secret(6)),
+        name: naming.service_container(&svc.qualified_name(), deploy_id, &ids::random_secret(6)),
         image: plan.image.clone(),
         env: plan.env.clone(),
         cmd: plan.cmd.clone(),
         entrypoint: None,
         labels: naming.service_labels(&svc.id, deploy_id),
-        network: Some(naming.network()),
+        network: Some(naming.environment_network(&svc.environment)),
         network_aliases: vec![svc.name.clone()],
         publish: plan.port.filter(|_| svc.listens()).map(|p| PortPublish {
             container_port: p,
@@ -339,6 +339,15 @@ mod tests {
         let mut worker = web();
         worker.service_type = ServiceType::BackgroundWorker;
         assert!(service_spec(&naming, &worker, deploy_id, &plan).publish.is_none());
+
+        // Outside production: the environment's own network, the same alias.
+        let mut shop = web();
+        shop.environment = "staging".into();
+        let spec = service_spec(&naming, &shop, deploy_id, &plan);
+        assert_eq!(spec.network.as_deref(), Some("ferry-env-staging"));
+        assert_eq!(spec.network_aliases, vec!["web"]);
+        // Its containers carry the environment: never one of production's `web`.
+        assert!(spec.name.starts_with("ferry-web.staging-cdef4567-"), "{}", spec.name);
     }
 
     #[tokio::test]

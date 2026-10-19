@@ -17,6 +17,7 @@ import {
 import { CopyButton } from '@/components/patterns/Copy'
 import { InfoTile } from '@/components/patterns/InfoTile'
 import { DeployStatusBadge, ServiceStatePill } from '@/components/patterns/StatusBadge'
+import { qualifiedName } from '@/lib/api/refs'
 import { isPublicHttp, listensOnPort, type RuntimeStatus, type ServiceView } from '@/lib/api/types'
 import {
   dateTime,
@@ -27,6 +28,8 @@ import {
   shortId,
   shortSha,
 } from '@/lib/format'
+
+import { useShownEnvironments } from '@/pages/environments/lib'
 
 import { servicePath } from '../context'
 import { privateAddress, sourceSummary } from './utils'
@@ -68,6 +71,9 @@ export function ServiceInfoTiles({ service, status, statusLoading }: ServiceInfo
   const isCron = service.type === 'cron_job'
   const running = status?.instances.filter((i) => i.state === 'running').length ?? 0
   const desired = status?.desired_instances ?? service.instances
+  // Its private network is its environment's: say which once there is more than production.
+  const { shown: showEnvironment } = useShownEnvironments()
+  const reachable = showEnvironment ? `Reachable from ${service.environment}` : 'Reachable by other services'
 
   const SourceIcon = source.kind === 'git' ? GitBranch : source.kind === 'image' ? Package : Upload
 
@@ -113,7 +119,7 @@ export function ServiceInfoTiles({ service, status, statusLoading }: ServiceInfo
             <CopyButton value={address} what="private address" className="shrink-0" />
           </span>
         }
-        hint={listensOnPort(service.type) ? 'Reachable by other services' : 'No listening port'}
+        hint={listensOnPort(service.type) ? reachable : 'No listening port'}
       />
 
       <InfoTile
@@ -139,7 +145,7 @@ export function ServiceInfoTiles({ service, status, statusLoading }: ServiceInfo
         value={
           latest ? (
             <Link
-              to={servicePath(service.name, `/deploys/${encodeURIComponent(latest.id)}`)}
+              to={servicePath(qualifiedName(service), `/deploys/${encodeURIComponent(latest.id)}`)}
               className="group flex min-w-0 items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <DeployStatusBadge status={latest.status} />

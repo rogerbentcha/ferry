@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::models::{
-    ApiToken, Datastore, DatastoreKind, Deploy, Domain, EnvGroup, EnvVar, GitAuth, GitProvider, Runtime, Service,
-    ServiceState, ServiceType, User,
+    ApiToken, Datastore, DatastoreKind, Deploy, Domain, EnvGroup, EnvVar, Environment, GitAuth, GitProvider, Runtime,
+    Service, ServiceState, ServiceType, User,
 };
 
 /// `GET /api/v1/info`
@@ -79,6 +79,12 @@ pub struct ServiceView {
 #[serde(deny_unknown_fields)]
 pub struct CreateService {
     pub name: String,
+    /// The environment to create it in (id or name). Omitted = `production`.
+    /// It can't be changed later. Left out when `None`, so a client still
+    /// talks to a server older than environments (bodies reject unknown
+    /// fields).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
     #[serde(rename = "type")]
     pub service_type: Option<ServiceType>,
     pub repo_url: Option<String>,
@@ -265,8 +271,8 @@ pub struct RequestMetrics {
     /// A service id; `dashboard` for the dashboard's host; `unrouted` for a
     /// host no service has (and the requests without a valid host).
     pub target: String,
-    /// The service's name (its last one in the range); the target itself
-    /// for `dashboard` and `unrouted`.
+    /// The service's qualified name (`api`, `api.staging`; its last one in
+    /// the range); the target itself for `dashboard` and `unrouted`.
     pub name: String,
     /// The requests per second, on average over the time.
     pub requests_per_sec: f64,
@@ -337,7 +343,8 @@ pub struct ContainerMetrics {
     pub kind: ContainerKind,
     /// Id of the service or datastore.
     pub id: String,
-    /// Name of the service or datastore.
+    /// Qualified name of the service or datastore: `api` in production,
+    /// `api.staging` elsewhere.
     pub name: String,
     /// The instance, as in the logs (last 6 characters of the container
     /// name). `null` for a datastore: it has one container.
@@ -527,7 +534,7 @@ pub struct ContainerSeries {
     pub kind: ContainerKind,
     /// Id of the service or datastore.
     pub id: String,
-    /// Its name when it was last read.
+    /// Its qualified name (`api`, `api.staging`) when it was last read.
     pub name: String,
     /// The instance, as in the logs; `null` for a datastore.
     pub instance: Option<String>,
@@ -552,6 +559,12 @@ pub struct ContainerPoint {
 pub struct CreateDatastore {
     pub name: String,
     pub kind: DatastoreKind,
+    /// The environment to create it in (id or name). Omitted = `production`.
+    /// It can't be changed later. Left out when `None`, so a client still
+    /// talks to a server older than environments (bodies reject unknown
+    /// fields).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
     /// Postgres major (default "16") / Redis major (default "7").
     pub version: Option<String>,
     /// Postgres database name (default: name with `-` → `_`).
@@ -588,6 +601,46 @@ pub struct DatastoreView {
     pub external_url: Option<String>,
 }
 
+/// `POST /api/v1/environments`
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateEnvironment {
+    /// The rules of service names: 1-40 lowercase letters, digits or `-`,
+    /// starting with a letter. It can't be changed later.
+    pub name: String,
+}
+
+/// The DNS records the services of an environment need under one domain of
+/// the server: `*.staging.example.com` (production's services are covered
+/// by the domain's own `*.example.com`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct EnvironmentDns {
+    /// The domain whose zone gets the records: `example.com`.
+    pub domain: String,
+    /// The names they cover: `*.staging.example.com`.
+    pub wildcard: String,
+    /// The records, named relative to the domain (`*.staging`).
+    pub records: Vec<DnsRecord>,
+}
+
+/// An environment as returned by the API (the stored row plus computed fields).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct EnvironmentView {
+    #[serde(flatten)]
+    pub environment: Environment,
+    /// Names of its services.
+    pub services: Vec<String>,
+    /// Names of its datastores.
+    pub datastores: Vec<String>,
+    /// Where a web service of this environment is found, with `<service>` in
+    /// the place of its name: `https://<service>.staging.example.com`
+    /// (`https://<service>.example.com` in `production`).
+    pub url_pattern: String,
+    /// The DNS records to create for its services, one entry per domain of
+    /// the server that is not local (none for `production`).
+    pub dns: Vec<EnvironmentDns>,
+}
+
 /// `POST /api/v1/env-groups`
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -603,7 +656,8 @@ pub struct EnvGroupView {
     #[serde(flatten)]
     pub group: EnvGroup,
     pub vars: Vec<EnvVar>,
-    /// Names of linked services.
+    /// Qualified names of linked services (`api`, `api.staging`): env
+    /// groups are server-wide.
     pub services: Vec<String>,
 }
 
@@ -819,8 +873,8 @@ pub struct GitConnectionView {
     /// to set up on a repository. `false` for the other kinds of connection.
     #[serde(default)]
     pub push_events: bool,
-    /// Names of the services whose repository is cloned with this
-    /// connection.
+    /// Qualified names (`api`, `api.staging`) of the services whose
+    /// repository is cloned with this connection.
     pub services: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

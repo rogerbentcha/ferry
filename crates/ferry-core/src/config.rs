@@ -200,12 +200,15 @@ impl Config {
         self.claimed_domains().iter().map(|d| format!("{service_name}.{d}").to_ascii_lowercase()).collect()
     }
 
-    /// All hostnames the proxy routes to this service (empty unless public HTTP).
+    /// All hostnames the proxy routes to this service (empty unless public
+    /// HTTP): `<name>.<domain>` in `production`, `<name>.<environment>.<domain>`
+    /// in any other environment, under every served domain, then its custom
+    /// domains.
     pub fn service_hosts(&self, service: &Service) -> Vec<String> {
         if !service.is_public_http() {
             return Vec::new();
         }
-        let mut hosts = self.default_hosts(&service.name);
+        let mut hosts = self.default_hosts(&service.host_label());
         for d in &service.custom_domains {
             let d = d.trim().trim_end_matches('.').to_ascii_lowercase();
             if !d.is_empty() && !hosts.contains(&d) {
@@ -237,9 +240,11 @@ impl Config {
         format!("{scheme}://{host}{port}")
     }
 
-    /// Public URL of a service (web services and static sites only).
+    /// Public URL of a service (web services and static sites only), under
+    /// the primary domain: `<name>.<domain>`, or `<name>.<environment>.<domain>`
+    /// outside `production`.
     pub fn service_url(&self, service: &Service) -> Option<String> {
-        service.is_public_http().then(|| self.url_for_host(&self.default_host(&service.name)))
+        service.is_public_http().then(|| self.url_for_host(&self.default_host(&service.host_label())))
     }
 
     /// URL of the dashboard through the proxy, if a dashboard host is configured.
@@ -397,6 +402,32 @@ mod tests {
         // The base domain is served even without its row.
         cfg.domains.replace("localhost", &[]);
         assert_eq!(cfg.served_domains(), vec!["localhost"]);
+    }
+
+    #[test]
+    fn hosts_outside_production_carry_the_environment() {
+        use crate::models::{Domain, DomainSource, DomainStatus};
+        let cfg = Config::default();
+        let mut shop = Service::new("shop", ServiceType::WebService);
+        shop.environment = "staging".into();
+        shop.custom_domains = vec!["shop.example.org".into()];
+        assert_eq!(shop.host_label(), "shop.staging");
+        assert_eq!(cfg.service_hosts(&shop), vec!["shop.staging.localhost", "shop.example.org"]);
+        assert_eq!(cfg.service_url(&shop).unwrap(), "http://shop.staging.localhost:8080");
+        // Production keeps `<service>.<domain>`.
+        let web = Service::new("web", ServiceType::WebService);
+        assert_eq!(cfg.service_hosts(&web), vec!["web.localhost"]);
+
+        // On every served domain; a pending one needs its record too.
+        let base = Domain { is_default: true, ..Domain::new("localhost", DomainSource::Config) };
+        let active = Domain { status: DomainStatus::Active, ..Domain::new("example.com", DomainSource::Connected) };
+        let pending = Domain::new("example.net", DomainSource::Connected);
+        cfg.domains.replace("localhost", &[base, active, pending]);
+        assert_eq!(
+            cfg.service_hosts(&shop),
+            vec!["shop.staging.localhost", "shop.staging.example.com", "shop.example.org"]
+        );
+        assert_eq!(cfg.claimed_hosts(&shop.host_label())[2], "shop.staging.example.net");
     }
 
     #[test]

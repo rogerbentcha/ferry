@@ -25,6 +25,7 @@ import {
   tokenExpiry,
 } from '@/lib/git'
 import { cn } from '@/lib/utils'
+import { servicePath } from '@/pages/service/context'
 
 type DialogState = { provider?: GitProvider; connection?: GitConnectionView } | null
 
@@ -40,7 +41,7 @@ function ConnectButtons({ onConnect, size }: { onConnect: (provider: GitProvider
   )
 }
 
-/** The services whose repository a connection clones, as links. */
+/** The services whose repository a connection clones, as links (qualified names: `api`, `api.staging`). */
 function UsedBy({ services }: { services: string[] }) {
   if (services.length === 0) return <>Clones for no service yet</>
   return (
@@ -50,7 +51,7 @@ function UsedBy({ services }: { services: string[] }) {
         <React.Fragment key={name}>
           {i > 0 && ', '}
           <Link
-            to={`/services/${encodeURIComponent(name)}/settings`}
+            to={servicePath(name, '/settings')}
             className="rounded-sm font-mono text-[12.5px] text-foreground-light underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
           >
             {name}
