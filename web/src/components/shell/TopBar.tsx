@@ -333,7 +333,7 @@ function AccountMenu() {
           </span>
         </div>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void navigate('/server?section=account')}>
+        <DropdownMenuItem onSelect={() => void navigate('/account')}>
           <UserRound /> Account
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => void navigate('/server')}>

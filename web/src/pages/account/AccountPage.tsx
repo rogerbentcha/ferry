@@ -6,7 +6,7 @@ import { ConfirmDialog } from '@/components/patterns/ConfirmDialog'
 import { CodeBlock, CopyField } from '@/components/patterns/Copy'
 import { Callout, EmptyState, ErrorState } from '@/components/patterns/EmptyState'
 import { FormCard, FormRow } from '@/components/patterns/FormCard'
-import { PageHeader, PageSection } from '@/components/patterns/Page'
+import { PageContainer, PageHeader, PageSection } from '@/components/patterns/Page'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -39,7 +39,7 @@ import { Field, FormError, PasswordInput } from '@/pages/login/AuthLayout'
 import { fieldAria, MIN_PASSWORD_LENGTH, passwordError } from '@/pages/login/forms'
 import { useAuth } from '@/stores/auth'
 
-import { RowValue } from './parts'
+import { RowValue } from '@/pages/server/parts'
 
 // ---------------------------------------------------------------------------
 // password
@@ -509,14 +509,14 @@ function Sessions() {
 // ---------------------------------------------------------------------------
 
 /**
- * Server → Account: the administrator of this server, the API tokens of the
- * CLI and of scripts, and the browsers signed in.
+ * `/account`: the administrator of this server, the API tokens of the CLI and
+ * of scripts, and the browsers signed in.
  */
-export function AccountSection() {
+export function AccountPage() {
   const user = useAuth((s) => s.user)
   const [changing, setChanging] = React.useState(false)
   return (
-    <>
+    <PageContainer size="narrow">
       <PageHeader
         title="Account"
         description="The account that administers this server, the API tokens of the CLI and of scripts, and the browsers signed in."
@@ -549,6 +549,6 @@ export function AccountSection() {
       <ApiTokens />
       <Sessions />
       <ChangePasswordDialog open={changing} onOpenChange={setChanging} />
-    </>
+    </PageContainer>
   )
 }

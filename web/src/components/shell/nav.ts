@@ -1,4 +1,15 @@
-import { Boxes, Braces, Database, FileCode2, Layers, Server, type LucideIcon } from 'lucide-react'
+import {
+  Activity,
+  Boxes,
+  Braces,
+  Database,
+  FileCode2,
+  Globe,
+  Layers,
+  Server,
+  UserRound,
+  type LucideIcon,
+} from 'lucide-react'
 
 export interface NavItem {
   label: string
@@ -17,7 +28,14 @@ export const NAV_ITEMS: NavItem[][] = [
     { label: 'Env groups', to: '/env-groups', icon: Braces, hint: 'Shared environment variables' },
     { label: 'Blueprints', to: '/blueprints', icon: FileCode2, hint: 'Apply ferry.yaml / render.yaml' },
   ],
-  [{ label: 'Server', to: '/server', icon: Server, hint: 'Ferry and Docker versions, proxy' }],
+  [
+    { label: 'Monitoring', to: '/monitoring', icon: Activity, hint: 'CPU, memory, disk and network of the server' },
+    { label: 'Domains', to: '/domains', icon: Globe, hint: 'Your domains, their DNS records and certificates' },
+  ],
+  [
+    { label: 'Server', to: '/server', icon: Server, hint: 'Versions, server logs, CLI and git connections, API' },
+    { label: 'Account', to: '/account', icon: UserRound, hint: 'Password, API tokens and browser sessions' },
+  ],
 ]
 
 export const REPO_URL = 'https://github.com/rogerbentcha/ferry'

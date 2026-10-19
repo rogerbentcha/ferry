@@ -183,15 +183,15 @@ Set the <Term id="dashboard-host" /> only when HTTPS is on. Do not change `--api
 
 - **Keep the account `ferry` for `ferryd` only.** The group `docker` has the same power as <Term id="root" /> on the server.
 - **Keep the modes of the data directory.** Ferry creates it with mode `0700`, and its secret files with mode `0600`. It holds the values of your variables and the passwords of your datastores.
-- **Give each tool its own token.** In the dashboard, open **Server → Account → API tokens**. Click **New token**. Give a name and an expiry. Do not share the <Term id="server-token" />.
+- **Give each tool its own token.** In the dashboard, open **Account → API tokens**. Click **New token**. Give a name and an expiry. Do not share the <Term id="server-token" />.
 
 The password of the account and each <Term id="api-token" /> give full control of each app on the server. If a secret leaks, replace it:
 
 | Secret | What to do |
 |---|---|
-| An API token | Revoke it under **Server → Account**. It stops immediately. |
+| An API token | Revoke it on the **Account** page. It stops immediately. |
 | The server token | Stop `ferryd`, delete `/var/lib/ferry/api_token` and start `ferryd` again. It makes a new token. |
-| The password | Change it under **Server → Account**. Ferry signs out each other browser. |
+| The password | Change it on the **Account** page. Ferry signs out each other browser. |
 | A deploy hook | Run `ferry deploy-hook rotate NAME`. |
 
 ## Back up the data
@@ -289,7 +289,7 @@ Ferry also rotates the log of each container at 10 MiB, and keeps 3 files (`--lo
 
 ## Monitor the server
 
-In the dashboard, open **Server → Monitoring**. It shows the CPU, the memory, the disk and the network of the server. It also shows each container with its CPU and its memory, and charts of the last 24 hours. The **Requests** charts show the errors and the <Term id="latency" /> of your services.
+In the dashboard, click **Monitoring** in the icon rail. It shows the CPU, the memory, the disk and the network of the server. It also shows each container with its CPU and its memory, and charts of the last 24 hours. The **Requests** charts show the errors and the <Term id="latency" /> of your services.
 
 Follow the log of `ferryd`:
 

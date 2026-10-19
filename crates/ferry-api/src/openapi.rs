@@ -64,7 +64,7 @@ The HTTP API of [Ferry](https://github.com/rogerbentcha/ferry), a self-hosted Re
 The `ferry` CLI and the web dashboard use exactly this API.
 
 **Authentication.** Every `/api/v1` route needs an API token as `Authorization: Bearer <token>`: \
-one created in the dashboard (Server → Account) or by `ferry login`, or the server token stored \
+one created in the dashboard (Account page) or by `ferry login`, or the server token stored \
 in `<data-dir>/api_token`. Use the **Authorize** button to set it here. `GET` requests may pass \
 it as `?access_token=<token>` instead, because browsers' `EventSource` can't set headers (prefer \
 the header: query strings end up in logs). The dashboard itself signs in to the server's account \

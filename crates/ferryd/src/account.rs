@@ -67,7 +67,7 @@ pub fn reset_password(data_dir: &Path) -> anyhow::Result<ExitCode> {
         let (email, ended) = set_password(data_dir, &password).await?;
         let sessions = if ended == 1 { "1 session".to_string() } else { format!("{ended} sessions") };
         println!("The password of {email} was changed. Every browser is signed out ({sessions} ended).");
-        println!("API tokens keep working: revoke them in the dashboard (Server → Account) if needed.");
+        println!("API tokens keep working: revoke them in the dashboard (Account page) if needed.");
         Ok(ExitCode::SUCCESS)
     })
 }
