@@ -6,6 +6,7 @@ import { rowLinkProps } from '@/components/patterns/table-utils'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { qualifiedName } from '@/lib/api/refs'
 import { isLongRunning, sourceKind, type ServiceView } from '@/lib/api/types'
 import { displayUrl, SERVICE_TYPE_LABELS } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -107,13 +108,13 @@ export function ServicesTable({
               const latest = s.latest_deploy
               const kind = sourceKind(s)
               return (
-                <TableRow key={s.id} {...rowLinkProps(() => void navigate(servicePath(s.name)))}>
+                <TableRow key={s.id} {...rowLinkProps(() => void navigate(servicePath(qualifiedName(s))))}>
                   <TableCell className="max-w-[220px]">
                     <div className="flex min-w-0 items-center gap-3">
                       <ServiceTypeIcon type={s.type} className="size-4 shrink-0 text-foreground-lighter" />
                       <div className="flex min-w-0 flex-col">
                         <Link
-                          to={servicePath(s.name)}
+                          to={servicePath(qualifiedName(s))}
                           className="truncate font-medium text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           {s.name}

@@ -3,7 +3,8 @@ import { useQueries } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api/endpoints'
 import { keys } from '@/lib/api/keys'
 import { useEnvGroups, useServices } from '@/lib/api/queries'
-import type { ServiceView } from '@/lib/api/types'
+import { qualifiedName } from '@/lib/api/refs'
+import type { DatastoreView, ServiceView } from '@/lib/api/types'
 
 import { referencedDatastores } from './lib'
 
@@ -16,20 +17,22 @@ export interface DatastoreReference {
 }
 
 /**
- * Services whose environment references the datastore `name` through
+ * Services whose variables reference the datastore through
  * `${{datastore.NAME.…}}` — their own variables or a linked env group's.
- * (There is no server endpoint for this; it scans the envs client-side,
- * the same way the server decides a delete is referenced.)
+ * A reference names a datastore of the service's own environment, so only
+ * the services of the datastore's environment count (`db` of staging is not
+ * production's `db`). (There is no server endpoint for this; it scans the
+ * envs client-side, the same way the server decides a delete is referenced.)
  */
-export function useDatastoreReferences(name: string | undefined) {
+export function useDatastoreReferences(ds: Pick<DatastoreView, 'name' | 'environment'> | undefined) {
   const services = useServices()
   const groups = useEnvGroups()
-  const list = services.data ?? []
+  const name = ds?.name
+  const list = ds ? (services.data ?? []).filter((s) => s.environment === ds.environment) : []
   const envs = useQueries({
     queries: list.map((s) => ({
-      queryKey: keys.serviceEnv(s.name),
-      queryFn: ({ signal }: { signal: AbortSignal }) => endpoints.getServiceEnv(s.name, signal),
-      enabled: Boolean(name),
+      queryKey: keys.serviceEnv(qualifiedName(s)),
+      queryFn: ({ signal }: { signal: AbortSignal }) => endpoints.getServiceEnv(qualifiedName(s), signal),
       staleTime: 15_000,
     })),
   })
@@ -45,8 +48,9 @@ export function useDatastoreReferences(name: string | undefined) {
     for (const g of groups.data ?? []) {
       const groupKeys = g.vars.filter((v) => referencedDatastores(v.value).includes(name)).map((v) => v.key)
       if (groupKeys.length === 0) continue
-      for (const svcName of g.services) {
-        const service = list.find((s) => s.name === svcName)
+      // Qualified names (an env group is linked to services of any environment).
+      for (const linked of g.services) {
+        const service = list.find((s) => qualifiedName(s) === linked)
         if (service) refs.push({ service, keys: groupKeys, group: g.name })
       }
     }

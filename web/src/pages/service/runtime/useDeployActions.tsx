@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/patterns/ConfirmDialog'
 import { ApiError } from '@/lib/api/client'
 import { keys } from '@/lib/api/keys'
 import { useCancelDeploy, useRollbackService, useServerInfo } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { Deploy, ServiceView } from '@/lib/api/types'
 import { DEPLOY_STATUS_LABELS, shortId, shortSha } from '@/lib/format'
 
@@ -28,7 +29,8 @@ export function useDeployActions(service: ServiceView) {
   // keeps the last deploy while the dialog animates out
   const [pending, setPending] = React.useState<Pending | null>(null)
   const cancel = useCancelDeploy()
-  const rollback = useRollbackService(service.name)
+  const ref = qualifiedName(service)
+  const rollback = useRollbackService(ref)
   const navigate = useNavigate()
   const qc = useQueryClient()
   const info = useServerInfo()
@@ -49,7 +51,7 @@ export function useDeployActions(service: ServiceView) {
       if (e instanceof ApiError && e.isConflict) {
         toast.warning('Too late to cancel', { description: e.message })
         void qc.invalidateQueries({ queryKey: keys.deploy(d.id) })
-        void qc.invalidateQueries({ queryKey: keys.service(service.name) })
+        void qc.invalidateQueries({ queryKey: keys.service(ref) })
         return
       }
       throw e
@@ -58,7 +60,7 @@ export function useDeployActions(service: ServiceView) {
 
   const confirmRollback = async (d: Deploy) => {
     const res = await rollback.mutateAsync(d.id)
-    const to = servicePath(service.name, `/deploys/${encodeURIComponent(res.id)}`)
+    const to = servicePath(ref, `/deploys/${encodeURIComponent(res.id)}`)
     toast.success(`Rolling back to ${shortId(d.id)}`, {
       description: 'A new deploy reuses its image.',
       action: { label: 'View', onClick: () => void navigate(to) },

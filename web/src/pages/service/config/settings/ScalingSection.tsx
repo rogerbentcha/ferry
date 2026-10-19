@@ -6,6 +6,7 @@ import { PageSection } from '@/components/patterns/Page'
 import { Input } from '@/components/ui/input'
 import { errorMessage } from '@/lib/api/client'
 import { useUpdateService } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { ServiceView } from '@/lib/api/types'
 import { plural } from '@/lib/format'
 
@@ -29,8 +30,8 @@ export function ScalingSection({
   service: ServiceView
   reportDirty: (id: string, dirty: boolean) => void
 }) {
-  const name = service.name
-  const update = useUpdateService(name)
+  const ref = qualifiedName(service)
+  const update = useUpdateService(ref)
   const server = React.useMemo(() => scalingFormFrom(service), [service])
   const form = useSyncedForm<ScalingForm>(server, sameForm)
   const [submitted, setSubmitted] = React.useState(false)

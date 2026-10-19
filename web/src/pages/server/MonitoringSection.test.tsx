@@ -125,6 +125,16 @@ describe('ContainersTable', () => {
     expect(page).toContain('href="/datastores/db"')
   })
 
+  it('links a container of another environment under its qualified name', () => {
+    const staging = [
+      { ...WEB, id: 'srv-2', name: 'web.staging' },
+      { ...DB, id: 'dbs-2', name: 'db.staging' },
+    ]
+    const page = html(<ContainersTable containers={staging} />)
+    expect(page).toContain('href="/services/web.staging"')
+    expect(page).toContain('href="/datastores/db.staging"')
+  })
+
   it('shows a dash for a container that did not answer', () => {
     const out = text(<ContainersTable containers={[STUCK]} />)
     expect(out).toContain('worker a1b2c3 — limit 2 CPUs — limit 512 MiB')

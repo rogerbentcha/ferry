@@ -4,6 +4,7 @@ import { ServiceTypeIcon } from '@/components/patterns/icons'
 import { ResourceCard } from '@/components/patterns/ResourceCard'
 import { ServiceStateLine } from '@/components/patterns/StatusBadge'
 import { Badge } from '@/components/ui/badge'
+import { qualifiedName } from '@/lib/api/refs'
 import { isLongRunning, sourceKind, type ServiceView } from '@/lib/api/types'
 import { displayUrl, SERVICE_TYPE_LABELS } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -66,7 +67,7 @@ export function ServiceCard({
 
   return (
     <ResourceCard
-      href={servicePath(service.name)}
+      href={servicePath(qualifiedName(service))}
       name={service.name}
       icon={<ServiceTypeIcon type={service.type} />}
       menu={<ServiceMenu service={service} />}

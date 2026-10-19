@@ -16,10 +16,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ApiError } from '@/lib/api/client'
 import { useDatastore } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { DatastoreView } from '@/lib/api/types'
 import { DATASTORE_KIND_LABELS, dateTime, relativeTime } from '@/lib/format'
 import { useShownEnvironments } from '@/pages/environments/lib'
 import { EnvironmentBadge } from '@/pages/environments/parts'
+import { servicePath } from '@/pages/service/context'
 
 import { DeleteDatastoreDialog } from './DeleteDatastoreDialog'
 import { DATASTORE_PROPERTIES, datastoreRef, maskPassword, suggestedEnvKey } from './lib'
@@ -199,7 +201,7 @@ function ReferencesTable({ refs, loading, error }: { refs: DatastoreReference[];
             <TableRow key={`${r.service.id}-${r.group ?? ''}`}>
               <TableCell>
                 <Link
-                  to={`/services/${encodeURIComponent(r.service.name)}/environment`}
+                  to={servicePath(qualifiedName(r.service), '/environment')}
                   className="inline-flex items-center gap-2 rounded-sm font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <ServiceTypeIcon type={r.service.type} className="size-4 text-foreground-lighter" />
@@ -260,7 +262,7 @@ export function DatastoreDetailPage() {
   const { name = '' } = useParams()
   const navigate = useNavigate()
   const { data: ds, error, refetch, isRefetching } = useDatastore(name)
-  const references = useDatastoreReferences(ds ? ds.name : undefined)
+  const references = useDatastoreReferences(ds)
   const { shown: showEnvironment } = useShownEnvironments()
   const [deleteOpen, setDeleteOpen] = React.useState(false)
 

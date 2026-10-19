@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { errorMessage } from '@/lib/api/client'
 import { useMetricsHistory, useServices } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { MetricsHistory, MetricsRange, RequestMetrics } from '@/lib/api/types'
 import { percent } from '@/lib/format'
 import {
@@ -330,8 +331,9 @@ function SubLine({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * The name of a target: a link to its service's page under its current name (`current`; a deleted
- * service has none), or what the dashboard and unrouted requests are.
+ * The name of a target: a link to its service's page under its current qualified name (`current`,
+ * `api.staging` outside production; a deleted service has none), or what the dashboard and
+ * unrouted requests are.
  */
 function TargetName({ target, current }: { target: RequestMetrics; current: string | undefined }) {
   const [Icon, note] =
@@ -368,7 +370,7 @@ function TargetName({ target, current }: { target: RequestMetrics; current: stri
  */
 export function RequestsTable({ targets }: { targets: RequestMetrics[] }) {
   const { data: services } = useServices()
-  const names = new Map(services?.map((s) => [s.id, s.name]))
+  const names = new Map(services?.map((s) => [s.id, qualifiedName(s)]))
   return (
     <Table aria-label="Requests by service">
       <TableHeader>

@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/api/client'
 import { useLinkEnvGroup, useUnlinkEnvGroup } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { EnvGroupView, ServiceView } from '@/lib/api/types'
 import { plural } from '@/lib/format'
 
@@ -30,8 +31,8 @@ function groupPath(name: string): string {
 /** Env groups linked to the service: link (select), unlink (confirm), open. */
 export function LinkedGroupsCard({ service, groups, loading, error, onRetry }: LinkedGroupsCardProps) {
   const name = service.name
-  const link = useLinkEnvGroup(name)
-  const unlink = useUnlinkEnvGroup(name)
+  const link = useLinkEnvGroup(qualifiedName(service))
+  const unlink = useUnlinkEnvGroup(qualifiedName(service))
   const [choice, setChoice] = React.useState<string>('')
   const [toUnlink, setToUnlink] = React.useState<string | null>(null)
   const selectId = React.useId()

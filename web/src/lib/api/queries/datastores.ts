@@ -1,9 +1,15 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 
 import { endpoints } from '../endpoints'
 import { usePollInterval } from '../events'
 import { keys } from '../keys'
+import { isRef, qualifiedName } from '../refs'
 import type { CreateDatastore, DatastoreView, UpdateDatastore } from '../types'
+
+/** Find a datastore in the cached list by qualified name or id (instant placeholder for details). */
+export function cachedDatastore(qc: QueryClient, ref: string): DatastoreView | undefined {
+  return qc.getQueryData<DatastoreView[]>(keys.datastoreList())?.find((d) => isRef(d, ref))
+}
 
 /** `GET /api/v1/datastores` */
 export function useDatastores() {
@@ -23,8 +29,7 @@ export function useDatastore(ref: string | undefined) {
     queryKey: keys.datastore(ref ?? ''),
     queryFn: ({ signal }) => endpoints.getDatastore(ref ?? '', signal),
     enabled: Boolean(ref),
-    placeholderData: () =>
-      qc.getQueryData<DatastoreView[]>(keys.datastoreList())?.find((d) => d.name === ref || d.id === ref),
+    placeholderData: () => (ref ? cachedDatastore(qc, ref) : undefined),
     refetchInterval: (q) => (q.state.data?.status === 'creating' ? poll : false),
   })
 }
@@ -35,7 +40,7 @@ export function useCreateDatastore() {
   return useMutation({
     mutationFn: (body: CreateDatastore) => endpoints.createDatastore(body),
     onSuccess: (ds) => {
-      qc.setQueryData(keys.datastore(ds.name), ds)
+      qc.setQueryData(keys.datastore(qualifiedName(ds)), ds)
       void qc.invalidateQueries({ queryKey: keys.datastoreList() })
       // Environments list their datastores.
       void qc.invalidateQueries({ queryKey: keys.environments() })
@@ -50,7 +55,8 @@ export function useUpdateDatastore(ref: string) {
     mutationFn: (body: UpdateDatastore) => endpoints.updateDatastore(ref, body),
     onSuccess: (ds) => {
       qc.setQueryData(keys.datastore(ref), ds)
-      if (ref !== ds.name) qc.setQueryData(keys.datastore(ds.name), ds)
+      const qualified = qualifiedName(ds)
+      if (ref !== qualified) qc.setQueryData(keys.datastore(qualified), ds)
       qc.setQueryData<DatastoreView[]>(keys.datastoreList(), (list) =>
         list ? list.map((d) => (d.id === ds.id ? ds : d)) : list,
       )
@@ -67,10 +73,10 @@ export function useDeleteDatastore() {
   return useMutation({
     mutationFn: ({ ref, force = false }: { ref: string; force?: boolean }) => endpoints.deleteDatastore(ref, force),
     onSuccess: (_v, { ref }) => {
-      qc.setQueryData<DatastoreView[]>(keys.datastoreList(), (list) =>
-        list?.filter((d) => d.name !== ref && d.id !== ref),
-      )
+      const cached = cachedDatastore(qc, ref)
+      qc.setQueryData<DatastoreView[]>(keys.datastoreList(), (list) => list?.filter((d) => !isRef(d, ref)))
       qc.removeQueries({ queryKey: keys.datastore(ref) })
+      if (cached) qc.removeQueries({ queryKey: keys.datastore(qualifiedName(cached)) })
       void qc.invalidateQueries({ queryKey: keys.datastores() })
       void qc.invalidateQueries({ queryKey: keys.environments() })
     },

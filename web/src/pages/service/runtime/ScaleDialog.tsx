@@ -15,6 +15,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { errorMessage } from '@/lib/api/client'
 import { useScaleService } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { isPublicHttp, type ServiceView } from '@/lib/api/types'
 import { plural } from '@/lib/format'
 
@@ -28,7 +29,7 @@ interface ScaleDialogProps {
 }
 
 function ScaleForm({ service, onDone }: { service: ServiceView; onDone: () => void }) {
-  const scale = useScaleService(service.name)
+  const scale = useScaleService(qualifiedName(service))
   const [value, setValue] = React.useState(String(service.instances))
   const [error, setError] = React.useState<string | null>(null)
   const inputId = React.useId()

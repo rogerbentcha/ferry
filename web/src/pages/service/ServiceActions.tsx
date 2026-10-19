@@ -14,7 +14,9 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { errorMessage } from '@/lib/api/client'
 import { useRestartService, useResumeService, useSuspendService, useTriggerDeploy } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { sourceKind, type ServiceView } from '@/lib/api/types'
+import { cliName } from '@/pages/services/lib'
 
 /**
  * Primary actions of the service header: `Manual deploy | ⌄` split button
@@ -22,10 +24,11 @@ import { sourceKind, type ServiceView } from '@/lib/api/types'
  */
 export function ServiceActions({ service }: { service: ServiceView }) {
   const name = service.name
-  const deploy = useTriggerDeploy(name)
-  const restart = useRestartService(name)
-  const suspend = useSuspendService(name)
-  const resume = useResumeService(name)
+  const ref = qualifiedName(service)
+  const deploy = useTriggerDeploy(ref)
+  const restart = useRestartService(ref)
+  const suspend = useSuspendService(ref)
+  const resume = useResumeService(ref)
   const [confirmSuspend, setConfirmSuspend] = React.useState(false)
 
   const kind = sourceKind(service)
@@ -76,7 +79,7 @@ export function ServiceActions({ service }: { service: ServiceView }) {
             disabled={busy}
             onClick={() => doDeploy(false)}
             className="rounded-r-none"
-            title={kind === 'upload' ? `Redeploys the last upload. Push new code with: ferry up ${name}` : undefined}
+            title={kind === 'upload' ? `Redeploys the last upload. Push new code with: ferry up ${cliName(service)}` : undefined}
           >
             Manual deploy
           </Button>

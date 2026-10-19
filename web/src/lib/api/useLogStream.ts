@@ -65,7 +65,8 @@ export function parseLogLine(event: SseEvent, seq: number): LogEntry | null {
 /**
  * Stream an SSE log endpoint (`event: log` lines, `event: end` terminator).
  *
- * `path` e.g. `streamPaths.deployLogs(id)`; pass null to stay idle.
+ * `path` e.g. `streamPaths.deployLogs(id)`; pass null to stay idle. A query
+ * in `path` (the `?environment=` of `streamPaths.serviceLogs`) is kept.
  * Lines are batched per animation frame so fast builds don't re-render per
  * line. On a network drop while following it reconnects with backoff:
  * finite logs (deploy/job) and the server's log are replayed from scratch,

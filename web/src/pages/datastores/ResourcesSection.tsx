@@ -6,6 +6,7 @@ import { LimitControl } from '@/components/patterns/LimitControl'
 import { PageSection } from '@/components/patterns/Page'
 import { errorMessage } from '@/lib/api/client'
 import { useServerInfo, useUpdateDatastore } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { DatastoreView } from '@/lib/api/types'
 import {
   cpuFieldOf,
@@ -26,7 +27,7 @@ import { FormError, SaveFooter, StaleCallout } from '@/pages/service/config/sett
 
 /** Datastore memory / CPU limits: `PATCH /api/v1/datastores/{id}`, applied to the running container in place. */
 export function DatastoreResourcesSection({ ds }: { ds: DatastoreView }) {
-  const update = useUpdateDatastore(ds.name)
+  const update = useUpdateDatastore(qualifiedName(ds))
   const info = useServerInfo().data
   const server = React.useMemo(() => limitsFormFrom(ds), [ds])
   const form = useSyncedForm<LimitsForm>(server, sameForm)

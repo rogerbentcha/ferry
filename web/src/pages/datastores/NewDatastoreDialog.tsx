@@ -20,15 +20,18 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { errorMessage } from '@/lib/api/client'
 import { useCreateDatastore, useDatastores, useEnvironments, useServerInfo, useServices } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { DATASTORE_KINDS, PRODUCTION, type CreateDatastore, type DatastoreKind, type DatastoreView } from '@/lib/api/types'
 import { DATASTORE_KIND_LABELS } from '@/lib/format'
 import { DEFAULT_LIMIT, limitError, limitValue, type LimitField } from '@/lib/resources'
 import { cn } from '@/lib/utils'
+import { inEnvironment } from '@/pages/environments/lib'
 import { EnvironmentSelect } from '@/pages/environments/parts'
 
 import {
   DATASTORE_KIND_DESCRIPTIONS,
   DATASTORE_VERSIONS,
+  datastorePath,
   defaultDatabaseName,
   pgIdentifierError,
   resourceNameError,
@@ -146,9 +149,14 @@ export function NewDatastoreDialog({
     setPending(false)
   }
 
+  // Names are unique in an environment only (shared by its services and datastores).
   const taken = React.useMemo(
-    () => new Set([...(datastores ?? []).map((d) => d.name), ...(services ?? []).map((s) => s.name)]),
-    [datastores, services],
+    () =>
+      new Set([
+        ...inEnvironment(datastores ?? [], environment).map((d) => d.name),
+        ...inEnvironment(services ?? [], environment).map((s) => s.name),
+      ]),
+    [datastores, services, environment],
   )
   const trimmed = name.trim()
   const nameError = resourceNameError(trimmed, taken)
@@ -187,7 +195,7 @@ export function NewDatastoreDialog({
       settled,
       new Promise<null>((resolve) => setTimeout(() => resolve(null), FOREGROUND_MS)),
     ])
-    const path = `/datastores/${encodeURIComponent(trimmed)}`
+    const path = datastorePath(qualifiedName({ name: trimmed, environment }))
     if (first === null) {
       // Still provisioning (image pull, readiness probe): continue in the background.
       const toastId = toast.loading(`Provisioning ${trimmed}…`, {

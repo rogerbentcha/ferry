@@ -42,6 +42,15 @@ export function sourceLine(s: ServiceView): string {
   }
 }
 
+/**
+ * The arguments that name a service (or a datastore) in a CLI command:
+ * `api`, plus `--environment staging` outside production (the CLI looks a
+ * bare name up in production).
+ */
+export function cliName(r: { name: string; environment?: string }): string {
+  return !r.environment || r.environment === PRODUCTION ? r.name : `${r.name} --environment ${r.environment}`
+}
+
 /** Timestamp of the latest deploy (ms), or null. */
 export function lastDeployTime(s: ServiceView): number | null {
   const at = s.latest_deploy?.created_at

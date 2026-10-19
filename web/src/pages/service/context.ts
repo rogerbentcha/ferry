@@ -5,7 +5,10 @@ import type { ServiceView } from '@/lib/api/types'
 export interface ServiceOutletContext {
   /** The loaded service (always present inside service pages). */
   service: ServiceView
-  /** The `:name` route param (use it as `ref` for queries/mutations). */
+  /**
+   * The `:name` route param: the service's qualified name (`api`,
+   * `api.staging`) or its id (use it as `ref` for queries/mutations).
+   */
   name: string
 }
 
@@ -14,7 +17,11 @@ export function useServiceOutlet(): ServiceOutletContext {
   return useOutletContext<ServiceOutletContext>()
 }
 
-/** `/services/<name><sub>` with the name encoded. */
-export function servicePath(name: string, sub = ''): string {
-  return `/services/${encodeURIComponent(name)}${sub}`
+/**
+ * `/services/<ref><sub>` with the ref encoded. `ref` is the service's
+ * qualified name (`qualifiedName(s)`: `api` in production, `api.staging`
+ * elsewhere) or its id, never its bare name outside production.
+ */
+export function servicePath(ref: string, sub = ''): string {
+  return `/services/${encodeURIComponent(ref)}${sub}`
 }

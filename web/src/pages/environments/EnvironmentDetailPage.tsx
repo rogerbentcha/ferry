@@ -15,13 +15,15 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ApiError } from '@/lib/api/client'
 import { useDatastores, useEnvironment, useServices } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import { PRODUCTION, type EnvironmentView } from '@/lib/api/types'
 import { DATASTORE_KIND_LABELS, dateTime, relativeTime, SERVICE_TYPE_LABELS } from '@/lib/format'
+import { datastorePath } from '@/pages/datastores/lib'
 import { NewDatastoreDialog } from '@/pages/datastores/NewDatastoreDialog'
 import { servicePath } from '@/pages/service/context'
 
 import { DeleteEnvironmentDialog } from './DeleteEnvironmentDialog'
-import { membersSummary, newServicePath } from './lib'
+import { inEnvironment, membersSummary, newServicePath } from './lib'
 import { EnvironmentDnsList, EnvironmentIconBox } from './parts'
 
 const nameLink =
@@ -40,7 +42,8 @@ function BackLink() {
 
 function ServicesSection({ env }: { env: EnvironmentView }) {
   const { data: services, isLoading } = useServices()
-  const byName = new Map((services ?? []).map((s) => [s.name, s]))
+  // The environment lists plain names: the same name may be another environment's too.
+  const byName = new Map(inEnvironment(services ?? [], env.name).map((s) => [s.name, s]))
   return (
     <PageSection
       title="Services"
@@ -70,7 +73,7 @@ function ServicesSection({ env }: { env: EnvironmentView }) {
               return (
                 <TableRow key={name}>
                   <TableCell>
-                    <Link to={servicePath(name)} className={nameLink}>
+                    <Link to={servicePath(qualifiedName({ name, environment: env.name }))} className={nameLink}>
                       {s && <ServiceTypeIcon type={s.type} className="size-4 text-foreground-lighter" />}
                       {name}
                     </Link>
@@ -92,7 +95,7 @@ function ServicesSection({ env }: { env: EnvironmentView }) {
 function DatastoresSection({ env }: { env: EnvironmentView }) {
   const { data: datastores, isLoading } = useDatastores()
   const [createOpen, setCreateOpen] = React.useState(false)
-  const byName = new Map((datastores ?? []).map((d) => [d.name, d]))
+  const byName = new Map(inEnvironment(datastores ?? [], env.name).map((d) => [d.name, d]))
   return (
     <PageSection
       title="Datastores"
@@ -122,7 +125,7 @@ function DatastoresSection({ env }: { env: EnvironmentView }) {
               return (
                 <TableRow key={name}>
                   <TableCell>
-                    <Link to={`/datastores/${encodeURIComponent(name)}`} className={nameLink}>
+                    <Link to={datastorePath(qualifiedName({ name, environment: env.name }))} className={nameLink}>
                       {d && <DatastoreKindIcon kind={d.kind} className="size-4 text-foreground-lighter" />}
                       {name}
                     </Link>

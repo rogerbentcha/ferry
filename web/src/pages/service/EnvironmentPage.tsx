@@ -6,6 +6,7 @@ import { newRowId, useKeyValueRows } from '@/components/patterns/kv-rows'
 import { PageSection } from '@/components/patterns/Page'
 import { errorMessage } from '@/lib/api/client'
 import { useDatastores, useEnvGroups, useReplaceServiceEnv, useServiceEnv, useServices } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { EnvVar, ServiceView } from '@/lib/api/types'
 
 import { EffectiveEnvTable } from './config/env/EffectiveEnvTable'
@@ -32,12 +33,13 @@ export function EnvironmentPage() {
 
 function EnvironmentView({ service }: { service: ServiceView }) {
   const name = service.name
+  const ref = qualifiedName(service)
   const navigate = useNavigate()
-  const env = useServiceEnv(name)
+  const env = useServiceEnv(ref)
   const groups = useEnvGroups()
   const datastores = useDatastores()
   const services = useServices()
-  const replace = useReplaceServiceEnv(name)
+  const replace = useReplaceServiceEnv(ref)
   const kv = useKeyValueRows(undefined)
   const [revealed, setRevealed] = React.useState(false)
   const [saving, setSaving] = React.useState<'save' | 'restart' | null>(null)
@@ -79,7 +81,7 @@ function EnvironmentView({ service }: { service: ServiceView }) {
           if (restart) {
             toast.success(`Saved — restarting ${name}`, {
               description: 'The new variables are live once the restart deploy finishes.',
-              action: { label: 'View deploys', onClick: () => void navigate(servicePath(name, '/deploys')) },
+              action: { label: 'View deploys', onClick: () => void navigate(servicePath(ref, '/deploys')) },
             })
           } else {
             toast.success('Variables saved', {

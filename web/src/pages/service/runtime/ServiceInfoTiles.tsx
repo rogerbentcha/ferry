@@ -17,6 +17,7 @@ import {
 import { CopyButton } from '@/components/patterns/Copy'
 import { InfoTile } from '@/components/patterns/InfoTile'
 import { DeployStatusBadge, ServiceStatePill } from '@/components/patterns/StatusBadge'
+import { qualifiedName } from '@/lib/api/refs'
 import { isPublicHttp, listensOnPort, type RuntimeStatus, type ServiceView } from '@/lib/api/types'
 import {
   dateTime,
@@ -144,7 +145,7 @@ export function ServiceInfoTiles({ service, status, statusLoading }: ServiceInfo
         value={
           latest ? (
             <Link
-              to={servicePath(service.name, `/deploys/${encodeURIComponent(latest.id)}`)}
+              to={servicePath(qualifiedName(service), `/deploys/${encodeURIComponent(latest.id)}`)}
               className="group flex min-w-0 items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <DeployStatusBadge status={latest.status} />

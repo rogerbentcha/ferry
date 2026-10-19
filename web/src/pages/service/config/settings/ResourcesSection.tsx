@@ -7,6 +7,7 @@ import { LimitControl } from '@/components/patterns/LimitControl'
 import { PageSection } from '@/components/patterns/Page'
 import { errorMessage } from '@/lib/api/client'
 import { useRestartService, useServerInfo, useUpdateService } from '@/lib/api/queries'
+import { qualifiedName } from '@/lib/api/refs'
 import type { ServiceView } from '@/lib/api/types'
 import {
   cpuFieldOf,
@@ -36,10 +37,10 @@ export function ResourcesSection({
   service: ServiceView
   reportDirty: (id: string, dirty: boolean) => void
 }) {
-  const name = service.name
+  const ref = qualifiedName(service)
   const navigate = useNavigate()
-  const update = useUpdateService(name)
-  const restart = useRestartService(name)
+  const update = useUpdateService(ref)
+  const restart = useRestartService(ref)
   const info = useServerInfo().data
   const server = React.useMemo(() => limitsFormFrom(service), [service])
   const form = useSyncedForm<LimitsForm>(server, sameForm)
@@ -86,7 +87,7 @@ export function ResourcesSection({
                 label: 'Restart now',
                 onClick: () =>
                   restart.mutate(undefined, {
-                    onSuccess: (d) => void navigate(servicePath(name, `/deploys/${d.id}`)),
+                    onSuccess: (d) => void navigate(servicePath(ref, `/deploys/${d.id}`)),
                     onError: (e2) => toast.error('Could not restart', { description: errorMessage(e2) }),
                   }),
               }

@@ -88,6 +88,7 @@ export type LogStreamKind = 'stdout' | 'stderr' | 'system'
 
 export interface Service {
   id: string
+  /** Unique within its environment (shared with its datastores): `qualifiedName` names it server-wide. */
   name: string
   /** The name of its environment, picked when it was created and never changed. */
   environment: string
@@ -160,6 +161,7 @@ export interface JobRun {
 
 export interface Datastore {
   id: string
+  /** Unique within its environment (shared with its services): `qualifiedName` names it server-wide. */
   name: string
   /** The name of its environment, picked when it was created and never changed: only its services reach it. */
   environment: string
@@ -420,7 +422,7 @@ export interface ServerMetrics {
 export interface RequestMetrics {
   /** A service id; `dashboard` for the dashboard's host; `unrouted` for a host no service has. */
   target: string
-  /** The service's name; the target itself for `dashboard` and `unrouted`. */
+  /** The service's qualified name (`api`, `api.staging`: see `refs`); the target itself for `dashboard`, `unrouted`. */
   name: string
   /** On average over the time. */
   requests_per_sec: number
@@ -467,6 +469,7 @@ export interface ContainerMetrics {
   kind: ContainerKind
   /** Id of the service or datastore. */
   id: string
+  /** Its qualified name (`api`, `api.staging`: see `refs`). */
   name: string
   /** Instance id as in the logs; `null` for a datastore. */
   instance: string | null
@@ -545,6 +548,7 @@ export interface ContainerSeries {
   kind: ContainerKind
   /** Id of the service or datastore. */
   id: string
+  /** Its qualified name (`api`, `api.staging`: see `refs`). */
   name: string
   /** Instance id as in the logs; `null` for a datastore. */
   instance: string | null
@@ -599,7 +603,7 @@ export interface CreateEnvGroup {
 
 export interface EnvGroupView extends EnvGroup {
   vars: EnvVar[]
-  /** Names of linked services. */
+  /** Qualified names of linked services (`api`, `api.staging`: see `refs`), of any environment. */
   services: string[]
 }
 
@@ -625,9 +629,9 @@ export interface EnvironmentDns {
 
 /** An environment as returned by the API (flattened `Environment` + computed fields). */
 export interface EnvironmentView extends Environment {
-  /** Names of its services. */
+  /** Names of its services (plain: unique within the environment). */
   services: string[]
-  /** Names of its datastores. */
+  /** Names of its datastores (plain: unique within the environment). */
   datastores: string[]
   /** Where its web services are found: `https://<service>.staging.example.com`. */
   url_pattern: string
@@ -719,7 +723,7 @@ export interface GitConnectionView {
    * nothing to set up on a repository. Absent on servers that predate it.
    */
   push_events?: boolean
-  /** Names of the services whose repository is cloned with this connection. */
+  /** Qualified names of the services whose repository is cloned with this connection (see `refs`). */
   services: string[]
   created_at: Timestamp
   updated_at: Timestamp

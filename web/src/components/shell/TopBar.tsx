@@ -39,6 +39,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Hint } from '@/components/ui/tooltip'
 import { ApiError } from '@/lib/api/client'
 import { useLive } from '@/lib/api/events'
+import { isRef, qualifiedName } from '@/lib/api/refs'
 import { signOut } from '@/lib/api/session'
 import {
   useDatastores,
@@ -141,13 +142,14 @@ function ServiceSegment({ name }: { name: string }) {
       <Slash />
       <ResourceSwitcher
         label={`Service ${name}, switch service`}
-        current={service?.name ?? name}
+        current={service ? qualifiedName(service) : name}
         placeholder="Find service…"
         loading={isLoading}
+        // Qualified names: `api` of production and `api` of staging are two services.
         items={(services ?? []).map((s) => ({
-          value: s.name,
-          label: s.name,
-          to: `/services/${encodeURIComponent(s.name)}${suffix}`,
+          value: qualifiedName(s),
+          label: qualifiedName(s),
+          to: `/services/${encodeURIComponent(qualifiedName(s))}${suffix}`,
           icon: <ServiceTypeIcon type={s.type} className="text-foreground-lighter" />,
           meta: <StatusDot tone={SERVICE_STATE_TONE[s.state].tone} pulse={SERVICE_STATE_TONE[s.state].pulse} />,
         }))}
@@ -175,20 +177,20 @@ function ServiceSegment({ name }: { name: string }) {
 
 function DatastoreSegment({ name }: { name: string }) {
   const { data: datastores, isLoading } = useDatastores()
-  const ds = datastores?.find((d) => d.name === name || d.id === name)
+  const ds = datastores?.find((d) => isRef(d, name))
   if (datastores && !ds) return null
   return (
     <>
       <Slash />
       <ResourceSwitcher
         label={`Datastore ${name}, switch datastore`}
-        current={ds?.name ?? name}
+        current={ds ? qualifiedName(ds) : name}
         placeholder="Find datastore…"
         loading={isLoading}
         items={(datastores ?? []).map((d) => ({
-          value: d.name,
-          label: d.name,
-          to: `/datastores/${encodeURIComponent(d.name)}`,
+          value: qualifiedName(d),
+          label: qualifiedName(d),
+          to: `/datastores/${encodeURIComponent(qualifiedName(d))}`,
           icon: <DatastoreKindIcon kind={d.kind} className="text-foreground-lighter" />,
           meta: <StatusDot tone={DATASTORE_STATUS_TONE[d.status].tone} pulse={DATASTORE_STATUS_TONE[d.status].pulse} />,
         }))}

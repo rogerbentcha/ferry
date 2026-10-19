@@ -18,7 +18,10 @@ export function envGroupNameError(name: string, taken: ReadonlySet<string> = new
   return null
 }
 
-/** Link / unlink a service to the env group `group` (`POST|DELETE /services/{s}/env-groups/{g}`). */
+/**
+ * Link / unlink a service to the env group `group` (`POST|DELETE
+ * /services/{s}/env-groups/{g}`); `service` is its qualified name or id.
+ */
 export function useServiceGroupLink(group: string) {
   const qc = useQueryClient()
   return useMutation({
