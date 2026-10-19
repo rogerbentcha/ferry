@@ -452,7 +452,7 @@ function apiIndexPage(tags) {
 These pages are generated from Ferry's OpenAPI 3.1 document: \`ferryd --dump-openapi\` prints it, and every server serves it at \`GET /api/openapi.json\`. The \`ferry\` CLI and the dashboard use exactly this API. Read the [API overview](/docs/reference/api-overview) for authentication, errors and streaming.
 
 <Callout title="Authentication">
-Every \`/api/v1\` route needs an API token as \`Authorization: Bearer <token>\`: one created in the dashboard (Server → Account) or by \`ferry login\`, or the server token in \`<data-dir>/api_token\`. The operations of the \`auth\` tag are the exception: those of the account itself only accept the dashboard's session, and the ones called before signing in need nothing. Webhooks (\`/hooks/…\`) use their own secrets, and \`/healthz\` and the OpenAPI document need no token.
+Every \`/api/v1\` route needs an API token as \`Authorization: Bearer <token>\`: one created in the dashboard (Account page) or by \`ferry login\`, or the server token in \`<data-dir>/api_token\`. The operations of the \`auth\` tag are the exception: those of the account itself only accept the dashboard's session, and the ones called before signing in need nothing. Webhooks (\`/hooks/…\`) use their own secrets, and \`/healthz\` and the OpenAPI document need no token.
 </Callout>
 
 The request examples target \`http://127.0.0.1:7878\`, the default \`--api-addr\` (docs builds can change it with \`FERRY_DOCS_SERVER_URL\`), and read the token from the \`FERRY_TOKEN\` environment variable, like the \`ferry\` CLI: \`export FERRY_TOKEN=$(cat <data-dir>/api_token)\`. To send requests from a browser, open the Swagger UI that your own server serves at \`/api/docs\` and paste the token under **Authorize**.
