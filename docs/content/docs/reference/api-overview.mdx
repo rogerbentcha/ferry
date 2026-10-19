@@ -1,0 +1,263 @@
+---
+title: API overview
+description: Call the Ferry API from a script, with its address, its tokens, its errors, its streams and its webhooks.
+---
+
+The <Term id="dashboard" /> and the `ferry` <Term id="cli" /> do all their work through one JSON <Term id="rest-api" /> that <Term id="ferryd" /> serves. Your scripts and your <Term id="ci" /> can use the same API. This page gives the rules that each <Term id="endpoint" /> follows. The [API reference](/docs/reference/api) describes the endpoints one by one.
+
+Send a first request with <Term id="curl" />:
+
+```bash title="Terminal"
+# On the server itself: the server token. Elsewhere, an API token created in the dashboard.
+export FERRY_TOKEN="$(cat ferry-data/api_token)"
+curl -H "Authorization: Bearer $FERRY_TOKEN" http://127.0.0.1:7878/api/v1/info
+```
+
+```json title="Response" noCopy
+{
+  "version": "0.1.0",
+  "base_domain": "localhost",
+  "proxy_url": "http://localhost:8080",
+  "tls_enabled": false,
+  "dashboard_url": "http://ferry.localhost:8080",
+  "github_webhook_enabled": false,
+  "docker_version": "29.2.0",
+  "default_memory_limit_mb": 512,
+  "default_cpu_limit": 1.0,
+  "docker_cpus": 8,
+  "docker_memory_bytes": 8217030656
+}
+```
+
+The request examples of the API reference also read the token from `FERRY_TOKEN`, as the CLI does.
+
+## Base URL and paths
+
+The <Term id="base-url" /> is the address of `ferryd --api-addr`, then `/api/v1`. The default is `http://127.0.0.1:7878/api/v1`. When the <Term id="dashboard-host" /> is on, the same API is also at that host through the proxy, for example `http://ferry.localhost:8080/api/v1`.
+
+| Path | What it is | Authentication |
+|---|---|---|
+| `/api/v1/…` | The REST API | An API token, or the session of the dashboard |
+| `/api/openapi.json` | The <Term id="openapi" />, version 3.1 | None |
+| `/api/docs` | The <Term id="swagger-ui" /> of your server | None |
+| `/hooks/deploy/{service_id}` | [Deploy hooks](#deploy-hooks) | The key in the URL |
+| `/hooks/github` | The [GitHub webhook](#github-webhook) | The signature of the delivery |
+| `/metrics` | The numbers of the server in the <Term id="prometheus" /> format | An API token |
+| `/healthz` | A <Term id="liveness-probe" />. It answers `ok`. | None |
+| Each other path | The dashboard | None. The dashboard asks you to sign in. |
+
+<Callout type="warning" title="A token can do all on the server">
+Before you make the API public, read [Security](/docs/architecture/security) and the [server options](/docs/reference/server-options).
+</Callout>
+
+## Authentication
+
+Send an <Term id="api-token" /> as a <Term id="bearer-token" /> in the `Authorization` header of each `/api/v1` request, as in the first request. A token is `fy_`, then 40 <Term id="hex">hex characters</Term>.
+
+| Token | Where it comes from | Revoke it |
+|---|---|---|
+| Named token | **Server → Account** in the dashboard. It can have an expiry. | In the dashboard |
+| Token of a terminal | [`ferry login`](/docs/reference/cli#ferry-login), after you approve the request in the dashboard | In the dashboard |
+| <Term id="server-token" /> | The file `<data-dir>/api_token`, that `ferryd` makes at its first start. You can also set it with `--api-token`. | Not in the dashboard |
+
+All tokens have the same access: Ferry has one administrator account and no roles. The dashboard shows a named token one time only, when you create it. Use the server token for scripts on the server itself.
+
+A `GET` request can also give the token as `?access_token=<token>`, because the <Term id="event-source" /> of a browser cannot set headers. Use the header when you can. A URL goes into the history of the browser and into the logs of proxies.
+
+The dashboard uses a <Term id="session-cookie" /> (`ferry_session_<port>`), not a token. Two rules apply to it:
+
+- The <Term id="account-endpoint">account endpoints</Term> below `/api/v1/auth` change the password, the sessions and the tokens, and approve `ferry login`. They accept only the session. A few of them need no authentication: the status, the setup, the sign-in, the sign-out and the calls of `ferry login` from a terminal.
+- A change (`POST`, `PUT`, `PATCH` or `DELETE`) with the session cookie must come from the <Term id="origin" /> of the dashboard.
+
+| Status and code | When |
+|---|---|
+| 401 `unauthorized` | No token, a token that is wrong, revoked or expired, or a session that ended |
+| 403 `session_required` | An API token on an account endpoint |
+| 403 `cross_site_request` | A change with the session cookie from a different origin |
+| 401 `invalid_credentials` | A wrong email or password at sign-in |
+| 429 `too_many_attempts` | 10 failed sign-ins in 5 minutes, for the full server |
+
+## Requests and responses
+
+Send the <Term id="request-body" /> as <Term id="json" />.
+
+- The server does not require the `Content-Type` header. An empty body counts as `{}`.
+- A field that the endpoint does not know is a 400 error. A wrong field name never passes with no effect.
+- A source upload takes a `.tar.gz` file (`application/gzip`). A blueprint apply also takes YAML (`application/yaml`).
+- A boolean in the <Term id="query-string" /> is `true`, `1`, `yes`, `on`, `y` or the name alone (`?follow`). It is false with `false`, `0`, `no`, `off` or `n`.
+
+Where a path has `{id}`, give the id or the name of a service, a datastore or an env group. A deploy and a job run take their id only. A <Term id="resource-id" /> is a prefix (`srv`, `dep`, `job`, `dbs`, `evg` or `git`) and 20 hex characters, such as `srv-60f5973b037e4478ae7b`. Ferry refuses a name that looks like an id.
+
+The answer is JSON, with <Term id="snake-case" /> field names. A <Term id="timestamp" /> is in the <Term id="rfc-3339" /> format, in UTC: `2026-09-27T07:38:34.231568Z`.
+
+| Request | Answer |
+|---|---|
+| Creates a resource | 201, with the resource |
+| Puts work in the queue: a deploy, a restart, a rollback or a job | 202, with the deploy or the job run |
+| Deletes a resource | 204, with no body |
+
+| Request body | Limit |
+|---|---|
+| Each request, but not the two below | 2 MiB |
+| A source upload | 512 MiB |
+| A delivery from GitHub | 25 MiB |
+
+Above the limit, the answer is 413 `payload_too_large`.
+
+## Errors
+
+Each error has the same JSON body:
+
+```json title="404 Not Found" noCopy
+{ "error": { "code": "not_found", "message": "service 'ghost' not found" } }
+```
+
+Programs read the `code`, because it does not change. The `message` tells people what went wrong.
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `invalid_request` | Bad JSON, an unknown field, a bad query string, or a value that is not valid |
+| 404 | `not_found` | No such resource, or no such route |
+| 405 | `method_not_allowed` | The path exists, but not with this method. |
+| 409 | `conflict`, `canceled` | The request conflicts with the current state, for example a name in use. |
+| 413 | `payload_too_large` | The body is above the limit. |
+| 500 | `database_error`, `io_error`, `build_failed`, `internal_error` | A failure in the server. The log of `ferryd` has the details. |
+| 502 | `docker_error` | Docker failed, or the server cannot reach it. |
+| 400, 409, 502 | `git_application_required`, `git_authorization_rejected`, `git_provider_unavailable`, `git_remote_unreachable` | GitHub, GitLab or a git remote refused the request, or gave no answer. |
+
+A delete of a service, a datastore or an env group that other services refer to gets a 409. The message lists the references. Remove them, or send the delete again with `?force=true`.
+
+## Lists and pagination
+
+A list is one JSON array with all the items. The API has no <Term id="pagination" />.
+
+Two lists have the newest item first and accept `?limit=`, from 1 to 500. The default is 20.
+
+- The deploys of a service: `GET /api/v1/services/{id}/deploys`
+- The job runs of a service: `GET /api/v1/services/{id}/jobs`
+
+## Long operations
+
+A <Term id="deploy" />, a restart, a rollback and a job take time. The API does not wait for them: it answers 202 with the deploy or the <Term id="job-run" /> in the queue. To get the result, do one of these:
+
+- Read its log stream with `?follow=true`. The stream ends when the deploy or the job is complete.
+- Send `GET /api/v1/deploys/{deploy_id}` or `GET /api/v1/jobs/{job_id}` again until the status is final.
+- Listen to the [change feed](#the-change-feed). An `updated` change comes at each new status.
+
+| Resource | Status in progress | Final status |
+|---|---|---|
+| Deploy | `queued`, `building`, `deploying` | `live`, `build_failed`, `deploy_failed` or `canceled`. Later, `deactivated` when a newer deploy replaces a live deploy. |
+| Job run | `pending`, `running` | `succeeded`, `failed` or `canceled` |
+
+To stop the work, send `POST /api/v1/deploys/{deploy_id}/cancel` or `POST /api/v1/jobs/{job_id}/cancel`.
+
+A blueprint apply and the creation of a datastore do their work before they answer. They continue to their end when the client disconnects. The server does the writes to one service one after the other.
+
+## Streams of events and logs
+
+The API sends logs and changes as <Term id="sse" />: an HTTP answer that stays open, with the content type `text/event-stream`.
+
+| Endpoint | Stream | End |
+|---|---|---|
+| `GET /api/v1/deploys/{deploy_id}/logs?follow=` | The build and deploy log of one deploy | After the saved lines. With `follow=true`: when the deploy is complete. |
+| `GET /api/v1/jobs/{job_id}/logs?follow=` | The output of one job run | After the saved lines. With `follow=true`: when the job is complete. |
+| `GET /api/v1/services/{id}/logs?follow=&tail=` | The output of the containers of the service | After the recent lines. With `follow=true`: never. |
+| `GET /api/v1/server/logs?follow=&tail=&level=` | The log of `ferryd` | After the recent lines. With `follow=true`: never. |
+| `GET /api/v1/events` | The change feed | Never |
+
+A log stream sends one `event: log` for each line:
+
+```text title="A deploy log" noCopy
+event: log
+data: {"ts":"2026-09-27T07:38:59.562702Z","stream":"system","line":"==> Health check passed"}
+
+event: log
+data: {"ts":"2026-09-27T07:38:59.563675Z","stream":"system","line":"==> Your service is live 🎉"}
+
+event: end
+data: 
+```
+
+- `ts` is the time of the line. `line` is its text.
+- `stream` is `stdout`, `stderr` or `system`. Ferry writes the `system` lines.
+- `instance` names the container, on the lines of an app container.
+- The server log has `level`, `target`, `message` and `fields`, not `stream` and `line`.
+
+A stream that has an end stops with `event: end`. If a stream stops with no `event: end`, something cut it, and your log is not complete. While there is nothing new, the server sends the comment `: keep-alive` each 15 seconds.
+
+### The change feed
+
+`GET /api/v1/events` tells a client what changed. Thus the client does not need <Term id="polling" />. The first event is `ready`: get your data after it. Then each `event: change` has a `data` such as:
+
+```json noCopy
+{"kind":"env_group","id":"evg-c15c37b6f91044ff920b","service_id":null,"action":"created"}
+```
+
+| Field | Value |
+|---|---|
+| `kind` | `service`, `deploy`, `datastore`, `env_group`, `job`, `git_connection`, `domain` or `all` |
+| `id` | The id of the resource. `*` with `resync`. |
+| `service_id` | For a service, a deploy or a job: the id of the service. For others: `null`. |
+| `action` | `created`, `updated`, `deleted` or `resync` |
+
+A client that is more than 1024 changes behind gets `{"kind":"all","id":"*","service_id":null,"action":"resync"}`. Then get all your data again.
+
+### Connect again
+
+The streams have no event ids. After a new connection, read a log again from its first line. On the change feed, wait for `ready`, then get your data again.
+
+In a browser, `EventSource` connects again by itself. `ferryd` sends no <Term id="cors" /> headers. Thus a page can call the API only from the origin of the server. From a different origin, use a proxy on the origin of your page, or call the API from your backend.
+
+## Webhooks
+
+The webhooks are outside `/api` and take no API token. Each one checks its own secret.
+
+### Deploy hooks
+
+Each service has a secret <Term id="deploy-hook" /> URL: `/hooks/deploy/{service_id}?key=<key>`. A `POST` or a `GET` to this URL puts a deploy of the service in the queue, with the trigger `deploy_hook`.
+
+```bash title="Terminal"
+ferry deploy-hook show NAME     # print the full URL
+ferry deploy-hook rotate NAME   # make a new key: the old URL stops
+```
+
+| Status | Meaning |
+|---|---|
+| 202 | The deploy is in the queue. The body is the deploy. |
+| 400 | The service has no source to deploy. |
+| 401 | An unknown service id or a wrong key. The answer is the same for the two. |
+| 409 | A suspended service, or a delete in progress |
+
+### GitHub webhook
+
+`POST /hooks/github` gets the events of GitHub. It answers 404 until one of these is true:
+
+- A GitHub account that you connected in the dashboard has a webhook. Its <Term id="github-app" /> signs each delivery.
+- `ferryd` runs with `--github-webhook-secret`, for a webhook that you add to a repository by hand.
+
+Each <Term id="delivery" /> must have the header `X-Hub-Signature-256: sha256=<hex>`: the <Term id="hmac" />-SHA256 of the raw body, with the secret. A wrong signature gets 401.
+
+A push to a branch deploys each service that has <Term id="auto-deploy" /> on, the same repository and the same branch. The trigger is `webhook`. A `ping` gets `{"ok": true}`. Ferry ignores the other events, and each delivery that it saw before. See [Auto-deploy from GitHub](/docs/guides/github-auto-deploy).
+
+## Swagger UI and the OpenAPI document
+
+Each server serves the <Term id="openapi" /> of its API at `/api/openapi.json`. `ferryd --dump-openapi` prints it. The [API reference](/docs/reference/api) comes from this document.
+
+The pages of these docs cannot send requests, because `ferryd` sends no CORS headers. To send requests from a browser, use the Swagger UI of your server:
+
+<Steps>
+<Step>
+
+### Open Swagger UI
+
+Open `http://127.0.0.1:7878/api/docs` in your browser.
+
+</Step>
+<Step>
+
+### Add your token
+
+Click **Authorize**. Paste an API token.
+
+</Step>
+</Steps>

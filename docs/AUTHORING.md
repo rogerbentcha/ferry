@@ -1,68 +1,73 @@
 # Authoring guide
 
-How to write a page of the Ferry docs. The goal: a reader who is new to servers and Docker, and whose first language is possibly not English, understands each page at the first read.
+How to write a page of the Ferry docs. The goal: a reader who is new to servers and Docker, and whose first language is possibly not English, finds the task and does it with one page.
 
-The model to copy: `content/docs/concepts/deploys/` (13 pages).
+The model to copy: `content/docs/guides/deploy.mdx`.
 
 ```bash
-npm run check-content -- -v content/docs/concepts/deploys   # measures the rules below
+npm run check-content -- -v content/docs/guides/deploy.mdx   # measures the rules below
 ```
 
 ## 1. The page
 
+One page is one task or one subject, from start to end: "Deploy an app", "Domains and HTTPS", "Troubleshooting". The reader does not jump between pages to finish a task.
+
 | Rule | Limit |
 |---|---|
-| One idea per page | The title names it. A second idea is a second page. |
-| Picture first | A `<Diagram>`, a `<Flow>`, a `<Terminal>` or a code block comes before the text, or after one sentence. |
-| Few words | 220 words of sentences at most (the checker counts). Aim for 60 to 150. |
-| Tables | 260 words at most. A table replaces sentences that compare things. |
-| Details | Rare cases go in a closed `<Accordions>` at the end: 260 words at most, same writing rules. |
+| One task per page | The title names it. A related task with its own steps is a second page. |
+| Essential only | Aim for 400 to 1,200 words of sentences. 1,500 at most (the checker counts). |
+| Start with the task | After one or two sentences, show the main command or the main steps. |
+| Tables | 1,200 words at most. A table replaces sentences that compare things or list values. |
+| Details | Rare cases go in a closed `<Accordions>` at the end of a section: 400 words at most for the page. |
 | Terms | The first time a technical name shows on a page, write `<Term id="…" />`. |
-| Headings | 2 to 4 `##` headings. No `###` under them unless a `<Steps>` needs it. |
+| Headings | `##` for each part of the task, 3 to 10 per page. `###` under a `##` when it helps. |
+| Figures | Most pages have none. One `<Diagram>`, `<Flow>` or mermaid chart at most, and only when a flow is hard to explain in words. |
 
 A page looks like this:
 
 ```mdx
 ---
-title: Health checks
-description: A health check is the test that a new instance must pass before it gets traffic.
+title: Domains and HTTPS
+description: Give a service a URL, add your own domain and get a certificate.
 ---
 
-<Diagram … />            ← the idea, as a picture
+One or two short paragraphs: what the reader gets, and what they need first.
 
-One or two short paragraphs: what it is, why it matters.
-
-## Do it                 ← the task, as a script
+## Add a domain           ← a part of the task: the command first, then the text
 
 ```bash title="Terminal"
-ferry update api --health /healthz
+ferry domain add api api.example.com
 ```
 
+## Get a certificate
+
+…
+
 <Accordions>             ← rare cases, closed
-  <Accordion title="If the test fails">…</Accordion>
+  <Accordion title="If the verification fails">…</Accordion>
 </Accordions>
 ```
 
-- `description` is one sentence of 20 words at most. It says the idea of the page. Plain text, no Markdown.
+- `description` is one sentence of 20 words at most. It says what the page helps to do. Plain text, no Markdown.
 - Do not write the title again as a `#` heading.
-- Do not end a page with "Next steps" cards: the page has previous / next links. Only a section index has cards.
+- Do not end a page with "Next steps" cards: the page has previous / next links. Only the home page has cards.
+- When the same task has a CLI, a dashboard and an API version, use `<Tabs>`. Do not write three sections.
 
-## 2. A long subject is a folder
+## 2. Files and sidebar
 
-A subject with more than one idea is a folder: `concepts/deploys/`.
+Each top-level folder of `content/docs/` is a section of the sidebar: Get started, Guides, Developers, Platform, Help. A page is one file.
 
 ```text
-concepts/deploys/
-├── meta.json        { "title": "Deploys", "icon": "CloudUpload", "pages": ["steps", "triggers", …] }
-├── index.mdx        the idea of the subject in one animated picture, the main command, 2 to 4 cards
-├── steps.mdx        one idea
-└── triggers.mdx     one idea
+guides/
+├── meta.json        { "title": "Guides", "icon": "BookOpen", "pages": ["deploy", "github-auto-deploy", …] }
+├── deploy.mdx       one task
+└── domains.mdx      one task
 ```
 
-- `index.mdx` keeps the URL of the subject (`/docs/concepts/deploys`). Other pages link to it.
-- `pages` in `meta.json` gives the order of the sidebar: from what a new reader needs first to what is rare. Do not list `index`.
-- A file name is one or two words (`health-checks.mdx`). The title can be longer.
-- Links are absolute: `/docs/concepts/deploys/health-checks`. `npm run build` fails on a broken link or anchor.
+- `pages` in `meta.json` gives the order of the sidebar: from what a new reader needs first to what is rare.
+- A file name is one or two words (`domains.mdx`). The title can be longer.
+- Links are absolute: `/docs/guides/domains#add-a-domain`. `npm run build` fails on a broken link or anchor.
+- Add a page only for a new task. A new option or a new case of a task goes in the page of that task.
 
 ## 3. Simplified Technical English
 
@@ -106,14 +111,16 @@ Words to replace:
 
 Names of things are free: `deploy`, `instance`, `container`, `scaling`, `load balancing`, and each term of the glossary. Text in `code`, in commands and in real output stays as the program writes it.
 
-## 4. Keep every fact
+## 4. Facts
 
-- A rewrite removes words, not facts. A fact that does not fit in the main text goes in a table or in an accordion.
-- Do not invent. A command, a flag, an output, a number, a file name: copy it from the source page. If you are not sure, read the code (`../crates`, `../web`) or leave the fact as the source page says it.
+- Keep what a reader needs to do the task and to fix the common problems. Leave out internal details: they are in the code and in `DESIGN.md`.
+- Do not invent. A command, a flag, an output, a number, a file name: copy it from the code or from the CLI help. If you are not sure, read the code (`../crates`, `../web`).
 - Real output stays word for word. You can remove lines, not change them.
 - The generated pages (`reference/cli`, `reference/server-options`, `reference/api/*`) are not written by hand: change the Rust doc comments.
 
-## 5. Pictures and scripts
+## 5. Components
+
+A figure is rare: most pages are text, commands and tables. When a flow is hard to explain in words, one `<Diagram>`, `<Flow>` or mermaid chart can show it.
 
 All components are available in every page with no import. Their data is plain values (strings, numbers, arrays): no JSX in a prop.
 
@@ -173,7 +180,7 @@ Without `steps`, an edge moves when it has `flow: true`. With `steps`, only the 
 
 ### `<Terminal>`: a session that plays
 
-The commands are typed, then the output shows line by line. Use it for the main command of a page and its real output (16 lines at most). For a command with no output, use a plain `bash` code block.
+The commands are typed, then the output shows line by line. Use it only in the quickstart, for the first deploy and its real output (16 lines at most). Everywhere else, use a `bash` code block for the command and a `text` code block with `noCopy` for the output.
 
 ```mdx
 <Terminal
@@ -219,7 +226,7 @@ A definition is one or two sentences, 30 words at most, in the same simple Engli
 | `<Tabs>` / `<Tab>` | The same task with the CLI, the dashboard or the API. `groupId="interface" persist`. |
 | `<Callout type="warning" title="…">` | One per page at most. For a risk, or for the one thing to remember. |
 | `<Accordions>` / `<Accordion title="…">` | Rare cases, at the end of the page. |
-| `<Cards>` / `<Card title href description>` | Only on a section index. |
+| `<Cards>` / `<Card title href description>` | Only on the home page. |
 | `<Files>` / `<Folder>` / `<File>` | A file tree. |
 
 MDX traps: write `{'{'}` or use `code` for a brace in text, write `&lt;` or use `code` for `<`, and leave an empty line before and after a component that has Markdown inside.
@@ -227,7 +234,7 @@ MDX traps: write `{'{'}` or use `code` for a brace in text, write `&lt;` or use 
 ## 6. Before you are done
 
 ```bash
-npm run check-content -- -v content/docs/<your folder>   # every page ✓
+npm run check-content -- -v content/docs/<your page>.mdx  # every page ✓
 npm run typecheck                                         # after a change in lib/ or components/
 npm run build                                             # the static export and the link check
 ```

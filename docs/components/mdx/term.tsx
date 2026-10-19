@@ -49,7 +49,7 @@ export function Term({ id, children }: { id: TermId; children?: ReactNode }) {
           <Popover.Popup className="max-w-[300px] origin-[var(--transform-origin)] rounded-[var(--ferry-radius-lg)] border border-border-strong bg-surface-300 px-3.5 py-3 text-[13.5px] leading-relaxed text-foreground-light shadow-overlay transition-[opacity,transform] duration-150 data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0">
             <Popover.Title className="mb-1 text-[13.5px] font-medium text-foreground">{entry.term}</Popover.Title>
             <Popover.Description render={<div />}>{inline(entry.definition)}</Popover.Description>
-            <Link href={`/docs/glossary#${id}`} className="mt-2 inline-block text-[12.5px] text-primary hover:underline">
+            <Link href={`/docs/help/glossary#${id}`} className="mt-2 inline-block text-[12.5px] text-primary hover:underline">
               Glossary →
             </Link>
           </Popover.Popup>
@@ -59,7 +59,7 @@ export function Term({ id, children }: { id: TermId; children?: ReactNode }) {
   );
 }
 
-/** Every term of the glossary, in alphabetical order (the /docs/glossary page). */
+/** Every term of the glossary, in alphabetical order (the /docs/help/glossary page). */
 export function Glossary() {
   const entries = (Object.entries(glossary) as [TermId, (typeof glossary)[TermId]][]).sort((a, b) =>
     a[1].term.localeCompare(b[1].term, 'en', { sensitivity: 'base' }),

@@ -1,0 +1,319 @@
+---
+title: Production checklist
+description: Prepare a Ferry server for real traffic, from the firewall to backups, updates and monitoring.
+---
+
+Do these steps on a new server before you send real traffic to it. Each step has its command. The commands run on the server, unless the text says "on your machine".
+
+```bash title="Terminal"
+curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh -s -- --base-domain apps.example.com --acme-email you@example.com
+```
+
+This command installs Ferry as a service, with your domain and HTTPS. Prepare the server first. Then do the other steps of the page.
+
+## Prepare the server and the firewall
+
+| Item | Detail |
+|---|---|
+| A Linux server | A <Term id="virtual-machine" /> is fine. It must have a public <Term id="ip-address" />. The install script works on Ubuntu 22.04 and 24.04, and on Debian 12 and 13, with an <Term id="x86-64" /> or an <Term id="arm64" /> CPU. |
+| Three open ports | 22 for SSH, 80 for HTTP and 443 for HTTPS. |
+| A domain | You must control its <Term id="dns" />. This page uses `apps.example.com` for the apps. |
+
+Open ports 22, 80 and 443 in the <Term id="firewall" /> of the server, or in the firewall of your cloud provider. Keep each other port closed. Ferry binds the <Term id="api" /> and the ports of the datastores to `127.0.0.1`. Thus they are never public. You reach them over SSH.
+
+Create a <Term id="wildcard-record" /> at your DNS provider:
+
+| Record | Type | Value |
+|---|---|---|
+| `*.apps.example.com` | `A` (and `AAAA` for IPv6) | The IP address of the server |
+
+Each web service and each static site gets `<name>.apps.example.com`. A new service needs no new record.
+
+## Run ferryd as a service
+
+Run the install command above on the server. The <Term id="install-script" /> does these changes:
+
+| Item | Change |
+|---|---|
+| Docker, git | It installs them if the server does not have them. |
+| User `ferry` | A <Term id="system-user" /> in the group `docker`. It runs only `ferryd`. |
+| `/var/lib/ferry` | The <Term id="data-directory" />, with mode 700. |
+| `/etc/ferry/ferryd.env` | The settings of `ferryd`, with mode 600. |
+| `/etc/systemd/system/ferryd.service` | The <Term id="systemd-unit" />. <Term id="systemd" /> starts <Term id="ferryd" /> at each boot, and again each time it stops. |
+
+To change a setting, add a line `FERRY_…=value` to `/etc/ferry/ferryd.env`. [Server options](/docs/reference/server-options#ferryd) gives the variable of each option. Then restart `ferryd`:
+
+```bash title="Terminal"
+sudo systemctl restart ferryd
+```
+
+Read the log of `ferryd` in the <Term id="journal" />:
+
+```bash title="Terminal"
+sudo journalctl -u ferryd -n 30
+```
+
+```text title="Output (excerpt)" noCopy
+  Ferry 0.1.0 is running
+  Dashboard + API : http://127.0.0.1:7878
+  Apps            : https://<name>.apps.example.com
+  Limits          : 512 MiB / 1 CPU per container (default), 1024 pids, logs rotated at 10 MiB × 3
+  Free disk check : deploys need 1 GiB free
+
+  Create your account: http://127.0.0.1:7878/setup?code=5b0e…
+```
+
+### Create the account immediately
+
+<Callout type="warning" title="Create the account before you do more">
+Until the account exists, each person who can read the setup link can create it.
+</Callout>
+
+On your machine, open an <Term id="ssh-tunnel" /> to the server:
+
+```bash title="Terminal"
+ssh -N -L 7878:127.0.0.1:7878 you@your-server
+```
+
+Open the `Create your account` link in your browser. Enter your email and a password of 8 characters or more. If you lost the link, `sudo ferryd status --data-dir /var/lib/ferry` prints it again. Then connect the CLI with `ferry login --server http://127.0.0.1:7878`.
+
+<Accordions>
+  <Accordion title="On another Linux server, without the script">
+
+On another Linux server, x86_64 or arm64, install Docker and git. Then put the two binaries in the current folder and run these commands:
+
+```bash title="Terminal"
+sudo install -m 755 ferryd ferry /usr/local/bin/
+sudo useradd --system --create-home --home-dir /home/ferry --shell /usr/sbin/nologin --groups docker ferry
+sudo install -d -o ferry -g ferry -m 700 /var/lib/ferry /etc/ferry
+```
+
+Write the unit file:
+
+```ini title="/etc/systemd/system/ferryd.service"
+[Unit]
+Description=Ferry server
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+User=ferry
+Group=ferry
+SupplementaryGroups=docker
+# Bind ports 80 and 443 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+EnvironmentFile=/etc/ferry/ferryd.env
+ExecStart=/usr/local/bin/ferryd run --data-dir /var/lib/ferry
+Restart=always
+# Let ferryd drain requests and stop jobs on shutdown.
+TimeoutStopSec=60
+LimitNOFILE=65536
+# When the host runs out of memory, let the kernel kill containers before ferryd.
+OOMScoreAdjust=-900
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Create `/etc/ferry/ferryd.env` with mode 600 and the owner `ferry`. Put your settings in it, as in [Turn on HTTPS](/docs/guides/production#turn-on-https). Then start `ferryd`:
+
+```bash title="Terminal"
+sudo systemctl daemon-reload
+sudo systemctl enable --now ferryd
+```
+
+Use `ferryd run`, not `ferryd start`. `ferryd start` detaches from systemd, and then systemd thinks that the service stopped.
+
+  </Accordion>
+</Accordions>
+
+## Turn on HTTPS
+
+The options `--base-domain` and `--acme-email` of the install script write these lines to `/etc/ferry/ferryd.env`:
+
+```bash title="/etc/ferry/ferryd.env"
+FERRY_BASE_DOMAIN=apps.example.com
+FERRY_PROXY_ADDR=0.0.0.0:80
+FERRY_ACME_EMAIL=you@example.com
+FERRY_HTTPS_ADDR=0.0.0.0:443
+```
+
+If you ran the install script without these options, run it again with them. You can also add the lines yourself, then restart `ferryd`.
+
+Ferry gets one <Term id="certificate" /> from <Term id="lets-encrypt" /> for each hostname, through the <Term id="http-01" />. You need no DNS API and no wildcard certificate. Deploy a test service to make sure that HTTPS works:
+
+```bash title="Terminal"
+ferry create hello --image nginx:alpine --port 80 --follow
+curl -I https://hello.apps.example.com
+```
+
+A new hostname gets its certificate some seconds after the proxy routes it. Until then, HTTPS answers with a <Term id="self-signed" /> certificate. `ferry certificates` shows the state of each certificate. [Domains and HTTPS](/docs/guides/domains) tells you how to add your own domains.
+
+<Accordions>
+  <Accordion title="If you restart often: --acme-staging">
+    Let's Encrypt has a <Term id="rate-limit" /> for production certificates. If you expect to restart often, first try the setup with `--acme-staging`. When you remove the flag, Ferry replaces the staging certificates automatically.
+  </Accordion>
+  <Accordion title="Behind another reverse proxy">
+
+If nginx, Caddy or Traefik has ports 80 and 443, start the Ferry proxy on a local port. Leave out `--https-addr` and `--acme-email`:
+
+```bash title="Terminal"
+ferryd --data-dir /var/lib/ferry --base-domain apps.example.com --proxy-addr 127.0.0.1:8080 --public-port 80
+```
+
+The <Term id="reverse-proxy" /> must hold the certificates and keep the original `Host` header. It must also pass the `Upgrade` headers and not buffer the answers. Your apps see `X-Forwarded-Proto: http` and the address of the reverse proxy.
+
+  </Accordion>
+</Accordions>
+
+## Put the dashboard on its own domain
+
+GitHub webhooks and <Term id="deploy-hook">deploy hooks</Term> come from the internet. They cannot use your SSH tunnel. For them, the proxy can serve the dashboard and the API on their own hostname, with HTTPS:
+
+```bash title="/etc/ferry/ferryd.env"
+FERRY_DASHBOARD_HOST=ferry.apps.example.com
+```
+
+Restart `ferryd`. The dashboard is then at `https://ferry.apps.example.com`. The wildcard record already covers this name. Each API call still needs an API token or a signed-in browser.
+
+Set the <Term id="dashboard-host" /> only when HTTPS is on. Do not change `--api-addr` to `0.0.0.0` for this. Then the tokens go over the network without encryption.
+
+## Protect the access
+
+- **Keep the account `ferry` for `ferryd` only.** The group `docker` has the same power as <Term id="root" /> on the server.
+- **Keep the modes of the data directory.** Ferry creates it with mode `0700`, and its secret files with mode `0600`. It holds the values of your variables and the passwords of your datastores.
+- **Give each tool its own token.** In the dashboard, open **Server → Account → API tokens**. Click **New token**. Give a name and an expiry. Do not share the <Term id="server-token" />.
+
+The password of the account and each <Term id="api-token" /> give full control of each app on the server. If a secret leaks, replace it:
+
+| Secret | What to do |
+|---|---|
+| An API token | Revoke it under **Server → Account**. It stops immediately. |
+| The server token | Stop `ferryd`, delete `/var/lib/ferry/api_token` and start `ferryd` again. It makes a new token. |
+| The password | Change it under **Server → Account**. Ferry signs out each other browser. |
+| A deploy hook | Run `ferry deploy-hook rotate NAME`. |
+
+## Back up the data
+
+Ferry makes no backup for you. Three places hold your data. Keep the backups off the server, and encrypt them: they contain each secret of your apps.
+
+### The data directory
+
+```bash title="Terminal"
+sudo sqlite3 /var/lib/ferry/ferry.db ".backup /backup/ferry.db"
+```
+
+This command copies `ferry.db`, the <Term id="sqlite" /> database, while `ferryd` runs. It holds the services, the variables, the deploy history and the datastore passwords. Then copy the rest of the directory: `api_token`, `instance_id` and `certs/`. As an alternative, stop `ferryd` and copy the full directory.
+
+### The databases
+
+```bash title="Terminal"
+docker exec ferry-ds-app-db pg_dump -U app_db app_db > app-db.sql
+```
+
+The command runs <Term id="pg-dump" /> in the container of the Postgres datastore `app-db`. `app_db` is the user and the database. Run it on a schedule, for example from a cron entry. Redis saves its data to its <Term id="volume" /> `ferry-ds-<name>-data`. If you need this data, copy the volume.
+
+### The disks
+
+```bash title="Terminal"
+docker run --rm -v ferry-svc-srv-…-disk:/data:ro -v "$PWD":/backup alpine tar czf /backup/disk.tgz -C /data .
+```
+
+The data of each <Term id="disk" /> is in a volume `ferry-svc-<service id>-disk`. This command copies it into `disk.tgz` with a temporary container.
+
+<Accordions>
+  <Accordion title="Restore on a new server">
+
+Put the data directory back before the first start of `ferryd`. Install Docker first. Then create the user `ferry` with the command of the install script, and give it your copy:
+
+```bash title="Terminal"
+sudo useradd --system --create-home --home-dir /home/ferry --shell /usr/sbin/nologin --groups docker ferry
+sudo cp -a /backup/ferry /var/lib/ferry
+sudo chown -R ferry:ferry /var/lib/ferry
+sudo chmod 700 /var/lib/ferry
+```
+
+If the old server used a name prefix other than `ferry`, write it in the settings file of the install script now. The script keeps this file:
+
+```bash title="Terminal"
+sudo install -d -o ferry -g ferry -m 700 /etc/ferry
+echo 'FERRY_NAME_PREFIX=old-prefix' | sudo tee /etc/ferry/ferryd.env
+sudo chown ferry:ferry /etc/ferry/ferryd.env
+sudo chmod 600 /etc/ferry/ferryd.env
+```
+
+Then run the install script. It keeps the data directory and starts `ferryd`.
+
+Deploy each service again with `ferry deploy NAME`. A backup has no built images. For a service from a local folder, use `ferry up`. Last, load your dumps. The datastores come back empty, with their old passwords.
+
+```bash title="Terminal"
+docker exec -i ferry-ds-app-db psql -U app_db app_db < app-db.sql
+```
+
+If `ferryd` says that another Ferry server owns the prefix, read [Move a server to another data directory](/docs/guides/multiple-servers#move-a-server-to-another-data-directory).
+
+  </Accordion>
+</Accordions>
+
+## Update Ferry
+
+Run the install command again:
+
+```bash title="Terminal"
+curl -fsSL https://github.com/rogerbentcha/ferry/releases/latest/download/install.sh | sudo sh
+```
+
+The script installs the latest release and restarts `ferryd`. It keeps `/var/lib/ferry` and `/etc/ferry/ferryd.env`: your apps, your data and your settings stay. If the release did not change, `ferryd` continues to run.
+
+Your containers continue to run during the restart. But the proxy is part of `ferryd`, thus no public traffic gets to them until `ferryd` is back. A deploy in progress at the moment of the restart fails. Update when no deploy is in progress.
+
+Without the script, replace the two binaries with `sudo install -m 755 ferryd ferry /usr/local/bin/`. Then run `sudo systemctl restart ferryd`.
+
+## Watch the disk space
+
+Before a build or an image pull, Ferry makes sure that the disk has 1 GiB free. If it has less, the deploy fails early:
+
+```text title="Deploy log (excerpt)" noCopy
+10:42:07 ==> Build failed: not enough free disk space on /var/lib/ferry: 812 MiB free, Ferry needs at least 1 GiB (free some space, e.g. remove unused Docker images with `docker image prune`, or change the threshold with `ferryd --min-free-disk`, 0 = off)
+```
+
+Ferry sets no disk quotas. Volumes, images and the <Term id="build-cache" /> can still fill the disk. Ferry deletes its own old images above 5 for each service (`--keep-images`). Remove the other images and the build cache from time to time:
+
+```bash title="Terminal"
+docker image prune
+docker builder prune
+```
+
+Ferry also rotates the log of each container at 10 MiB, and keeps 3 files (`--log-max-size`, `--log-max-files`). Thus a log cannot fill the disk.
+
+## Monitor the server
+
+In the dashboard, open **Server → Monitoring**. It shows the CPU, the memory, the disk and the network of the server. It also shows each container with its CPU and its memory, and charts of the last 24 hours. The **Requests** charts show the errors and the <Term id="latency" /> of your services.
+
+Follow the log of `ferryd`:
+
+```bash title="Terminal"
+sudo journalctl -u ferryd -f
+```
+
+Each container has a memory limit: 512 MiB by default. When an app goes above it, the kernel stops the container, and Docker starts it again. `ferryd` writes each of these stops in its log:
+
+```bash title="Terminal"
+sudo journalctl -u ferryd | grep 'ran out of memory'
+```
+
+If an app needs more memory, give it its own limit with `ferry update NAME --memory 1G`. See [Scaling and limits](/docs/guides/scaling).
+
+If you use <Term id="prometheus" />, it can collect the same numbers at `/metrics`. Create an API token named `prometheus`, and put it in a file on the machine of Prometheus. Then add this job:
+
+```yaml title="prometheus.yml"
+scrape_configs:
+  - job_name: ferry
+    authorization:
+      credentials_file: /etc/prometheus/ferry-token
+    static_configs:
+      - targets: ['127.0.0.1:7878']
+```
+
+For example, this expression gives an alert when the disk of the data is 90% full: `ferry_host_disk_used_bytes / ferry_host_disk_total_bytes > 0.9`.

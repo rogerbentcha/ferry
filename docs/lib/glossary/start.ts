@@ -2,7 +2,7 @@ import type { GlossaryEntry } from './types';
 
 /** Terms of this section. An id must not exist in another file of this folder. */
 export const terms = {
-  // --- Ferry and Render ----------------------------------------------------
+  // --- Render --------------------------------------------------------------
   render: {
     term: 'Render',
     definition: 'A company that runs apps on its own servers. Ferry does the same work on a server that you control.',
@@ -11,44 +11,28 @@ export const terms = {
     term: 'self-hosted',
     definition: 'You run the program on a machine that you control, not on the machines of a company.',
   },
-  'render-plan': {
-    term: 'plan',
-    definition: 'On Render, an instance type: a fixed quantity of memory and CPU. Ferry changes a plan into memory and CPU limits.',
-    see: ['resource-limit'],
-  },
-  'pr-preview': {
-    term: 'pull request preview',
-    definition: 'A temporary copy of an app that a host makes for each pull request, to test the change.',
-  },
   'secret-file': {
     term: 'secret file',
     definition: 'On Render, a file with secret text that the host puts in the container of a service.',
-  },
-  'ip-allow-list': {
-    term: 'IP allow list',
-    definition: 'A list of IP addresses. Only these addresses can connect.',
-  },
-  rbac: {
-    term: 'role-based access control',
-    definition: 'Each user has a role, and the role says what the user can do.',
   },
 
   // --- Install with one command ---------------------------------------------
   'install-script': {
     term: 'install script',
     definition: 'The file install.sh of each release. With one command, it installs Ferry on a server or upgrades it.',
-    see: ['github-release'],
   },
-  'apt-repository': {
-    term: 'apt repository',
-    definition: 'A server that gives software packages to apt, the tool that installs software on Ubuntu and Debian.',
+  'x86-64': {
+    term: 'x86_64',
+    definition: 'The type of CPU in most PCs and servers, from Intel and AMD. It is also called amd64.',
+    see: ['arm64'],
+  },
+  arm64: {
+    term: 'arm64',
+    definition: 'A type of CPU. Many low-cost cloud servers and the newer Raspberry Pi boards use it. On Linux, `uname -m` calls it `aarch64`.',
+    see: ['x86-64'],
   },
 
   // --- Download Ferry ------------------------------------------------------
-  'github-release': {
-    term: 'release',
-    definition: 'A version of a program that its authors publish on GitHub, with files to download.',
-  },
   checksum: {
     term: 'checksum',
     definition: 'A short value calculated from a file. When one byte of the file changes, the checksum changes.',
@@ -60,11 +44,6 @@ export const terms = {
   },
 
   // --- Build Ferry ---------------------------------------------------------
-  rust: {
-    term: 'Rust',
-    definition: 'The programming language of Ferry.',
-    see: ['cargo'],
-  },
   cargo: {
     term: 'cargo',
     definition: 'The build tool of Rust. It makes the Ferry programs from the source code.',
@@ -103,10 +82,6 @@ export const terms = {
   },
 
   // --- The server ----------------------------------------------------------
-  banner: {
-    term: 'banner',
-    definition: 'The lines that `ferryd` prints when it starts: its addresses, its limits and what to do next.',
-  },
   'data-directory': {
     term: 'data directory',
     definition: 'The folder where `ferryd` keeps its state: the database, the logs, the uploads and the certificates. The default is `./ferry-data`.',

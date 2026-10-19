@@ -1,10 +1,11 @@
 # Ferry docs
 
-The documentation site of Ferry: [Fumadocs](https://fumadocs.dev) on Next.js 16 (App Router, React 19, TypeScript strict, Tailwind CSS v4), exported as a static site. It lives in its own folder with its own toolchain, like the web dashboard in `../web`.
+The website of Ferry: the landing page at `/` and the documentation at `/docs`. [Fumadocs](https://fumadocs.dev) on Next.js 16 (App Router, React 19, TypeScript strict, Tailwind CSS v4), exported as a static site. It lives in its own folder with its own toolchain, like the web dashboard in `../web`.
 
 | | |
 |---|---|
 | Content | MDX in `content/docs/` (one `meta.json` per folder for titles, order and icons) |
+| Landing page | `/`: React components in `components/landing/` (Motion, ferry-shaders, simple-icons), styles in `app/landing.css` scoped to `.landing`; Manrope for its headings |
 | Design | the Ferry design tokens from `../web/src/styles/tokens.css` (shared with the dashboard), mapped onto Fumadocs in `app/global.css`; Inter + Source Code Pro |
 | Layout | Fumadocs "notebook" layout with a custom 48px header (`components/layout/site-header.tsx`) and sidebar (`components/layout/sidebar.tsx`) |
 | Generated references | CLI, server options and the API reference, from the Rust binaries (`scripts/generate.mjs`) |
@@ -34,9 +35,9 @@ npm run dev          # → http://localhost:3000
 
 ## Write content
 
-**Read [`AUTHORING.md`](AUTHORING.md) first.** The pages are short and picture-first, in Simplified Technical English (ASD-STE100): one idea per page, a figure before the text, 220 words at most, every technical name explained by the glossary. `npm run check-content -- -v <path>` measures a page; `content/docs/concepts/deploys/` is the model.
+**Read [`AUTHORING.md`](AUTHORING.md) first.** One page is one task, from start to end, in Simplified Technical English (ASD-STE100): the essential only (1,500 words at most), few figures, every technical name explained by the glossary. `npm run check-content -- -v <path>` measures a page; `content/docs/guides/deploy.mdx` is the model.
 
-Pages are MDX files in `content/docs/`. The URL follows the path: `content/docs/concepts/deploys/steps.mdx` → `/docs/concepts/deploys/steps/`. A subject with more than one idea is a folder: its `index.mdx` keeps the URL of the subject.
+Pages are MDX files in `content/docs/`. The URL follows the path: `content/docs/guides/domains.mdx` → `/docs/guides/domains/`. A folder's `index.mdx` has the URL of the folder (`content/docs/architecture/index.mdx` → `/docs/architecture/`).
 
 ```mdx
 ---
@@ -49,7 +50,7 @@ Body in Markdown, with the components below.
 
 - **Frontmatter:** `title` (required), `description` (one sentence, shown under the title and in search/Open Graph; plain text, no Markdown), optional `icon` (a [lucide](https://lucide.dev/icons) name) and `full: true` for a full-width page. Don't repeat the title as a `#` heading: the page renders it.
 - **Order and sidebar:** each folder has a `meta.json` (`title`, `icon`, `pages` in order). A top-level folder is a sidebar section with an UPPERCASE label; a page missing from `pages` is still built but not listed. Nested folders are collapsible groups; a folder's `index.mdx` is its link.
-- **Links:** absolute URLs without a trailing slash (`/docs/concepts/deploys`, `/docs/reference/cli#ferry-deploy`) or relative file paths (`./deploys.mdx`). `npm run build` fails on a broken link or anchor.
+- **Links:** absolute URLs without a trailing slash (`/docs/guides/domains`, `/docs/reference/cli#ferry-deploy`) or relative file paths (`./domains.mdx`). `npm run build` fails on a broken link or anchor.
 - **Headings:** `##` and `###` build the "On this page" table of contents; anchors are the slugified heading text (`## Health checks` → `#health-checks`).
 - **Code blocks:** fenced with a language; meta options `title="Terminal"`, `lineNumbers`, `noCopy`. Mark lines with a trailing comment: `# [!code highlight]`, `# [!code ++]` / `# [!code --]`, `# [!code focus]` (use the language's comment syntax).
 - **Components** (available everywhere, no import needed):
@@ -69,7 +70,7 @@ Body in Markdown, with the components below.
 | `<Flow>` | `steps`: `{ title, text, icon, tone }[]` | what happens, in order: one step is lit at a time |
 | `<Terminal>` | `lines`, `title` | a terminal session that plays: `$ ` lines are typed, the others are output |
 | `<Term>` | `id` (from `lib/glossary/`) | a technical name with its definition in a tooltip |
-| `<Glossary>` | — | the list of every term (the `/docs/glossary` page) |
+| `<Glossary>` | — | the list of every term (the `/docs/help/glossary` page) |
 
   Icons for cards: `import { Rocket } from 'lucide-react';` at the top of the MDX file, then `icon={<Rocket />}`.
 
@@ -103,15 +104,16 @@ npm run build     # → out/ (static HTML, the search index, Open Graph images),
 npm start         # preview out/ on http://localhost:3000
 ```
 
-Build-time settings (environment variables):
+Build-time settings: environment variables, or lines in `.env`. Next.js reads `.env` (committed, the defaults) and `.env.local` (not committed, your values); the build environment wins over both.
 
 | Variable | Default | Used for |
 |---|---|---|
 | `DOCS_SITE_URL` | `http://localhost:3000` | the public URL of the site: canonical and Open Graph URLs |
-| `FERRY_DOCS_SERVER_URL` | `http://127.0.0.1:7878` | the "Dashboard" link and the server URL in the API request examples (set it for a public site: the default only works on the reader's machine) |
+| `DOCS_DASHBOARD_URL` | `http://127.0.0.1:7878` (in `.env`) | the "Dashboard" link of the docs header (set it for a public site: the default only works on the reader's machine) |
+| `FERRY_DOCS_SERVER_URL` | `http://127.0.0.1:7878` | the server URL in the API request examples |
 | `DOCS_GIT_BRANCH` | `dev` | the branch of the "Edit on GitHub" links; it must contain `docs/` |
 
-URLs end with a slash (`/docs/concepts/deploys/` → `out/docs/concepts/deploys/index.html`), which every static server resolves. `out/404.html` is the not-found page.
+URLs end with a slash (`/docs/guides/domains/` → `out/docs/guides/domains/index.html`), which every static server resolves. `out/404.html` is the not-found page.
 
 ## Deploy
 
@@ -143,24 +145,27 @@ ferry create ferry-docs --type static \
 
 ```
 app/
-  (home)/                 landing page (/) and its layout
+  (home)/page.tsx         the landing page (/): components/landing/
   docs/                   docs layout (notebook, top nav) and [[...slug]] page
   not-found.tsx           404 page (exported as out/404.html)
   api/search/             static search index
   og/docs/                Open Graph images, one per page
   llms.txt, llms-full.txt, llms.mdx/   Markdown versions of the pages for LLMs
   global.css              Tailwind + Fumadocs presets, tokens → Fumadocs theme, prose tweaks
+  landing.css             the landing page's styles (imported by global.css, scoped to .landing)
   icon.svg                favicon (the Ferry logo in a square)
 components/
+  landing/                the landing page: landing-page.tsx (root), one file per section, deploy/ (the demo), config.ts (links, install command)
   layout/                 site header (theme menu), docs header slot, sidebar, site nav (drawer links)
   mdx/                    Callout, Card(s), Badge, Mermaid, and the figures: Diagram, Flow, Terminal, Term (figure.tsx: frame + playback, icons.ts: icon names)
   mdx.tsx                 the MDX component map
   api-page.tsx            OpenAPI page renderer (playground off, YAML/gzip bodies, bearer token in samples)
   search.tsx              search dialog (static index, pages ranked by title/heading match)
 content/docs/             the pages
-lib/                      source loader, OpenAPI loader, shared settings, glossary/ (the terms)
+lib/                      source loader, OpenAPI loader, shared settings, code-theme.ts (the code colors), glossary/ (the terms)
 openapi/ferry.json        GENERATED
 public/logo.svg           the Ferry logo (header, footer, Open Graph images)
+public/hairline-kernel.js the engine of the landing page's harbor figure (@lucasmarkes/hairline, MIT)
 scripts/                  generate.mjs, check-links.mjs, check-ste.mjs + check-figures.mjs (npm run check-content)
 AUTHORING.md              how to write a page
 ```

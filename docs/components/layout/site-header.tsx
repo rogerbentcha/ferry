@@ -8,7 +8,7 @@ import { useTheme } from 'next-themes';
 import { useSyncExternalStore, type ReactNode } from 'react';
 import { FerryLogo } from '@/components/ferry-logo';
 import { cn } from '@/lib/cn';
-import { ferryServerUrl, githubUrl } from '@/lib/shared';
+import { dashboardUrl, githubUrl } from '@/lib/shared';
 import { isSiteNavActive, SITE_NAV } from './site-nav';
 
 const iconButton =
@@ -103,7 +103,7 @@ function SearchPill() {
 }
 
 /**
- * The 48px top bar shared by the landing page and the docs: logo + DOCS pill,
+ * The 48px top bar of the docs: logo + DOCS pill,
  * section links, search pill (⌘K), GitHub, Dashboard and the theme menu.
  * Below `lg` the section links (and below `sm` the Dashboard link) move to the
  * top of the sidebar drawer: see SidebarSiteNav.
@@ -152,10 +152,10 @@ export function SiteHeader({ className, menu }: { className?: string; menu?: Rea
           <GitHubIcon />
         </a>
         <a
-          href={ferryServerUrl}
+          href={dashboardUrl}
           target="_blank"
           rel="noreferrer noopener"
-          title={`Open your Ferry dashboard (${ferryServerUrl})`}
+          title={`Open your Ferry dashboard (${dashboardUrl})`}
           className="hidden h-8 items-center gap-1 rounded-full border border-border-strong bg-surface-100 px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-stronger hover:bg-surface-200 sm:inline-flex"
         >
           Dashboard

@@ -1,0 +1,142 @@
+---
+title: Logs
+description: Read and follow the logs of your app, of each build and deploy, and of each job run.
+---
+
+A <Term id="log" /> is the text that a program writes while it runs. Ferry gives you three logs for each service. Read a log when it is complete, or follow it live with `-f`.
+
+```bash title="Terminal"
+ferry logs api -f
+```
+
+| Log | What it has | Read it |
+|---|---|---|
+| <Term id="runtime-log">Runtime log</Term> | What the containers of the service write while they run | `ferry logs NAME` |
+| <Term id="deploy-log">Deploy log</Term> | The build output and the steps of one deploy | `ferry logs --deploy ID` |
+| <Term id="job-log">Job log</Term> | The output of one job run | `ferry logs --job ID` |
+
+## Read the logs of your app
+
+Your app must write its log lines to <Term id="stdout" /> or <Term id="stderr" />. Ferry reads them from Docker.
+
+```bash title="Terminal"
+ferry logs api                # all that the current containers wrote
+ferry logs api -n 100         # the last 100 lines of each instance
+ferry logs api -f             # follow the new lines
+```
+
+```text title="ferry logs echo -n 2" noCopy
+09:41:26 [0b4e81] 172.21.0.4 - - [27/Sep/2026 07:41:26] "GET / HTTP/1.1" 200 -
+09:41:31 [0b4e81] 172.21.0.4 - - [27/Sep/2026 07:41:31] "GET / HTTP/1.1" 200 -
+```
+
+Each line starts with its <Term id="timestamp" />. The id in brackets is the <Term id="instance" />. Ferry puts the lines of all the instances of the live deploy together, in the order of their timestamps.
+
+`-f` continues through new deploys, scale changes and the replacement of a crashed instance. The CLI adds each new container when it starts. If the connection stops, the CLI connects again.
+
+In the dashboard, open the service and click **Logs**.
+
+If no container runs, `ferry logs` tells you why: no deploy, a suspended service, a deploy in progress or a failed deploy. It also gives the command to see more. A cron job has no runtime log: each run has its own job log.
+
+## Read a build and deploy log
+
+Find the id of the deploy, then read its log:
+
+```bash title="Terminal"
+ferry deploys api
+ferry logs --deploy dep-285c0c8495fe459db551
+```
+
+```text title="Deploy log (excerpt)" noCopy
+09:38:30 ==> Build successful 🎉
+09:38:31 ==> Using port 8000 (EXPOSEd by the image)
+09:38:31 ==> Starting 1 instance(s)
+09:38:31 ==> Waiting for 1 instance(s) to become healthy: GET /healthz must answer with a status below 400 (timeout 120s)
+09:38:31 [2fa90d] docker-echo listening on :8000
+09:38:32 ==> Health check passed
+09:38:32 ==> Your service is live 🎉
+```
+
+A line that starts with `==> ` is a message from Ferry. The other lines come from the build or from your app.
+
+A deploy log starts when the deploy goes into the queue. It ends when the deploy is live, failed or canceled. To follow a deploy from its start, add `--follow` to the command that starts it:
+
+```bash title="Terminal"
+ferry deploy api --follow
+```
+
+If the deploy fails, `--follow` exits with code 1. Thus you can use it in a script.
+
+While the new instances start, Ferry copies their output into the deploy log. If an instance crashes during the <Term id="health-check" />, Ferry copies its last 50 lines. Thus the cause of a failed deploy is in its deploy log.
+
+In the dashboard, click **Deploys**, then click the deploy.
+
+## Read a job log
+
+```bash title="Terminal"
+ferry jobs nightly                                  # find the id of the run
+ferry logs --job job-48dd0201159b41c3bb58 -f
+```
+
+To start a job and see its output at the same time, use `ferry run NAME --follow`. See [Jobs](/docs/guides/jobs#see-the-runs-and-their-logs).
+
+## Filter the lines
+
+`ferry logs` writes the lines to standard output. Thus you can send them to other tools:
+
+```bash title="Terminal"
+ferry logs api -n 500 | grep -i error
+ferry logs --deploy dep-285c0c8495fe459db551 > deploy.log
+```
+
+The dashboard has more filters on the page **Logs** of a service:
+
+| Control | What it does |
+|---|---|
+| **Search logs…** | Shows only the lines that contain the text |
+| History per instance | Shows the last 100, 500 or 1000 lines of each instance, or all of them |
+| Instance | Shows the lines of one instance only. It shows when the service has more than one instance. |
+| Stream new lines | Pauses or starts the live stream |
+| Download | Saves the lines in a file |
+
+## How long Ferry keeps the logs
+
+| Log | Where | Ferry keeps it |
+|---|---|---|
+| Deploy log | `<data-dir>/logs/deploys/<deploy id>.log` | Until you delete the service |
+| Job log | `<data-dir>/logs/jobs/<job id>.log` | For the 100 newest complete runs of each service. Change it with `ferryd --keep-job-runs`. |
+| Runtime log | In Docker | While the container exists. Docker keeps 3 files of 10 MiB for each container. Change it with `ferryd --log-max-size` and `--log-max-files`. |
+
+<Callout type="warning" title="Ferry does not keep runtime logs">
+When a deploy replaces the containers, their logs go with them. The same occurs when Ferry removes a crashed container. If you must keep your logs, make your app send them to an external log service.
+</Callout>
+
+An app that writes many lines loses its oldest lines first, because Docker rotates the files. See [Server options](/docs/reference/server-options#ferryd) for the two flags.
+
+## Read the server log
+
+The <Term id="server-log" /> is what `ferryd` writes about its own work. It has each failed deploy and each container that ran out of memory. It does not have the lines of your app.
+
+```bash title="Terminal"
+ferryd logs -f            # a server that you started with ferryd start
+journalctl -u ferryd -f   # a server that systemd runs
+```
+
+In the dashboard, click **Server** in the icon rail, then **Server logs**. The section shows the last 2,000 lines, then each new line live. After a restart of `ferryd`, the section starts again with the new lines.
+
+To add one line for each request, start `ferryd` with `RUST_LOG=debug`. The line has the host, the path, the status code and the time.
+
+<Accordions>
+  <Accordion title="Stream the logs with the API">
+    The log endpoints use <Term id="sse" />. Each line is one event, `event: log`. Add `follow=true` to continue while the log grows.
+
+    | Endpoint | More query options |
+    |---|---|
+    | `GET /api/v1/services/{id}/logs` | `tail=N` lines of each instance |
+    | `GET /api/v1/deploys/{deploy_id}/logs` | |
+    | `GET /api/v1/jobs/{job_id}/logs` | |
+    | `GET /api/v1/server/logs` | `tail=N`, and `level=warn` for this level and above |
+
+    The `data` of each event is a JSON object with `ts`, `stream` (`stdout`, `stderr` or `system`), `line`, and `instance` for a runtime log. Send the token in the `Authorization` header. See the [API overview](/docs/reference/api-overview).
+  </Accordion>
+</Accordions>

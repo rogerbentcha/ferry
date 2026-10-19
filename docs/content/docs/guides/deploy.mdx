@@ -1,0 +1,270 @@
+---
+title: Deploy an app
+description: Deploy your code from a folder, a git repository or a Docker image, and control how Ferry builds it.
+---
+
+A <Term id="service" /> is one app that Ferry builds and runs. Its code comes from a folder on your machine, a git <Term id="repository" /> or a Docker <Term id="image" />. Each <Term id="deploy" /> gets the code, builds an image and starts the app.
+
+## Deploy from a folder
+
+Go to the folder of your app. Then run `ferry up`:
+
+```bash title="Terminal"
+cd node-hello
+ferry up --follow
+```
+
+`ferry up` packs the folder and sends it to the server. If the service does not exist, the command creates a <Term id="web-service" /> with the name of the folder. Then Ferry builds the code and deploys it. `--follow` shows the log until the deploy ends.
+
+```text title="Output" noCopy
+Packing /home/you/ferry/examples/node-hello …
+Packed 2 file(s), 576 B
+Created web service 'node-hello' (srv-8593a88388f349feade2)
+Uploading 576 B …
+Deploy dep-3493c505ea9b4415b359 queued (upload), streaming logs…
+09:36:21 ==> Detected Node.js runtime
+09:36:21 ==> Generated Dockerfile.ferry for the Node.js runtime
+09:36:21 ==> Build successful 🎉
+09:36:23 ==> Your service is live 🎉
+Deploy dep-3493c505ea9b4415b359 is live at http://node-hello.localhost:8080
+```
+
+To deploy a new version, run `ferry up` again. To choose the name, write it after `up`: `ferry up my-app`. To send a different folder, add `--dir ./app`.
+
+In the dashboard, the **Upload later** source creates a service with no code. Then run `ferry up` with the name of that service.
+
+### What goes into the upload
+
+| Files | In the upload |
+|---|---|
+| Files that `.gitignore`, `.ignore` or `.ferryignore` exclude | No |
+| `.git`, `node_modules`, `target`, `.venv`, `venv`, `__pycache__` | No |
+| Hidden files, such as `.env.example` or `.npmrc` | Yes |
+| <Term id="symlink">Symlinks</Term> that point outside the folder | No, with a warning |
+
+The <Term id="archive" /> can be 512 MiB at most. To leave out large files, add them to a `.ferryignore` file. This file uses the same rules as `.gitignore`.
+
+## Deploy from a git repository
+
+<Tabs items={['CLI', 'Dashboard']} groupId="interface" persist>
+<Tab value="CLI">
+
+```bash title="Terminal"
+ferry create api --repo https://github.com/you/api --branch main --follow
+```
+
+`--repo` is the URL of the repository. `--branch` is the <Term id="branch" /> to deploy. The default is `main`.
+
+</Tab>
+<Tab value="Dashboard">
+
+1. Click **New service**. Type a name.
+2. In **Source**, choose **Git repository**.
+3. Choose the repository. **Connected account** lists the repositories of your git accounts. **Repository URL** accepts each git URL.
+4. Choose the **Branch**.
+5. Click **Create and deploy**.
+
+</Tab>
+</Tabs>
+
+Ferry clones the repository and builds the newest <Term id="commit" /> of the branch. To build one exact commit, give its SHA:
+
+```bash title="Terminal"
+ferry deploy api --commit <sha>
+```
+
+<Term id="auto-deploy">Auto-deploy</Term> is on by default. If GitHub tells Ferry about each push, a push to the branch deploys the service. See [Auto-deploy from GitHub](/docs/guides/github-auto-deploy).
+
+Ferry accepts `https://`, `ssh://` and `git://` URLs, the form `git@github.com:you/api.git` and the path of a repository on the server. It does not fetch git <Term id="submodule">submodules</Term>.
+
+### Deploy a private repository
+
+Ferry needs read access to clone a private repository. Connect your GitHub or GitLab account to the server one time. Then Ferry clones the repositories of that account for each service. The URL of the repository needs no password.
+
+To connect a GitHub account:
+
+1. In the dashboard, open **Server → Connections**. Click **Connect GitHub**.
+2. Click **Continue to GitHub**. GitHub shows a new <Term id="github-app" /> for your server. Click **Create GitHub App**.
+3. Choose **All repositories** or **Only select repositories**. Click **Install**.
+
+GitHub sends you back to Ferry, and the account shows as connected. The app asks for read access only.
+
+To connect a GitLab account, click **Connect GitLab**. The dialog tells you how to create an <Term id="oauth-app" /> on GitLab, with its <Term id="redirect-uri" /> and the scopes `read_api` and `read_repository`. Paste the **Application ID** and the **Secret** of the application. Click **Continue to GitLab**. On GitLab, click **Authorize**.
+
+At each deploy, Ferry reads the URL of the repository. An `https://` URL on the host of a connected account uses that account. An SSH URL, a path on the server or a URL with its own credentials uses no account.
+
+<Accordions>
+  <Accordion title="The repositories of a GitHub organization">
+    A GitHub App reads only the account where you installed it. For an organization, connect the organization too. In the dialog, open **Organization, self-hosted GitHub**. Type the login of the organization. You must be an owner of the organization.
+  </Accordion>
+  <Accordion title="Connect with an access token">
+    In the dialog, click **Use an access token instead**. A GitHub classic token needs the `repo` scope. A fine-grained GitHub token needs read access to **Contents** and **Metadata**. A GitLab token needs `read_api` and `read_repository`. When a token expires, the deploys of private repositories fail until you click **Replace token**.
+  </Accordion>
+  <Accordion title="A token in the URL, or an SSH key">
+    You can put a token in an HTTPS URL: `https://USERNAME:TOKEN@github.com/you/api`. Ferry never shows the token in logs or errors. For an SSH URL, the user that runs `ferryd` needs an SSH key that the git host accepts, for example a deploy key.
+  </Accordion>
+</Accordions>
+
+## Deploy a Docker image
+
+```bash title="Terminal"
+ferry create hello --image nginx:alpine --port 80
+```
+
+Ferry pulls the image from its <Term id="registry" /> and runs it. Ferry builds nothing. `--port` is the port where the app of the image listens. In the dashboard, choose the **Docker image** source. Type the name of the image in **Image**.
+
+| <Term id="image-tag">Tag</Term> of the image | Ferry pulls it |
+|---|---|
+| No tag, or `latest` | At each deploy |
+| Each other tag, for example `1.4` | Only when the server does not have it |
+
+Each deploy keeps the exact image that it pulled: the <Term id="pinned-image" />. A restart or a rollback runs that image, even after the tag moves in the registry.
+
+Ferry pulls public images only. It has no login for a private registry. If you set a start command, it replaces the command of the image.
+
+## How Ferry builds your code
+
+A <Term id="build" /> makes a Docker image from your code. Ferry looks at the files at the root of your code to choose how.
+
+### With your Dockerfile
+
+If your code has a `Dockerfile`, Ferry builds it as it is. The log shows `==> Using Dockerfile at ./Dockerfile`. For a Dockerfile in a different place, set `--dockerfile docker/Dockerfile`.
+
+### With no Dockerfile
+
+Ferry finds the <Term id="runtime" /> from the first file of this list. Then it writes a <Term id="dockerfile" /> for you, `Dockerfile.ferry`, and builds it.
+
+| File | Runtime |
+|---|---|
+| `package.json`, `bun.lock` or `bun.lockb` | `node` |
+| `requirements.txt`, `pyproject.toml` or `Pipfile` | `python` |
+| `go.mod` | `go` |
+| `Cargo.toml` | `rust` |
+| `Gemfile` | `ruby` |
+| `index.html` | `static` |
+
+To choose the runtime yourself, set `--runtime`, for example `--runtime node`. To change the generated build, commit your own `Dockerfile`.
+
+### The start command
+
+Ferry uses the first <Term id="start-command" /> that it finds:
+
+1. The start command of the service: `--start-cmd`.
+2. A line of a <Term id="procfile" /> at the root: `web:` for a web service, `worker:` for a worker.
+3. The default of the runtime, for example `npm start`.
+
+Ferry runs the command with `/bin/sh -c`. Thus `$PORT` and the other variables expand. The log shows the choice:
+
+```text title="Deploy log" noCopy
+==> Start command: npm start (the "start" script of package.json)
+```
+
+### The port
+
+<Callout type="warning" title="Listen on 0.0.0.0 and on PORT">
+Your app must listen on the address `0.0.0.0` and on the <Term id="port" /> in the `PORT` variable. An app that listens on `127.0.0.1` gets no traffic.
+</Callout>
+
+If you set `--port` or a `PORT` variable, Ferry uses that port. If not, an image that exposes one port only gives that port. In all other cases, `PORT` is `10000`.
+
+### Variables and secrets in the build
+
+The build gets the <Term id="env-var">environment variables</Term> of the service as <Term id="build-secret">build secrets</Term>. A secret does not stay in the image. In your own Dockerfile, mount each variable into the step that needs it:
+
+```dockerfile title="Dockerfile"
+RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN npm ci
+```
+
+This needs Docker Engine 27.3 or newer on the server. The build does not get `PORT` and the other variables that Ferry adds when the app runs. See [Environment variables and secrets](/docs/guides/environment).
+
+### The build cache
+
+Docker keeps the result of each build step. A step that did not change does not run again. To build with no <Term id="build-cache">cache</Term>:
+
+```bash title="Terminal"
+ferry deploy api --clear-cache
+```
+
+In the dashboard, open the menu next to **Manual deploy**. Choose **Clear build cache & deploy**.
+
+## Settings you can change
+
+```bash title="Terminal"
+ferry update api --start-cmd "node server.js" --health /healthz
+```
+
+A change applies at the next deploy. In the dashboard, open the **Settings** page of the service. For the instances, the memory and the CPU, see [Scaling and limits](/docs/guides/scaling).
+
+| Setting | Flag | Default |
+|---|---|---|
+| Branch | `--branch` | `main` |
+| Runtime | `--runtime` | `auto` |
+| Root directory | `--root-dir` | the root of the repository |
+| Dockerfile path | `--dockerfile` | `Dockerfile` |
+| Build command | `--build-cmd` | the default of the runtime |
+| Start command | `--start-cmd` | the default of the runtime, or the command of the image |
+| Publish directory (static sites) | `--publish-dir` | detected |
+| Port | `--port` | detected, else `10000` |
+| Health check path | `--health` | none: a TCP check |
+| Auto-deploy | `--auto-deploy`, `--no-auto-deploy` | on |
+
+To clear a text setting, give an empty value: `--start-cmd ""`. With `--port 0`, Ferry detects the port again.
+
+A <Term id="monorepo" /> has more than one app in one repository. For each app, set its <Term id="root-directory" />, for example `--root-dir services/api`. Ferry builds that folder. It looks for the files of the runtime, the Dockerfile and the `Procfile` in that folder.
+
+To change the source, set the new source and clear the old source in the same command:
+
+```bash title="Terminal"
+ferry update api --image ghcr.io/you/api:1.4 --repo ""
+```
+
+### Service types
+
+`--type` sets the <Term id="service-type" /> when you create the service. You cannot change it later.
+
+| Type | `--type` | For |
+|---|---|---|
+| Web service | `web` (default) | A public HTTP app, with a URL |
+| <Term id="private-service" /> | `pserv` | An app that only other services call |
+| Background <Term id="worker" /> | `worker` | A process with no port, for example a queue consumer |
+| <Term id="cron-job" /> | `cron` | A command that runs on a schedule (`--schedule`) |
+| <Term id="static-site" /> | `static` | Files that <Term id="nginx" /> serves |
+
+### Delete a service
+
+```bash title="Terminal"
+ferry delete api
+```
+
+The command asks you to confirm. Then Ferry removes the containers, the images, the disk, the logs, the settings and the variables of the service. You cannot undo it.
+
+If another service has a <Term id="reference" /> to it, Ferry refuses. `--force` deletes it, but the next deploy or restart of the other service fails.
+
+## Language notes
+
+Each language works with no Dockerfile. This table shows what Ferry does, and what you set when the default does not fit.
+
+| Language | Ferry does | You set |
+|---|---|---|
+| Node.js | Installs with npm, Yarn, pnpm or Bun, from the lockfile. Runs the `build` script, then `npm start`. The version comes from `engines.node`, else 22. | A `start` script, or `--start-cmd`. |
+| Python | Installs from `requirements.txt`, `pyproject.toml` or `Pipfile`. Starts `python main.py` or `python app.py`. The version comes from `.python-version` or `runtime.txt`, else 3.12. | For Gunicorn, Uvicorn or Django: a `Procfile` line, for example `web: gunicorn app:app --bind 0.0.0.0:$PORT`. |
+| Go | Builds the `main` package with the version of `go.mod`, then runs the <Term id="binary" />. | For more than one command below `cmd/`: `--build-cmd "go build -o /out/api ./cmd/api"` and `--start-cmd api`. |
+| Rust | Runs `cargo build --release`, then runs the binary. | For a workspace with no root package: `--start-cmd` with the name of the binary. |
+| Ruby | Runs `bundle install`. With a `config.ru`, starts `bundle exec rackup`. The version comes from `.ruby-version`, else 3.3. | For Rails: `web: bundle exec rails server -b 0.0.0.0 -p $PORT` in a `Procfile`. |
+| Static site | With a `build` script or `--build-cmd`, runs the build first. nginx serves the files on port 80. | `--type static`. For a folder that is not `dist`, `build`, `out`, `public`, `_site` or `site`: `--publish-dir`. |
+
+## Common build problems
+
+| What you see | What to do |
+|---|---|
+| `could not detect the runtime` | Add a `Dockerfile` or a file of the runtime table. Or set `--runtime`. Make sure that `--root-dir` is correct. |
+| `cannot determine how to start this Node.js app` | Set `--start-cmd`, add a `start` script, or add a `Procfile` with a `web:` line. |
+| `exited with code 0` after the build | The start command ends and starts no server. Read the `==> Start command` line of the log. Set the correct command. |
+| `health check timed out` | The app must listen on `0.0.0.0` and on `$PORT`. |
+| `Authentication failed` or `not found` when Ferry clones | Read the `==> Hint` line. Connect the account of the repository, or add the repository to the GitHub App. |
+| `branch 'main' not found` | Push the branch, or set the correct branch with `--branch`. |
+| A static build does not find its tools | The build command runs with `NODE_ENV=production`. If it installs the dependencies, use `npm ci --include=dev`. |
+| `secret env mounts need Docker Engine 27.3 or newer` | Upgrade Docker on the server. |
+| The upload is over the upload limit | Add large files and folders to `.ferryignore`. |
+
+For more problems and their fixes, see [Troubleshooting](/docs/help/troubleshooting).

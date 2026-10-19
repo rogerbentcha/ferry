@@ -1,0 +1,321 @@
+---
+title: Domains and HTTPS
+description: Give a service a public URL, point your own domain at the server, and get HTTPS certificates.
+---
+
+Each <Term id="web-service" /> and <Term id="static-site" /> gets a URL when it deploys. To put your services on the internet, connect a domain that you own. Ferry then routes each name and gets a <Term id="certificate" /> for it.
+
+```bash title="Terminal"
+ferry domains connect example.com
+```
+
+<Diagram
+  caption="The path of a request"
+  nodes={[
+    { id: 'browser', at: [0, 0], icon: 'browser', label: 'Browser' },
+    { id: 'dns', at: [0, 1], icon: 'globe', label: 'DNS', note: 'name → address' },
+    { id: 'proxy', at: [1.25, 0], icon: 'route', label: 'Proxy', note: 'the public side' },
+    { id: 'shop', at: [2.5, 0], icon: 'box', label: 'shop', note: 'web service' },
+    { id: 'api', at: [2.5, 1], icon: 'box', label: 'api', note: 'private service' },
+    { id: 'db', at: [2.5, 2], icon: 'database', label: 'app-db', note: 'datastore' },
+  ]}
+  edges={[
+    { from: 'browser', to: 'dns' },
+    { from: 'browser', to: 'proxy' },
+    { from: 'proxy', to: 'shop' },
+    { from: 'shop', to: 'api', label: 'api:3000' },
+    { from: 'api', to: 'db', label: 'app-db:5432' },
+  ]}
+  groups={[{ label: 'Private network', around: ['shop', 'api', 'db'] }]}
+  steps={[
+    {
+      caption: 'The browser asks DNS for the address of shop.example.com.',
+      flow: ['browser>dns'],
+      tones: { dns: 'primary' },
+    },
+    {
+      caption: 'DNS gives the address of your server. The browser sends the request to the proxy.',
+      flow: ['browser>proxy'],
+      tones: { proxy: 'primary' },
+    },
+    {
+      caption: 'The proxy reads the hostname and sends the request to an instance of shop.',
+      flow: ['browser>proxy', 'proxy>shop'],
+      tones: { shop: 'success' },
+    },
+    {
+      caption: 'Behind the proxy, the services call each other by name. This traffic stays private.',
+      flow: ['shop>api', 'api>db'],
+      tones: { api: 'primary', db: 'primary' },
+    },
+  ]}
+/>
+
+Each server runs one <Term id="proxy" />. The proxy receives all the public traffic. It reads the <Term id="hostname" /> of each request and sends the request to an <Term id="instance" /> of the correct <Term id="service" />.
+
+## The default URL
+
+Each web service and static site answers at `<name>.<domain>` under each domain of the server. A server starts with one domain: its <Term id="base-domain" />. It comes from `ferryd --base-domain`, and the default is `localhost`. Browsers send each `*.localhost` name to `127.0.0.1`. Thus on your own machine, you need no <Term id="dns" /> setup.
+
+The URL ends with the port of the proxy (`--proxy-addr`, default `8080`): `http://shop.localhost:8080`. When HTTPS is on, a URL under a public domain has no port: `https://shop.example.com`.
+
+| Service type | <Term id="public-url">Public URL</Term> | Address for the other services |
+|---|---|---|
+| Web service | `<name>.<domain>`, and its custom domains | `<name>:<port>` |
+| Static site | `<name>.<domain>`, and its custom domains | `<name>:80` |
+| Private service | None | `<name>:<port>` |
+| Background worker, cron job | None | None. It can open connections. |
+
+```bash title="Terminal"
+ferry open shop   # print the URL of the service and try to open it
+```
+
+## Add your own domain
+
+You need control of the DNS of the domain, at your <Term id="dns-provider" />. The internet must also reach the proxy on port 80. Start <Term id="ferryd" /> with `--proxy-addr 0.0.0.0:80`.
+
+Ferry has two types of domain. You can use the two together.
+
+| | <Term id="server-domain">Domain of the server</Term> | <Term id="custom-domain">Custom domain</Term> |
+|---|---|---|
+| Covers | Each web service and static site | One service |
+| Hostname | `<service>.example.com` | `www.example.com`, or `example.com` itself |
+| DNS | One <Term id="wildcard-record" /> | One record for each name |
+| Command | `ferry domains connect` | `ferry domains add` |
+
+<Callout type="warning" title="On a public server, set the dashboard host">
+With the base domain `localhost`, the proxy also serves the dashboard and the API at the host `ferry.localhost`. On a server that the internet can reach, start `ferryd` with `--dashboard-host none`, or give it your own hostname with HTTPS.
+</Callout>
+
+### Connect a domain to the server
+
+<Tabs items={['Dashboard', 'CLI', 'API']} groupId="interface" persist>
+<Tab value="Dashboard">
+
+Open **Server → Domains**. Click **Connect a domain**. Enter the domain, for example `example.com`. The window shows the DNS record to create.
+
+</Tab>
+<Tab value="CLI">
+
+```bash title="Terminal"
+ferry domains connect example.com
+```
+
+```text noCopy
+Connected example.com. Services will be served at https://<service>.example.com once its DNS points at this server.
+Create this DNS record where the DNS of example.com is managed:
+
+  TYPE   NAME   VALUE
+  A      *      203.0.113.10
+  A      @      203.0.113.10   optional: only to serve example.com itself
+```
+
+</Tab>
+<Tab value="API">
+
+```bash title="Terminal"
+curl -X POST http://127.0.0.1:7878/api/v1/domains \
+  -H "Authorization: Bearer $FERRY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "example.com"}'
+```
+
+See the [API reference](/docs/reference/api).
+
+</Tab>
+</Tabs>
+
+Then [create the DNS record](#create-the-dns-records). Ferry tests the domain each 15 seconds. When the names under the domain reach the server, the domain becomes active. Ferry then serves each web service and static site under it, with no deploy.
+
+| Status | In the dashboard | Meaning |
+|---|---|---|
+| `pending` | Waiting for DNS | The DNS does not point at the server. Ferry serves nothing under the domain. |
+| `active` | Active | Ferry serves each service under the domain. It tests the domain each 10 minutes. |
+| `misconfigured` | Misconfigured | The domain was active, then three checks in sequence failed. Ferry continues to serve it. |
+
+The <Term id="default-domain" /> is the domain that Ferry uses to show a URL: in the dashboard, in `ferry open` and in the variable `FERRY_EXTERNAL_URL`. If the default is a local name such as `localhost`, the first domain that becomes active becomes the default.
+
+```bash title="Terminal"
+ferry domains                          # the domains, their status, the record to create
+ferry domains default example.com      # the domain service URLs are shown with
+ferry domains disconnect example.com   # services stop being served under it
+```
+
+A service reads its new `FERRY_EXTERNAL_URL` at its next deploy or restart. A server can have 20 connected domains at most. You cannot disconnect the base domain. To change it, change `--base-domain`.
+
+### Add a custom domain to a service
+
+A custom domain is one more hostname for one web service or static site. The proxy routes it immediately. No deploy is necessary.
+
+<Tabs items={['CLI', 'Dashboard', 'Blueprint']} groupId="interface" persist>
+<Tab value="CLI">
+
+```bash title="Terminal"
+ferry domains add shop shop.example.com
+# Added shop.example.com. Point its DNS (A/AAAA or CNAME) at this server.
+ferry domains shop                       # the custom domains of shop
+ferry domains rm shop shop.example.com   # remove one
+```
+
+`ferry create`, `ferry update` and `ferry up` also accept `--domain`. You can repeat it.
+
+</Tab>
+<Tab value="Dashboard">
+
+Open the service. Open **Settings → Custom domains**. Click **Add domain**.
+
+</Tab>
+<Tab value="Blueprint">
+
+```yaml title="ferry.yaml"
+services:
+  - type: web
+    name: shop
+    domains: [shop.example.com, www.example.com]
+```
+
+</Tab>
+</Tabs>
+
+A domain belongs to one service. Ferry refuses an IP address, the dashboard host, and a domain that another service has. It also refuses the default host of a service: `<name>.<domain>` under a domain of the server.
+
+## Create the DNS records
+
+Add the records at your DNS provider. The value is the public IP address of the server. Ferry shows it when you connect a domain.
+
+For a domain of the server:
+
+| Type | Name | Value | Use |
+|---|---|---|---|
+| `A` | `*` | The public IP address of the server | Necessary: each service |
+| `A` | `@` | The same | Optional: only to serve the domain itself |
+
+The name `*` is a wildcard: one record answers for each name under the domain. Thus a new service needs no new record.
+
+For a custom domain:
+
+| Domain | Record |
+|---|---|
+| A <Term id="subdomain" />, like `shop.example.com` | `CNAME` to a name that resolves to the server, or `A`/`AAAA` records |
+| The <Term id="apex" />, like `example.com` | `A` (and `AAAA`) records with the IP addresses of the server |
+
+A new record can take some minutes to show. Test the name, then test the domain:
+
+```bash title="Terminal"
+dig +short shop.example.com         # any name: shows the address when the record works
+ferry domains verify example.com    # a domain of the server: test it now
+```
+
+```text noCopy
+example.com reaches this server: services are served at https://<service>.example.com
+  dns   passed   *.example.com resolves to 203.0.113.10, this server.
+  http  passed   This server answers on port 80 for names under example.com.
+```
+
+Ferry makes a new name under the domain, for example `ferry-check-<random>.example.com`. The `dns` check passes when this name <Term id="resolve">resolves</Term> to the server. The `http` check passes when a request for it on port 80 comes back to this server. Until the domain reaches the server, the command stops with the <Term id="exit-code" /> 1. Thus a script can wait for the domain. In the dashboard, click **Verify now**.
+
+<Accordions>
+  <Accordion title="If you connect a subdomain">
+    The names of the records are relative to your <Term id="dns-zone" />. Example: you connect `apps.example.com`, and the zone is `example.com`. Then name the records `*.apps` and `apps`. Ferry shows the two forms.
+  </Accordion>
+  <Accordion title="The public address and IPv6">
+    Ferry finds the IPv4 address of the server. Behind <Term id="nat" />, it asks `api.ipify.org`, `ipv4.icanhazip.com` or `checkip.amazonaws.com`. To give the address yourself, start `ferryd` with `--public-ip 203.0.113.10`. Ferry shows `AAAA` records only if you give an <Term id="ipv6" /> address with `--public-ip`.
+  </Accordion>
+</Accordions>
+
+## Get HTTPS certificates
+
+Ferry gets a certificate for each hostname from <Term id="lets-encrypt" />. Start `ferryd` with these options:
+
+```bash title="Terminal"
+ferryd --base-domain apps.example.com \
+  --proxy-addr 0.0.0.0:80 --https-addr 0.0.0.0:443 \
+  --acme-email you@example.com
+```
+
+The two options `--https-addr` and `--acme-email` are necessary. Without them, the domains work over HTTP only. Port 80 must stay open: Let's Encrypt connects to it for the <Term id="http-01" />.
+
+Each host that the proxy routes gets its own certificate, a few seconds after the route starts. This includes the URL of each service under each domain of the server, and each custom domain. A <Term id="local-name" /> and an IP address get no certificate. Ferry does not request wildcard certificates.
+
+```bash title="Terminal"
+ferry certificates
+```
+
+```text noCopy
+HOST               SERVICE   CERTIFICATE
+shop.example.com   shop      issued        expires in 2mo
+```
+
+In the dashboard, **Server → Domains** shows each hostname with the state of its certificate.
+
+| State | Meaning |
+|---|---|
+| `pending`, `issuing` | Ferry asks for the certificate. |
+| `issued` | Browsers get the certificate. Ferry renews it 30 days before it expires. |
+| `failed` | The last request failed. Ferry shows the cause and the time of the next attempt. |
+| `local` | A local name. Ferry serves it over HTTP. |
+| `disabled` | HTTPS is off on this server. |
+
+Before the certificate is there, the proxy answers HTTPS with a <Term id="self-signed" />. After, each HTTP request gets a `308` <Term id="redirect" /> to HTTPS. Test the two:
+
+```bash title="Terminal"
+curl -I https://shop.example.com
+curl -I http://shop.example.com     # 308 Permanent Redirect to https://shop.example.com/
+```
+
+## Private network and ports
+
+Your app must listen on the address `0.0.0.0` and on the port in the variable `PORT`. Ferry publishes the <Term id="port" /> of each container on `127.0.0.1` of the server, and the proxy sends the requests there. An app that listens on `127.0.0.1` in its container gets no traffic. To choose the port, use `ferry update shop --port 3000`.
+
+All containers of a server share one Docker network: the <Term id="private-network" />. There, the name of a service or a <Term id="datastore" /> is its address. These requests do not go through the proxy.
+
+```bash title="In a container"
+curl http://api:3000/health        # a private service named "api" listening on 3000
+psql postgresql://…@app-db:5432/…  # a datastore named "app-db"
+```
+
+Do not write hosts and ports in your code. Use a <Term id="reference" />: `${{service.api.hostport}}` becomes `api:3000` when the service starts. A <Term id="private-service" /> has no public URL. `ferry show api` prints its internal address. Ferry does not isolate the services of one server from each other on this network.
+
+Each datastore also publishes its port on `127.0.0.1` of the server, never on a public interface. The external connection string of the datastore has this port. From your machine, open an <Term id="ssh-tunnel" /> to it:
+
+```bash title="Terminal"
+ssh -L 62975:127.0.0.1:62975 you@your-server   # then use the external URL on your machine
+```
+
+WebSockets and streamed answers go through the proxy. gRPC does not, because the proxy uses HTTP/1.1 with your app. Call a gRPC service on the private network.
+
+## Common problems
+
+### The verification fails
+
+Run `ferry domains` to read the result of the last check.
+
+| What Ferry found | Fix |
+|---|---|
+| No DNS record answers for `*.example.com` | Create the record. Wait some minutes. |
+| The name resolves to another address | Point the record to the address that Ferry shows. |
+| The name resolves to many addresses | Remove the records that do not point to this server. |
+| Another server answers | The record points to a different machine, or another program listens on port 80. |
+| This server could not reach itself | A warning only. If visitors cannot reach the services, open port 80 in the <Term id="firewall" />. |
+
+### No certificate
+
+| What you see | Fix |
+|---|---|
+| `ferry certificates` shows `failed` | Read the cause next to the state. The two frequent causes are the DNS and port 80. |
+| `ferry info` shows `TLS: disabled` | Start `ferryd` with `--https-addr` and `--acme-email`. |
+| The <Term id="rate-limit" /> of Let's Encrypt | Test with `--acme-staging`. Browsers do not trust these certificates. Remove the option after the test. |
+| The app makes `http://` links | Read the scheme from the header `X-Forwarded-Proto`. |
+
+After a failure, Ferry waits 5 minutes before the next attempt for that host. Then it waits 10 minutes, then 20, up to 6 hours. A restart of `ferryd` starts a new attempt immediately.
+
+### Errors from the proxy
+
+When the proxy cannot send a request to your app, it answers with its own page and the header <Term id="ferry-error-header" />.
+
+| <Term id="status-code">Status</Term> | `x-ferry-error` | Cause and fix |
+|---|---|---|
+| `404` | `not_found` | No service has this host. Run `ferry domains shop` to see the domains of the service. |
+| `503` | `no_upstreams` | No instance runs: the service has no deploy, its last deploy failed, or a deploy is in progress. |
+| `503` | `suspended` | You suspended the service. Resume it. |
+| `502` | `bad_gateway` | The instance refused the connection. Make sure that the app listens on `0.0.0.0` and `PORT`. |

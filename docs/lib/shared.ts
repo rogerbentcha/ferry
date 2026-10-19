@@ -28,11 +28,17 @@ export const githubUrl = `https://github.com/${gitConfig.user}/${gitConfig.repo}
 export const siteUrl = process.env.DOCS_SITE_URL ?? 'http://localhost:3000';
 
 /**
- * The Ferry server the docs point at: the "Dashboard" link and the API reference's
- * request examples. `ferryd` serves the API and the dashboard on `--api-addr`
- * (default 127.0.0.1:7878). Set `FERRY_DOCS_SERVER_URL` at build time.
+ * The Ferry server of the API reference's request examples. `ferryd` serves the
+ * API and the dashboard on `--api-addr` (default 127.0.0.1:7878). Set
+ * `FERRY_DOCS_SERVER_URL` at build time.
  */
 export const ferryServerUrl = process.env.FERRY_DOCS_SERVER_URL ?? 'http://127.0.0.1:7878';
+
+/**
+ * The "Dashboard" link of the docs header: `DOCS_DASHBOARD_URL`, set in `.env`
+ * (override it in `.env.local` or the build environment). Empty: the server above.
+ */
+export const dashboardUrl = process.env.DOCS_DASHBOARD_URL || ferryServerUrl;
 
 const getContentUrl = createGetUrl(docsContentRoute);
 

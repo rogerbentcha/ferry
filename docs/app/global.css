@@ -6,6 +6,9 @@
 /* The Ferry design tokens, shared with the web dashboard (single source of truth). */
 @import '../../web/src/styles/tokens.css';
 
+/* The home page: the landing page (components/landing/), scoped to `.landing`. */
+@import './landing.css';
+
 /* Scan our own sources for Tailwind classes (fumadocs presets add their own @source). */
 @source '../components';
 @source '../app';

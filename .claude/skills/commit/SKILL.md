@@ -82,8 +82,7 @@ change really spans the whole repo.
 | `ferryd`, `cli`                            | `crates/ferryd`, `crates/ferry-cli` |
 | `api`, `core`, `engine`, `build`, `docker`, `proxy`, `scm`, `tls` | `crates/ferry-<scope>` |
 | `web`                                      | `web/` (the dashboard)        |
-| `docs`                                     | `docs/` (the documentation site) |
-| `landing`                                  | `landing/`                    |
+| `docs`                                     | `docs/` (the website: landing page and documentation) |
 | `examples`                                 | `examples/`                   |
 | `ci`                                       | `.github/`                    |
 | `deps`                                     | dependency bumps              |
