@@ -71,10 +71,10 @@ export function ConnectPopover({ compact = false }: { compact?: boolean }) {
                 Send an API token as <code className="font-mono">Authorization: Bearer &lt;token&gt;</code>. Create one
                 under{' '}
                 <Link
-                  to="/server?section=account"
+                  to="/account"
                   className="rounded-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  Server → Account
+                  Account
                 </Link>
                 .
               </>

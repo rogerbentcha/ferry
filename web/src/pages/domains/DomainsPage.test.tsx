@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { CertificateView, DnsRecord, DomainView } from '@/lib/api/types'
 
-import { CertificatesTable, Checks, DnsRecords, DomainRow } from './DomainsSection'
+import { CertificatesTable, Checks, DnsRecords, DomainRow } from './DomainsPage'
 
 const NOW = Date.parse('2026-10-02T12:00:00Z')
 

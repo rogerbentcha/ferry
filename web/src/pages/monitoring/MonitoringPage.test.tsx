@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ContainerMetrics, HostMetrics, ServerMetrics } from '@/lib/api/types'
 
-import { ChartsBoundary, ContainersTable, HostCards, MonitoringView, NOT_AVAILABLE } from './MonitoringSection'
+import { ChartsBoundary, ContainersTable, HostCards, MonitoringView, NOT_AVAILABLE } from './MonitoringPage'
 
 function html(node: React.ReactNode): string {
   return renderToStaticMarkup(

@@ -20,7 +20,7 @@ import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/patterns/ConfirmDialog'
 import { CopyButton } from '@/components/patterns/Copy'
 import { Callout, EmptyState, ErrorState } from '@/components/patterns/EmptyState'
-import { PageHeader, PageSection } from '@/components/patterns/Page'
+import { PageContainer, PageHeader, PageSection } from '@/components/patterns/Page'
 import { StatePill } from '@/components/patterns/StatusBadge'
 import type { StatusTone } from '@/components/patterns/status-tones'
 import { Badge } from '@/components/ui/badge'
@@ -747,17 +747,17 @@ function Certificates({ now }: { now: number }) {
 }
 
 /**
- * Server → Domains: the domains services are served under (the one the
- * server was started with and the ones connected here), the DNS record each
- * one needs and whether it reaches the server, then the certificate of every
- * routed hostname.
+ * `/domains`: the domains services are served under (the one the server was
+ * started with and the ones connected here), the DNS record each one needs
+ * and whether it reaches the server, then the certificate of every routed
+ * hostname.
  */
-export function DomainsSection() {
+export function DomainsPage() {
   const now = useNow(10_000)
   return (
-    <>
+    <PageContainer size="narrow">
       <DomainList now={now} />
       <Certificates now={now} />
-    </>
+    </PageContainer>
   )
 }

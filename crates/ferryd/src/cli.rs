@@ -103,7 +103,7 @@ pub struct ServerArgs {
     #[arg(long, env = "FERRY_HTTPS_ADDR")]
     pub https_addr: Option<SocketAddr>,
     /// Services are reachable at <name>.<base-domain>. More domains are
-    /// connected while the server runs (dashboard: Server → Domains, or
+    /// connected while the server runs (dashboard: Domains page, or
     /// `ferry domains connect`).
     #[arg(long, env = "FERRY_BASE_DOMAIN", default_value = "localhost")]
     pub base_domain: String,

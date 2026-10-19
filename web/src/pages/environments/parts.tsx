@@ -116,7 +116,7 @@ export function EnvironmentSelect({
 /**
  * The records the services of an environment need under one domain of the
  * server (`*.staging` in the zone of `example.com`), each with a copy
- * button — the look of a connected domain's records (Server → Domains).
+ * button — the look of a connected domain's records (Domains page).
  */
 export function EnvironmentDnsRecords({ environment, dns }: { environment: string; dns: EnvironmentDns }) {
   const parent = namesInParentZone(dns.domain)

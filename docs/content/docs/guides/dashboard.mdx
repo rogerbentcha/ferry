@@ -42,7 +42,7 @@ Each screen has the same frame: a top bar, an <Term id="icon-rail" /> on the lef
 |---|---|
 | Top bar, left | The <Term id="breadcrumb" />: the server, with its default domain and its version. On a service, a switcher to another service, the type and the state. |
 | Top bar, right | **Connect**, **Docs**, the search field, the theme menu, help, **Sign out** and the account menu. |
-| Icon rail | **Services**, **Environments**, **Datastores**, **Env groups**, **Blueprints** and **Server**. On a phone, the rail becomes a menu button. |
+| Icon rail | **Services**, **Environments**, **Datastores**, **Env groups**, **Blueprints**, **Monitoring**, **Domains**, **Server** and **Account**. On a phone, the rail becomes a menu button. |
 
 **Connect** opens a panel with the `ferry login` command for this server and the API URL. On a service page, it also has the URL, the private address and the <Term id="deploy-hook" /> of the service. Each value has a copy button.
 
@@ -153,23 +153,29 @@ See [Databases](/docs/guides/databases).
 
 Ferry deploys the new services and the changed services, and restarts the services with only new variables. **Apply** deletes nothing. See the [Blueprint reference](/docs/reference/blueprint).
 
+## Monitoring and domains
+
+Two pages of the icon rail show the server as a whole:
+
+| Page | Content |
+|---|---|
+| **Monitoring** | The CPU, memory, disk and network of the server, and each container with its CPU and memory. Charts show the last 1 h, 6 h or 24 h, and the requests of each service. See [Monitor the server](/docs/guides/production#monitor-the-server). |
+| **Domains** | The domains of the server and their state. **Verify now**, **Make default**, **Disconnect**. The certificate of each hostname. See [Domains and HTTPS](/docs/guides/domains). |
+
 ## The Server page
 
-Click **Server** in the icon rail. A side menu shows seven sections:
+Click **Server** in the icon rail. A side menu shows four sections:
 
 | Section | Content |
 |---|---|
 | **General** | The versions of Ferry and Docker, the default container limits, the default domain, the proxy URL and the dashboard URL |
-| **Monitoring** | The CPU, memory, disk and network of the server, and each container with its CPU and memory. Charts show the last 1 h, 6 h or 24 h, and the requests of each service. See [Monitor the server](/docs/guides/production#monitor-the-server). |
 | **Server logs** | The <Term id="server-log" />: the last 2,000 lines, then each new line, live. Filter by level: **Error**, **Warn**, **Info** or **Debug**. |
-| **Domains** | The domains of the server and their state. **Verify now**, **Make default**, **Disconnect**. The certificate of each hostname. See [Domains and HTTPS](/docs/guides/domains). |
-| **Account** | Your password, the API tokens and the browser sessions. See the next section. |
 | **Connections** | The `ferry login` command, the `FERRY_SERVER` and `FERRY_TOKEN` variables for CI, and the GitHub and GitLab accounts |
 | **API** | The base URL, an example request, and links to the <Term id="swagger-ui" /> at `/api/docs` and to the <Term id="openapi" /> file. See the [API overview](/docs/reference/api-overview). |
 
 ## Account and tokens
 
-Open **Server → Account**. The account menu in the top bar opens it too.
+Click **Account** in the icon rail. The account menu in the top bar opens it too.
 
 **Change password** asks for the current password. Then Ferry signs out each other browser.
 

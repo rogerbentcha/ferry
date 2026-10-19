@@ -92,10 +92,10 @@ function Request({ id }: { id: string }) {
         Go back to your terminal: <span className="font-medium text-foreground">{view.name}</span> now has an API token
         of its own. You can revoke it at any time under{' '}
         <Link
-          to="/server?section=account"
+          to="/account"
           className="rounded-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
         >
-          Server → Account
+          Account
         </Link>
         .
       </Message>

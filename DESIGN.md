@@ -749,12 +749,16 @@ Rust build never runs Node.
   resources, custom domains, deploy hook) · environments (+ detail) ·
   datastores (+ detail, connection strings, resources) · env groups
   (+ detail) · blueprints (paste
-  YAML → dry run → apply) · server (incl. default container limits, the
-  Docker host's size, **Monitoring** and **Server logs** — below —, the
-  connected git accounts, **Domains** — below —
-  and **Account**: the
-  email, changing the password, the API tokens — created with a name and
-  an expiry, shown once, revoked — and the sessions).
+  YAML → dry run → apply) · **Monitoring** and **Domains** — below — ·
+  server (incl. default container limits, the Docker host's size,
+  **Server logs** — below —, the connected git accounts) · **Account**
+  (the email, changing the password, the API tokens — created with a name
+  and an expiry, shown once, revoked — and the sessions). Services,
+  environments, datastores, env groups, blueprints, Monitoring, Domains,
+  server and Account are in the icon rail (`src/components/shell/nav.ts`);
+  the Server page's sections live in `?section=`, and the old `?section=monitoring`,
+  `domains` and `account` redirect to `/monitoring`, `/domains` and
+  `/account` (`src/pages/server/lib.ts`).
 * **Signing in** (§20): on load, `GET /api/v1/auth/status` decides between
   the setup page, the login page and the app (`src/stores/auth.ts`:
   `loading` / `unreachable` / `setup` / `signed-out` / `signed-in`). The
@@ -799,7 +803,8 @@ Rust build never runs Node.
     (how each was authorized, the services it clones for) with "Finish
     connecting", "Authorize again", "Repositories" (GitHub's page of the
     installation), "Replace token" and "Disconnect".
-* **Domains in the UI** (§21): Server → Domains lists the server's
+* **Domains in the UI** (§21): **Domains** in the icon rail
+  (`/domains`) lists the server's
   domains with their state (`Active`, `Waiting for DNS`, `Misconfigured`,
   `Local`), the default one, and where services are found under each.
   "Connect a domain" asks for the name, then shows the DNS records to
@@ -842,8 +847,8 @@ Rust build never runs Node.
   (env groups, git connections, metrics) hold qualified names. The `ferry`
   commands the dashboard suggests add `--environment` outside production
   (`cliName`).
-* **Monitoring in the UI** (§22): Server → Monitoring
-  (`?section=monitoring`) asks `GET /api/v1/server/metrics` every 5 s
+* **Monitoring in the UI** (§22): **Monitoring** in the icon rail
+  (`/monitoring`) asks `GET /api/v1/server/metrics` every 5 s
   (`useServerMetrics`; TanStack Query stops asking while the tab is
   hidden and asks again when it is back). Cards for the host — CPU with
   the CPU count, memory, each disk with its read / write speed, network
@@ -853,7 +858,7 @@ Rust build never runs Node.
   container Docker did not measure. A value that is `null` says "Not
   available"; no container running is an empty state, `containers:
   null` says Docker did not answer. Under them, **Over time** — loaded
-  with Recharts (shadcn's `chart` component) only when the section opens
+  with Recharts (shadcn's `chart` component) only when the page opens
   (`React.lazy`; Recharts and what only it uses stay out of the `vendor`
   chunk) — asks `GET /api/v1/server/metrics/history` every 10 s
   (`useMetricsHistory`, paused in a hidden tab) for the range of a 1 h /
@@ -1874,7 +1879,7 @@ domain); internationalized names (use the punycode form).
 
 ## 22. Monitoring
 
-Server → Monitoring answers "why is it slow?" without SSH: how busy the
+The Monitoring page answers "why is it slow?" without SSH: how busy the
 machine is right now and over the last 24 hours, which service or
 datastore uses it, and how the services answer their requests; Server →
 Server logs answers "what is Ferry doing?" — why a deploy failed, why a
