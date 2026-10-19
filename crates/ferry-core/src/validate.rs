@@ -18,13 +18,15 @@ pub const MAX_ENV_VALUE_BYTES: usize = 32 * 1024;
 pub const MAX_ENV_TOTAL_BYTES: usize = 256 * 1024;
 
 /// True if `s` has the shape of a Ferry id (`srv-`, `dep-`, `job-`, `dbs-`,
-/// `evg-` or `git-` followed by 20 hex chars). Such names are rejected so
-/// id-or-name lookups can never be ambiguous.
+/// `evg-`, `git-` or `env-` followed by 20 hex chars). Such names are
+/// rejected so id-or-name lookups can never be ambiguous.
 pub fn looks_like_id(s: &str) -> bool {
     use crate::ids;
-    [ids::SERVICE, ids::DEPLOY, ids::JOB, ids::DATASTORE, ids::ENV_GROUP, ids::GIT_CONNECTION].iter().any(|p| {
-        ids::has_prefix(s, p) && s[p.len() + 1..].bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    })
+    [ids::SERVICE, ids::DEPLOY, ids::JOB, ids::DATASTORE, ids::ENV_GROUP, ids::GIT_CONNECTION, ids::ENVIRONMENT]
+        .iter()
+        .any(|p| {
+            ids::has_prefix(s, p) && s[p.len() + 1..].bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        })
 }
 
 /// Service / datastore names: DNS label, 1–40 chars, `[a-z0-9-]`, starts with a
@@ -47,6 +49,12 @@ pub fn resource_name(name: &str) -> Result<()> {
         return Err(Error::invalid(format!("name '{name}' looks like a resource id; choose another name")));
     }
     Ok(())
+}
+
+/// Environment names: the rules of service names, since they are DNS labels
+/// too (`<service>.<environment>.<domain>`) and name a Docker network.
+pub fn environment_name(name: &str) -> Result<()> {
+    resource_name(name)
 }
 
 /// Env group names: 1–64 chars of `[A-Za-z0-9_.-]`.

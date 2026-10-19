@@ -10,8 +10,8 @@
 //!   (unknown targets, services without a known port, …).
 
 use ferry_core::dto::{DatastoreView, ServiceView};
-use ferry_core::env::{RefContext, ServiceRef, resolve_value};
-use ferry_core::{Datastore, DatastoreKind, EnvVar};
+use ferry_core::env::{RefContext, ServiceRef, check_environment, resolve_value};
+use ferry_core::{Datastore, DatastoreKind, EnvVar, Service};
 
 /// Opening marker of a reference.
 const OPEN: &str = "${{";
@@ -55,11 +55,22 @@ pub fn check_syntax(value: &str) -> Result<(), String> {
 }
 
 /// Variables whose references don't resolve against the server's current
-/// datastores and services, with the reason.
-pub fn unresolved(vars: &[EnvVar], datastores: &[DatastoreView], services: &[ServiceView]) -> Vec<(String, String)> {
-    let datastores: Vec<Datastore> = datastores.iter().map(|d| d.datastore.clone()).collect();
+/// datastores and services, with the reason. With the `environment` of the
+/// service they are set on, they resolve inside it, as on the server: a
+/// reference to another environment is one too.
+pub fn unresolved(
+    vars: &[EnvVar],
+    datastores: &[DatastoreView],
+    services: &[ServiceView],
+    environment: Option<&str>,
+) -> Vec<(String, String)> {
+    let inside = |e: &str| environment.is_none_or(|env| e == env);
+    let all_datastores: Vec<Datastore> = datastores.iter().map(|d| d.datastore.clone()).collect();
+    let all_services: Vec<Service> = services.iter().map(|v| v.service.clone()).collect();
+    let datastores: Vec<Datastore> = all_datastores.iter().filter(|d| inside(&d.environment)).cloned().collect();
     let services: Vec<ServiceRef> = services
         .iter()
+        .filter(|v| inside(&v.service.environment))
         .map(|v| ServiceRef {
             name: v.service.name.clone(),
             port: v.internal_port.or(v.service.port),
@@ -69,7 +80,16 @@ pub fn unresolved(vars: &[EnvVar], datastores: &[DatastoreView], services: &[Ser
     let ctx = RefContext { datastores: &datastores, services: &services, advertise_host: "localhost" };
     vars.iter()
         .filter(|v| v.value.contains(OPEN))
-        .filter_map(|v| resolve_value(&v.value, &ctx).err().map(|e| (v.key.clone(), e.to_string())))
+        .filter_map(|v| {
+            let elsewhere = environment
+                .and_then(|env| check_environment(std::slice::from_ref(v), env, &all_datastores, &all_services).err());
+            let why = match elsewhere {
+                // Without the server's "env var KEY: " prefix: the caller names the key.
+                Some(e) => e.to_string().split_once(": ").map(|(_, why)| why.to_string()).unwrap_or_default(),
+                None => resolve_value(&v.value, &ctx).err()?.to_string(),
+            };
+            Some((v.key.clone(), why))
+        })
         .collect()
 }
 
@@ -144,12 +164,28 @@ mod tests {
             EnvVar::new("NEW", "${{service.fresh.hostport}}"),
         ];
         let services = [service("api", Some(8080)), service("fresh", None)];
-        let problems = unresolved(&vars, &[pg], &services);
+        let problems = unresolved(&vars, &[pg], &services, None);
         let keys: Vec<&str> = problems.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(keys, vec!["BAD", "NEW"], "{problems:?}");
         assert!(problems[0].1.contains("unknown datastore 'pgx'"), "{problems:?}");
         assert!(problems[1].1.contains("no known port"), "{problems:?}");
         assert!(any_reference(&vars));
         assert!(!any_reference(&vars[..1]));
+
+        // Set on a service of staging: production's datastore is not reachable.
+        let mut shop = service("shop", Some(3000));
+        shop.service.environment = "staging".into();
+        let pg = DatastoreView {
+            internal_host: "pg".into(),
+            internal_port: 5432,
+            internal_url: String::new(),
+            external_url: None,
+            datastore: Datastore::new("pg", DatastoreKind::Postgres),
+        };
+        let vars = [EnvVar::new("DB", "${{datastore.pg.connectionString}}"), EnvVar::new("SHOP", "${{svc.shop.host}}")];
+        let problems = unresolved(&vars, &[pg], &[shop], Some("staging"));
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert_eq!(problems[0].0, "DB");
+        assert!(problems[0].1.starts_with("datastore 'pg' is not in environment 'staging'"), "{problems:?}");
     }
 }

@@ -1884,3 +1884,142 @@ async fn certificates_are_listed_with_their_state() {
     let out = ferry(&url, h.path(), &["certs"]).await;
     assert!(out.stdout.contains("HTTPS is off on this server: start ferryd with --https-addr"), "{}", out.stdout);
 }
+
+fn environment_view(name: &str, url_pattern: &str, dns: Value) -> Value {
+    json!({
+        "id": format!("env-{name}"),
+        "name": name,
+        "created_at": "2026-10-19T08:00:00Z",
+        "services": [],
+        "datastores": [],
+        "url_pattern": url_pattern,
+        "dns": dns,
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn environments_are_created_listed_and_deleted() {
+    let (fake, url) = Fake::start().await;
+    let dns = json!([{
+        "domain": "example.com",
+        "wildcard": "*.staging.example.com",
+        "records": [{ "type": "A", "name": "*.staging", "value": "203.0.113.10", "required": true }],
+    }]);
+    let staging = environment_view("staging", "https://<service>.staging.example.com", dns);
+    let production = environment_view("production", "https://<service>.example.com", json!([]));
+    fake.on("POST", "/api/v1/environments", Reply::json(201, staging.clone()));
+    fake.on("GET", "/api/v1/environments", Reply::ok(json!([production, staging.clone()])));
+    fake.on("GET", "/api/v1/environments/staging", Reply::ok(staging.clone()));
+    fake.on("DELETE", "/api/v1/environments/env-staging", Reply::no_content());
+    let h = home();
+
+    let out = ferry(&url, h.path(), &["environments", "create", "staging"]).await;
+    assert_eq!(out.code, 0, "{out:?}");
+    assert_eq!(fake.find("POST", "/api/v1/environments")[0].json(), json!({ "name": "staging" }));
+    assert!(out.stdout.contains("Created environment 'staging' (env-staging)"), "{}", out.stdout);
+    assert!(out.stdout.contains("served at https://<service>.staging.example.com"), "{}", out.stdout);
+    assert!(out.stdout.contains("for *.staging.example.com"), "{}", out.stdout);
+    let record = out.stdout.lines().find(|l| l.starts_with("A ")).unwrap_or_default();
+    assert!(record.contains("*.staging") && record.contains("203.0.113.10"), "{}", out.stdout);
+    assert!(out.stdout.contains("--environment staging"), "{}", out.stdout);
+
+    // `ferry environments`, `ferry envs` and `ls` list them.
+    for args in [&["environments"][..], &["envs"], &["envs", "ls"]] {
+        let out = ferry(&url, h.path(), args).await;
+        assert_eq!(out.code, 0, "{args:?}: {out:?}");
+        let lines: Vec<&str> = out.stdout.lines().collect();
+        assert!(lines[0].starts_with("NAME") && lines[0].contains("SERVICES"), "{}", out.stdout);
+        assert!(lines[1].starts_with("production") && lines[2].starts_with("staging"), "{}", out.stdout);
+    }
+    let out = ferry(&url, h.path(), &["environments", "show", "staging"]).await;
+    assert_eq!(out.code, 0, "{out:?}");
+    assert_eq!(kv(&out.stdout, "Services"), Some("-"));
+    assert!(out.stdout.contains("*.staging.example.com"), "{}", out.stdout);
+
+    // Deleting asks first.
+    let out = ferry(&url, h.path(), &["environments", "rm", "staging"]).await;
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("refusing to delete environment 'staging'"), "{}", out.stderr);
+    assert!(fake.find("DELETE", "/api/v1/environments/env-staging").is_empty());
+    let out = ferry(&url, h.path(), &["environments", "rm", "staging", "--yes"]).await;
+    assert_eq!(out.code, 0, "{out:?}");
+    assert_eq!(out.stdout.trim(), "Deleted environment 'staging'.");
+    assert_eq!(fake.find("DELETE", "/api/v1/environments/env-staging").len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn services_and_datastores_are_created_in_and_listed_by_environment() {
+    let (fake, url) = Fake::start().await;
+    let mut shop = service_view("shop", ServiceType::WebService);
+    shop.service.environment = "staging".into();
+    shop.url = Some("http://shop.staging.localhost:8080".into());
+    let web = service_view("web", ServiceType::WebService);
+    fake.on("POST", "/api/v1/services", Reply::json(201, to_json(&shop)));
+    fake.on("GET", "/api/v1/services", Reply::ok(json!([to_json(&shop), to_json(&web)])));
+    fake.on("GET", "/api/v1/services/shop", Reply::ok(to_json(&shop)));
+    let mut ds = Datastore::new("shop-db", DatastoreKind::Redis);
+    ds.environment = "staging".into();
+    ds.status = DatastoreStatus::Available;
+    fake.on("POST", "/api/v1/datastores", Reply::json(201, to_json(&datastore_view(ds))));
+    let h = home();
+
+    let out = ferry(&url, h.path(), &["create", "shop", "--image", "nginx:alpine", "--environment", "staging"]).await;
+    assert_eq!(out.code, 0, "{out:?}");
+    assert_eq!(fake.find("POST", "/api/v1/services")[0].json()["environment"], "staging");
+    assert!(out.stdout.contains("URL: http://shop.staging.localhost:8080"), "{}", out.stdout);
+    let out = ferry(&url, h.path(), &["create", "web", "--image", "nginx:alpine"]).await;
+    assert_eq!(out.code, 0, "{out:?}");
+    assert!(fake.find("POST", "/api/v1/services")[1].json().get("environment").is_none(), "no pick: production");
+
+    let out = ferry(&url, h.path(), &["db", "create", "shop-db", "--kind", "redis", "--environment", "staging"]).await;
+    assert_eq!(out.code, 0, "{out:?}");
+    assert_eq!(fake.find("POST", "/api/v1/datastores")[0].json()["environment"], "staging");
+
+    // A column once there is more than production; a filter by environment.
+    let out = ferry(&url, h.path(), &["services"]).await;
+    assert_eq!(out.code, 0, "{out:?}");
+    let lines: Vec<&str> = out.stdout.lines().collect();
+    assert!(lines[0].starts_with("NAME   ENVIRONMENT   TYPE"), "{}", out.stdout);
+    assert!(lines[1].starts_with("shop   staging       web"), "{}", out.stdout);
+    assert!(lines[2].starts_with("web    production    web"), "{}", out.stdout);
+    let out = ferry(&url, h.path(), &["services", "--environment", "staging"]).await;
+    assert_eq!(out.code, 0, "{out:?}");
+    assert_eq!(fake.find("GET", "/api/v1/services").last().unwrap().query, "environment=staging");
+
+    let out = ferry(&url, h.path(), &["show", "shop"]).await;
+    assert_eq!(kv(&out.stdout, "Environment"), Some("staging"), "{}", out.stdout);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn up_creates_in_an_environment_and_never_moves_a_service() {
+    let (fake, url) = Fake::start().await;
+    let project = tempfile::tempdir().unwrap();
+    let dir = project.path().join("shop");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("index.html"), "<h1>hi</h1>").unwrap();
+    let mut created = service_view("shop", ServiceType::WebService);
+    created.service.environment = "staging".into();
+    // Not there for the first `up`, then there (the last reply stays).
+    fake.on("GET", "/api/v1/services/shop", Reply::error(404, "not_found", "service 'shop' not found"));
+    fake.on("GET", "/api/v1/services/shop", Reply::ok(to_json(&created)));
+    fake.on("POST", "/api/v1/services", Reply::json(201, to_json(&created)));
+    let d = deploy("dep-7", "srv-shop", DeployStatus::Queued);
+    fake.on("POST", "/api/v1/services/srv-shop/deploys/upload", Reply::json(202, to_json(&d)));
+    let h = home();
+
+    let out = ferry_in(Some(&dir), h.path(), Some(&url), Some(TOKEN), &["up", "--environment", "staging"]).await;
+    assert_eq!(out.code, 0, "{out:?}");
+    assert_eq!(fake.find("POST", "/api/v1/services")[0].json()["environment"], "staging");
+
+    // It exists now, in staging: another environment is refused before anything is packed.
+    fake.on("GET", "/api/v1/environments/production", Reply::ok(environment_view("production", "x", json!([]))));
+    let out = ferry_in(Some(&dir), h.path(), Some(&url), Some(TOKEN), &["up", "--environment", "production"]).await;
+    assert_eq!(out.code, 1, "{out:?}");
+    assert!(out.stderr.contains("service 'shop' is in environment 'staging'"), "{}", out.stderr);
+    assert_eq!(fake.find("POST", "/api/v1/services/srv-shop/deploys/upload").len(), 1, "no second upload");
+    // Its own environment, by name or by id, is fine.
+    fake.on("GET", "/api/v1/environments/env-staging", Reply::ok(environment_view("staging", "x", json!([]))));
+    let out = ferry_in(Some(&dir), h.path(), Some(&url), Some(TOKEN), &["up", "--environment", "env-staging"]).await;
+    assert_eq!(out.code, 0, "{out:?}");
+    assert_eq!(fake.find("POST", "/api/v1/services/srv-shop/deploys/upload").len(), 2);
+}

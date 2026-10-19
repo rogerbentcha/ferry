@@ -56,6 +56,11 @@ Every command talks to a Ferry server. `ferry login --server URL` opens the dash
 * [`ferry db show`](#ferry-db-show)
 * [`ferry db update`](#ferry-db-update)
 * [`ferry db rm`](#ferry-db-rm)
+* [`ferry environments`](#ferry-environments)
+* [`ferry environments ls`](#ferry-environments-ls)
+* [`ferry environments create`](#ferry-environments-create)
+* [`ferry environments show`](#ferry-environments-show)
+* [`ferry environments rm`](#ferry-environments-rm)
 * [`ferry env-group`](#ferry-env-group)
 * [`ferry env-group create`](#ferry-env-group-create)
 * [`ferry env-group ls`](#ferry-env-group-ls)
@@ -110,6 +115,7 @@ Connection: --server/--token flags, else FERRY_SERVER/FERRY_TOKEN, else the serv
 * `run` — Run a one-off job (or trigger a cron job now)
 * `jobs` — List a service's job runs, or cancel one
 * `db` — Manage Postgres and Redis datastores
+* `environments` — Manage environments: groups of services and datastores, each on a private network of its own (production, staging…)
 * `env-group` — Manage environment groups
 * `blueprint` — Apply a ferry.yaml / render.yaml blueprint
 * `open` — Print (and try to open) a service's URL
@@ -158,10 +164,16 @@ List services
 **Usage**
 
 ```text
-ferry services
+ferry services [OPTIONS]
 ```
 
 **Command Alias:** `ls`
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Only the services of this environment |
 
 ## `ferry create`
 
@@ -183,6 +195,7 @@ ferry create [OPTIONS] <NAME>
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment to create it in (default: production; it can't change later) |
 | `-t`, `--type <TYPE>` | Service type: web, pserv, worker, cron, static |
 | `--repo <URL>` | Git repository URL, or the path of a git repository on the server (a relative path that exists here is sent as an absolute path) |
 | `--branch <BRANCH>` | Git branch (default: main) |
@@ -338,6 +351,7 @@ If the service doesn't exist, it is created with these flags. If it exists, the 
 |---|---|---|
 | `-d`, `--dir <DIR>` | Directory to upload | `.` |
 | `-t`, `--type <TYPE>` | Service type, only used when creating the service: web, pserv, worker, cron, static [default: web] |  |
+| `--environment <ENV>` | Environment, only used when creating the service [default: production]; an existing service must be in it |  |
 | `--runtime <RUNTIME>` | Runtime: auto, docker, image, node, python, go, rust, ruby, static |  |
 | `--root-dir <DIR>` | Build context subdirectory (monorepos) |  |
 | `--dockerfile <PATH>` | Dockerfile path relative to the root dir |  |
@@ -923,6 +937,7 @@ ferry db create [OPTIONS] <NAME>
 
 | Option | Description | Default |
 |---|---|---|
+| `--environment <ENV>` | Environment to create it in: only its services reach the datastore (default: production) |  |
 | `--kind <KIND>` | postgres or redis | `postgres` |
 | `--version <V>` | Major version (default: 16 for postgres, 7 for redis) |  |
 | `--database <NAME>` | Postgres database name |  |
@@ -938,10 +953,16 @@ List datastores
 **Usage**
 
 ```text
-ferry db ls
+ferry db ls [OPTIONS]
 ```
 
 **Command Alias:** `list`
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Only the datastores of this environment |
 
 ## `ferry db show`
 
@@ -1006,6 +1027,96 @@ ferry db rm [OPTIONS] <NAME>
 |---|---|
 | `-y`, `--yes` | Don't ask for confirmation |
 | `--force` | Delete even if other services still reference it (their next deploy or restart will fail) |
+
+## `ferry environments`
+
+Manage environments: groups of services and datastores, each on a private network of its own (production, staging…)
+
+A service or datastore is created in an environment (--environment, default production) and reaches the datastores and services of that environment only. Outside production, a web service answers at \<service>.\<environment>.\<domain>.
+
+**Usage**
+
+```text
+ferry environments
+ferry environments <COMMAND>
+```
+
+**Command Alias:** `envs`
+
+**Subcommands**
+
+* `ls` — List environments (the default)
+* `create` — Create an environment; prints the DNS record its services need
+* `show` — Show an environment: its services, datastores and DNS records
+* `rm` — Delete an empty environment (production can't be deleted)
+
+## `ferry environments ls`
+
+List environments (the default)
+
+**Usage**
+
+```text
+ferry environments ls
+```
+
+**Command Alias:** `list`
+
+## `ferry environments create`
+
+Create an environment; prints the DNS record its services need
+
+**Usage**
+
+```text
+ferry environments create <NAME>
+```
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<NAME>` | Environment name (lowercase letters, digits and '-'), or id |
+
+## `ferry environments show`
+
+Show an environment: its services, datastores and DNS records
+
+**Usage**
+
+```text
+ferry environments show <NAME>
+```
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<NAME>` | Environment name (lowercase letters, digits and '-'), or id |
+
+## `ferry environments rm`
+
+Delete an empty environment (production can't be deleted)
+
+**Usage**
+
+```text
+ferry environments rm [OPTIONS] <NAME>
+```
+
+**Command Alias:** `delete`
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<NAME>` | Environment name or id |
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-y`, `--yes` | Don't ask for confirmation |
 
 ## `ferry env-group`
 

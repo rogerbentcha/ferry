@@ -68,12 +68,7 @@ pub async fn add(
             return Err(Error::conflict(format!("domain '{domain}' is already added to service '{}'", svc.name)).into());
         }
         let all = st.store.list_services().await?;
-        checks::check_domains(
-            &st.config,
-            all.iter().filter(|s| s.id != svc.id),
-            &svc.name,
-            std::slice::from_ref(&domain),
-        )?;
+        checks::check_domains(&st.config, all.iter().filter(|s| s.id != svc.id), &svc, std::slice::from_ref(&domain))?;
         svc.custom_domains.push(domain.clone());
         let updated = st.store.update_service(&svc).await?;
         drop((row_guard, domains_guard));

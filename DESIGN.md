@@ -28,7 +28,8 @@ code).
 | Rollbacks, deploy history, build logs | ✅ |
 | Manual deploy, deploy hooks (secret URL) | ✅ `/hooks/deploy/{id}?key=` |
 | Env vars, secret files → env vars, environment groups | ✅ env vars + env groups (no secret files) |
-| Private network (`service-name:port`) | ✅ user-defined Docker bridge + DNS aliases |
+| Private network (`service-name:port`) | ✅ user-defined Docker bridge + DNS aliases, one per environment |
+| Environments (staging next to production) | ✅ environments (§23): a private network each, `<service>.<env>.<domain>`; no projects above them |
 | Managed Postgres, Key Value (Redis) | ✅ containers + volumes, internal & external URLs |
 | Persistent disks | ✅ named volume, recreate deploys, 1 instance |
 | Custom domains + free TLS | ✅ ACME HTTP-01 (Let's Encrypt) |
@@ -66,8 +67,8 @@ auth, secret files, IP allow lists, teams/RBAC.
 
 | crate | kind | depends on | responsibility |
 |---|---|---|---|
-| `ferry-core` | lib | — | models, DTOs, config, `Store` (SQLite), env resolution, naming, `Engine` trait, `TlsHooks` trait, validation, resource limits (`resources`: ranges, size / CPU parsing and formatting), cron schedules, git URL helpers, git connections (§18), the server's domains (§21), the server's own log kept in memory (`server_logs`, §22). **Frozen.** |
-| `ferry-docker` | lib | core | typed Docker wrapper (containers, images, volumes, networks, logs, stats, exec) |
+| `ferry-core` | lib | — | models, DTOs, config, `Store` (SQLite), env resolution, naming, `Engine` trait, `TlsHooks` trait, validation, resource limits (`resources`: ranges, size / CPU parsing and formatting), cron schedules, git URL helpers, git connections (§18), the server's domains (§21), the server's own log kept in memory (`server_logs`, §22), environments (§23). **Frozen.** |
+| `ferry-docker` | lib | core | typed Docker wrapper (containers, images, volumes, networks — made and removed —, logs, stats, exec) |
 | `ferry-build` | lib | core | git fetch / archive extract, the branches of a remote (`git ls-remote`), runtime detection, Dockerfile generation, `docker build` |
 | `ferry-scm` | lib | core | git providers (§18): GitHub / GitLab REST clients, authorizing an account in the browser (GitHub App manifest + installation, GitLab OAuth), the tokens of a connection (minted or renewed on demand), which connection reads a repository |
 | `ferry-proxy` | lib | core | `RouteTable`, HTTP/HTTPS reverse proxy, websockets, error pages, request counts (`RequestStats`, §22) |
@@ -81,10 +82,18 @@ Leaf crates must not depend on each other beyond this table.
 
 ## 3. Networking model (important on macOS)
 
-* One user-defined bridge network per server: `Naming::network()` (= `name_prefix`, default `ferry`).
-* Every service container joins it with DNS alias **`<service-name>`**; every
-  datastore with alias **`<datastore-name>`**. Services talk to each other at
-  `http://<name>:<port>` and to datastores via `internal_url()`.
+* One user-defined bridge network per **environment** (§23):
+  `Naming::environment_network(env)` — `Naming::network()` (= `name_prefix`,
+  default `ferry`) for `production`, the network every workload joined
+  before environments existed, and `{prefix}-env-{name}` for the others.
+* Every service container joins the network of its service's environment
+  with DNS alias **`<service-name>`**; every datastore its own environment's
+  with alias **`<datastore-name>`**; job runs their service's, without an
+  alias. Services talk to each other at `http://<name>:<port>` and to
+  datastores via `internal_url()` — inside their environment only: a
+  container shares no network with another environment's, so its names don't
+  resolve there and its addresses are not routed (but see §15 for the
+  ports Ferry publishes).
 * Containers that listen (web, private, static) publish their port on
   **`127.0.0.1:<ephemeral>`** (`PortPublish { host_ip: "127.0.0.1", host_port: None }`).
   The proxy and health checks connect to `127.0.0.1:<host_port>`. **Never use
@@ -96,7 +105,8 @@ Leaf crates must not depend on each other beyond this table.
 * Public hostnames: `<name>.<domain>` under every served domain of the
   server (§21) — the base domain (default `localhost`: browsers resolve
   `*.localhost` to 127.0.0.1) and the domains connected to it — plus custom
-  domains. Dashboard: `ferry.<base_domain>` routed to the API address
+  domains. Outside `production`: `<name>.<environment>.<domain>`
+  (`Service::host_label`). Dashboard: `ferry.<base_domain>` routed to the API address
   (service id `__dashboard`).
 
 ## 4. Docker resource naming & labels
@@ -106,7 +116,9 @@ Always use `ferry_core::Naming` (from `config.naming()`):
 * images `"{prefix}/{service}:{deploy_id}"`; service containers
   `"{prefix}-{service}-{deploy_short}-{rand6}"`; jobs `"{prefix}-job-{service}-{job_short}"`;
   datastores `"{prefix}-ds-{name}"` with volume `"{prefix}-ds-{name}-data"`;
-  service disks `"{prefix}-svc-{service_id}-disk"`.
+  service disks `"{prefix}-svc-{service_id}-disk"`; networks `"{prefix}"`
+  (`production`) and `"{prefix}-env-{environment}"` (the others). Names stay
+  unique per server (§23), so no other name carries the environment.
 * Labels: `ferry.managed=true`, `ferry.instance={prefix}`, `ferry.role=service|job|datastore`,
   `ferry.service`, `ferry.deploy`, `ferry.job`, `ferry.datastore`. The engine
   only ever lists/touches containers whose `ferry.instance` equals its prefix.
@@ -423,9 +435,9 @@ routes and checks that the document, the router and `lib.rs` agree.
 | `GET /api/v1/server/metrics/history?range=1h\|6h\|24h` | `MetricsHistory` `{range, step_seconds, from, to, host, containers, requests, request_targets}` (§22): the readings ferryd keeps (one every 10 s, 24 hours), averaged into steps of 10 / 60 / 240 s — 360 at most — oldest first, a step without a reading left out. `HostPoint` `{at, cpu_percent, memory_used_bytes, memory_total_bytes, disk_read_bytes_per_sec, disk_write_bytes_per_sec, network_rx_bytes_per_sec, network_tx_bytes_per_sec}`; the 5 containers whose CPU peaked highest, `ContainerSeries` `{kind, id, name, instance, points: [ContainerPoint {at, cpu_percent, memory_bytes}]}`; the services' requests together, `RequestPoint` `{at, seconds, requests_per_sec, status_2xx, status_3xx, status_4xx, status_5xx, p50_ms, p95_ms}` for every step ferryd ran in and stored requests for (zeros without a request; `seconds` less than the step for the last one, still filling), and each target over the range, `RequestMetrics` (`engine.metrics_history`). `range` defaults to `1h`; any other value is a 400 |
 | `GET /api/v1/server/logs?tail=&follow=&level=` | SSE (§22): the server's own log, the last 2,000 lines it keeps in memory (`tail`: the last N at the level asked, all by default), then with `follow` each new one. `event: log` + `ServerLogLine` `{ts, level, target, message, fields}`; `level` (`error` / `warn` / `info` / `debug`, the default) keeps that level and above, any other value is a 400; `event: skipped` + `{"count": N}` where a follower more than 1,024 lines behind missed N lines; without `follow`, `event: end` after the recent lines |
 | `GET /metrics` | the server's numbers in the Prometheus text format 0.0.4 (`text/plain; version=0.0.4; charset=utf-8`, §22), for a Prometheus scrape job: the host and the containers of ferryd's last reading (10 s; left out after 30 s) and the proxy's request counters since ferryd started (`engine.metrics_snapshot()`: never a new reading, never Docker). At the root, where Prometheus looks by default, behind the same authentication as `/api/v1` (401 without) |
-| `GET /api/v1/events` | SSE change feed: `event: ready` (`data: {}`) once the feed watches the store (refetch after it), then `event: change` with `ChangeEvent` `{kind, id, service_id, action}` — `kind` ∈ `service`/`deploy`/`datastore`/`env_group`/`job`/`git_connection`/`domain`, `action` ∈ `created`/`updated`/`deleted`, `service_id` set for services (own id), deploys and jobs; a lagging subscriber gets `{kind:"all", id:"*", service_id:null, action:"resync"}` (refetch everything). The store is polled every second while someone listens and nudged after every API/webhook write |
-| `GET /api/v1/services` | `[ServiceView]` |
-| `POST /api/v1/services` | `CreateService` → 201 `ServiceView` (queues a `create` deploy when it has a repo/image, unless `deploy:false`) |
+| `GET /api/v1/events` | SSE change feed: `event: ready` (`data: {}`) once the feed watches the store (refetch after it), then `event: change` with `ChangeEvent` `{kind, id, service_id, action}` — `kind` ∈ `service`/`deploy`/`datastore`/`env_group`/`job`/`git_connection`/`domain`/`environment`, `action` ∈ `created`/`updated`/`deleted`, `service_id` set for services (own id), deploys and jobs; a lagging subscriber gets `{kind:"all", id:"*", service_id:null, action:"resync"}` (refetch everything). The store is polled every second while someone listens and nudged after every API/webhook write |
+| `GET /api/v1/services?environment=` | `[ServiceView]` (`environment`: only those of one, by id or name; 404 for an unknown one) |
+| `POST /api/v1/services` | `CreateService` → 201 `ServiceView` (in `environment`, by id or name, default `production`: 400 for an unknown one; queues a `create` deploy when it has a repo/image, unless `deploy:false`) |
 | `GET /api/v1/services/{id}` | `ServiceView` |
 | `PATCH /api/v1/services/{id}` | `UpdateService` → `ServiceView` (instances → `engine.scale`, suspended → `engine.suspend/resume`, custom_domains → `engine.refresh_routes`; the rest is stored — `memory_limit_mb` / `cpu_limit` too, `0` = back to the server default: they apply with the next deploy or restart, the PATCH doesn't redeploy) |
 | `DELETE /api/v1/services/{id}?force=` | 204 (`engine.delete_service`); 409 listing the referencing services when other services reference it via `${{service.…}}`, unless `force=true` |
@@ -462,10 +474,12 @@ routes and checks that the document, the router and `lib.rs` agree.
 | `GET /api/v1/jobs/{job_id}` | `JobRun` |
 | `POST /api/v1/jobs/{job_id}/cancel` | `JobRun` (`canceled`); 409 when it already finished |
 | `GET /api/v1/jobs/{job_id}/logs?follow=` | SSE |
-| `GET /api/v1/datastores` | `[DatastoreView]` |
-| `POST /api/v1/datastores` | `CreateDatastore` → 201 `DatastoreView` (row `creating`, with its optional `memory_limit_mb` / `cpu_limit`, then `engine.provision_datastore`) |
+| `GET /api/v1/datastores?environment=` | `[DatastoreView]` (`environment` as for services) |
+| `POST /api/v1/datastores` | `CreateDatastore` → 201 `DatastoreView` (row `creating` in `environment`, default `production`, with its optional `memory_limit_mb` / `cpu_limit`, then `engine.provision_datastore`) |
 | `GET /api/v1/datastores/{id}` · `DELETE ?force=` | `DatastoreView` · 204 (409 while referenced, unless `force=true`) |
 | `PATCH /api/v1/datastores/{id}` | `UpdateDatastore` `{memory_limit_mb?, cpu_limit?}` → `DatastoreView`. Stores the limits (`0` = back to the server default; an omitted field keeps its value) under the datastore's row lock, then `engine.update_datastore_limits` applies them to its container in place, without a restart, whatever the status (also when nothing changed, so re-sending retries a failed apply): a `failed` datastore's container may still be there, restarting with the old limits, and the retry keeps it (§8); one without a container yet gets them when it is created. A failed apply after the save → the engine's error prefixed `limits of 'NAME' saved, but applying them to its container failed: ` (502 for Docker errors, 409 while the datastore is being deleted) |
+| `GET /api/v1/environments` · `POST` | `[EnvironmentView]`, `production` first · `CreateEnvironment` `{name}` → 201 `EnvironmentView` (§23: the row, then `engine.create_environment` makes its network — a failure there removes the row, 502). `EnvironmentView` = the `Environment` (`id` `env-…`, `name`, `created_at`) + `services`, `datastores` (names), `url_pattern` (`https://<service>.staging.example.com`) and `dns`: per domain of the server that is not local, `EnvironmentDns` `{domain, wildcard, records}` — the `*.staging` records (`DnsRecord`) its services need; none for `production` |
+| `GET /api/v1/environments/{id}` · `DELETE` | `EnvironmentView` · 204 (`engine.delete_environment` removes its network, then the row); 409 for `production`, or while it holds services or datastores (listed) |
 | `GET /api/v1/env-groups` · `POST` | `[EnvGroupView]` · `CreateEnvGroup` → 201 `EnvGroupView` |
 | `GET /api/v1/env-groups/{id}` · `DELETE ?force=&restart=` | `EnvGroupView` · 204 (409 while linked, unless `force=true`; `restart=true` restarts the linked live services) |
 | `PUT` / `PATCH /api/v1/env-groups/{id}/env?restart=` | `ReplaceEnv` / `PatchEnv` → `EnvGroupView` (restart linked live services) |
@@ -481,7 +495,9 @@ routes and checks that the document, the router and `lib.rs` agree.
 | `POST /hooks/github` | GitHub webhook. A delivery is signed with the webhook secret of a GitHub App registered for this server (§18: nothing was set up on the repository) or with the server's `github_webhook_secret` (a webhook added to a repository by hand); 404 while neither exists; verify `X-Hub-Signature-256` against each of them (HMAC-SHA256, constant-time) → 401; `ping` → 200; `push` → deploy (trigger `webhook`, commit = `after`) every service with `auto_deploy`, matching `git::normalize_repo_url` of `repository.clone_url`/`ssh_url`/`html_url`, and `refs/heads/<branch>`; deleted-branch pushes ignored → 200 `{"deploys": [...]}` |
 
 Name rules: `validate::resource_name` for services/datastores (names shared
-between both; id-shaped names are rejected), `validate::env_group_name`,
+between both, unique per server whatever their environment; id-shaped
+names are rejected) and environments (`validate::environment_name`, the
+same rules), `validate::env_group_name`,
 `validate::env_vars` (32 KiB per value, 256 KiB per owner, also checked on
 the merged service + linked groups). Resource limits (`memory_limit_mb` /
 `cpu_limit` on `CreateService`, `UpdateService`, `CreateDatastore`,
@@ -496,7 +512,10 @@ git connection: its repository is cloned with the connection of the server
 that serves `repo_url` (§18). Cron jobs always have
 exactly 1 instance. Writes to one service are serialized, and the claims
 of hostnames — custom domains and the server's domains (§21) — are
-globally serialized. GitHub webhooks also accept form-encoded
+globally serialized. Creating and deleting environments takes the names
+lock too, so nothing is created in an environment being deleted. A
+service's or datastore's environment is picked on create and never changes
+(`UpdateService` has no such field). GitHub webhooks also accept form-encoded
 deliveries and ignore replayed payloads.
 
 ## 11. Blueprints (`ferry.yaml` / `render.yaml`)
@@ -595,6 +614,12 @@ services:
   datastore's status (§8; a failure becomes a warning). Blueprint applies
   also take the row locks of the existing datastores they name.
   Services with neither repo nor image produce a warning ("deploy with `ferry up <name>`").
+* A blueprint applies to `production` (§23): its entries are created there,
+  update what is there, and their references resolve there. An entry whose
+  name is a service or datastore of another environment is a Conflict
+  (`'shop': the name is used by a service of environment 'staging', and a
+  blueprint applies to production`). Render's `projects[].environments[]`
+  stay flattened (with a warning).
 * Blueprints don't mention git connections (§18): a service's `repo` is
   cloned with the connection of the server that serves it, like any other
   service's.
@@ -613,8 +638,8 @@ ferry login [--server URL] [--no-browser]   # approved in the dashboard (§20): 
       # opens the page, polls until it is answered, then verifies (/api/v1/info) and saves the token it got
 ferry login --server URL --token TOKEN     # (or FERRY_TOKEN) verifies and saves a given token: CI, no browser
 ferry info                                 # incl. default limits and the Docker host's CPUs / memory
-ferry services | ferry ls
-ferry create NAME [--type web|pserv|worker|cron|static] [--repo URL] [--branch B] [--image IMG]
+ferry services | ferry ls [--environment ENV]      # an ENVIRONMENT column once one is not production
+ferry create NAME [--environment ENV] [--type web|pserv|worker|cron|static] [--repo URL] [--branch B] [--image IMG]
              [--runtime R] [--root-dir D] [--dockerfile P] [--build-cmd C] [--start-cmd C]
              [--publish-dir D] [--port N] [--health PATH] [--instances N] [--schedule CRON]
              [--disk MOUNT] [--domain D]... [--memory SIZE] [--cpu CPUS] [--env K=V]... [--env-group G]...
@@ -627,7 +652,7 @@ ferry update NAME [same flags as create, plus --auto-deploy/--no-auto-deploy]
       # next deploy or restart (the command prints which: `ferry restart NAME`, `ferry deploy NAME`, …)
 ferry delete NAME [--yes]
 ferry deploy NAME [--commit SHA] [--clear-cache] [--follow]        # follow = stream build logs, exit 1 on failure
-ferry up [NAME] [--dir .] [--type web] [settings flags of create, incl. --memory/--cpu] [-e K=V]...
+ferry up [NAME] [--dir .] [--type web] [--environment ENV] [settings flags of create, incl. --memory/--cpu] [-e K=V]...
          [--env-group G]... [--clear-cache] [--follow]
       # tar.gz the directory (respect .gitignore/.ferryignore; skip .git, node_modules, target, .venv),
       # create the service if missing (type/runtime auto), upload → deploy; NAME defaults to dir name
@@ -652,8 +677,11 @@ ferry domains default DOMAIN | ferry domains disconnect DOMAIN [--yes]
 ferry certificates | ferry certs               # every routed hostname with the state of its certificate
 ferry run NAME [--follow] [-- CMD...]                               # one-off job / trigger cron now
 ferry jobs NAME
-ferry db create NAME [--kind postgres|redis] [--version V] [--database D] [--user U] [--memory SIZE] [--cpu CPUS] [--wait]
-ferry db ls | ferry db show NAME | ferry db rm NAME [--yes]
+ferry db create NAME [--environment ENV] [--kind postgres|redis] [--version V] [--database D] [--user U] [--memory SIZE] [--cpu CPUS] [--wait]
+ferry db ls [--environment ENV] | ferry db show NAME | ferry db rm NAME [--yes]
+ferry environments | ferry envs [ls]           # §23: services, datastores and where their services are served
+ferry environments create NAME                 # prints the DNS record its services need
+ferry environments show NAME | ferry environments rm NAME [--yes]
 ferry db update NAME [--memory SIZE|default] [--cpu CPUS|default]  # at least one; applied to the running container, no restart
 ferry env-group create NAME [K=V...] | ls | show NAME | set NAME K=V... | unset NAME K... | rm NAME
                 | link SERVICE GROUP | unlink SERVICE GROUP
@@ -679,10 +707,12 @@ Rust build never runs Node.
   login (email + password) · the approval of a `ferry login`
   (`/cli-login?id=…`, outside the shell) · services
   (list, new) · service detail: Overview, Deploys (+ deploy detail with live
-  build logs, rollback, cancel), Logs, Jobs (+ job detail), Environment
-  (variables, env group links, "save & restart"), Settings (build & deploy,
-  resources, custom domains, deploy hook) · datastores (+ detail,
-  connection strings, resources) · env groups (+ detail) · blueprints (paste
+  build logs, rollback, cancel), Logs, Jobs (+ job detail), Variables
+  (variables, env group links, "save & restart"; route
+  `/services/:name/environment`), Settings (build & deploy,
+  resources, custom domains, deploy hook) · environments (+ detail) ·
+  datastores (+ detail, connection strings, resources) · env groups
+  (+ detail) · blueprints (paste
   YAML → dry run → apply) · server (incl. default container limits, the
   Docker host's size, **Monitoring** and **Server logs** — below —, the
   connected git accounts, **Domains** — below —
@@ -747,6 +777,23 @@ Rust build never runs Node.
   how to turn HTTPS on. `src/lib/domains.ts` mirrors
   `ferry_core::domains::connectable_name`. The server's name in the top
   bar and the URL previewed for a new service use the default domain.
+* **Environments in the UI** (§23): **Environments** in the icon rail
+  (`src/pages/environments/`) lists them, `production` first, each with its
+  URL pattern, what it holds and its DNS records; "New environment" asks
+  for the name (`src/pages/environments/lib.ts` mirrors the server's name
+  rules), then shows the `*.<environment>` records to create when a domain
+  of the server is not local. An environment's page lists its services and
+  datastores, with "New service" / "New datastore" preset to it
+  (`/services/new?environment=`), and deletes it once empty (a 409 shows the
+  server's message; `production` has no delete). The new-service form and
+  the new-datastore dialog pick the environment (default `production`), and
+  the URL preview uses `<name>.<environment>.<domain>`
+  (`types.ts` `hostLabel` mirrors `models::host_label`). Once the server
+  has more than `production`, service cards and rows, datastores and the
+  service and datastore headers show the environment, and the services
+  toolbar filters by it (kept with its other view preferences,
+  `ferry.services-view`). The Variables tab only offers
+  references to the datastores and services of the service's environment.
 * **Monitoring in the UI** (§22): Server → Monitoring
   (`?section=monitoring`) asks `GET /api/v1/server/metrics` every 5 s
   (`useServerMetrics`; TanStack Query stops asking while the tab is
@@ -1060,9 +1107,20 @@ Still **not** protected:
   own images, pruning the rest (`docker image prune`, `docker builder
   prune`) is up to the operator.
 * **Disk and network I/O.** No I/O or bandwidth limits.
-* **The network.** Every service and datastore shares one private network
-  (§3): any container can reach every service and datastore by name, and
-  datastores are protected by their passwords only.
+* **The network inside an environment.** Every service and datastore of
+  an environment shares its private network (§3): any of its containers
+  can reach the others by name, and datastores are protected by their
+  passwords only. Across environments names don't resolve and unpublished
+  ports are not routed (§23).
+* **Published ports across environments.** Since Docker Engine 28 a port
+  published on the host stays reachable at the container's address from
+  other bridge networks (Docker accepts it before its isolation rule). Ferry
+  publishes every datastore (`datastore_bind_ip:host_port`) and the port of
+  every listening service (`127.0.0.1:<ephemeral>`, for the proxy and the
+  health checks), so a container of `staging` that knows the private
+  address of one of `production` (and, for a datastore, its password) can
+  still connect to that port. Closing it needs rules in the host's
+  firewall (Docker's `DOCKER-USER` chain), which Ferry doesn't write.
 * **Overcommit.** Limits are caps, not reservations: nothing checks that the
   sum of all limits (instances × limit, jobs, datastores) fits the host. When
   the host itself runs out of memory, the kernel's global OOM killer picks
@@ -1160,6 +1218,17 @@ ancestor cgroup, e.g. `system.slice`, has one too).
   and fake certificates, `ferry-cli/tests/cli.rs` the commands against a
   fake server. No test resolves a real name or connects to an address
   outside the machine.
+* Environments (§23): `ferry-engine/tests/e2e.rs`
+  (`environments_are_cut_off_from_each_other`) runs datastores and workers
+  in `production` and `staging` on the real daemon and connects from job
+  runs: a staging job reaches staging's datastore by name, and neither
+  production's datastore and services by name nor an unpublished port of
+  production by address; the reverse holds for production; deleting the
+  environment removes its network. A published port at its container's
+  address is only logged (§15: it depends on the Docker version). The
+  migration, the delete rules, the hostnames and the reference error are
+  tested without Docker (`ferry-core` store, config and env tests,
+  `ferry-engine/src/tests.rs`, `ferry-api/tests/environments.rs`).
 * The background commands of `ferryd` (§19) are tested on the real binary
   in `ferryd/tests/background.rs`: without Docker, a start that fails
   before the server listens (its error reaches the terminal, exit code 1)
@@ -1973,3 +2042,96 @@ NetworkCounters}` and `requests::TargetRequestTotals` in `ferry-core`,
 `RequestStats::latency_sum` in `ferry-proxy`,
 `ferry_api::prometheus::{render, CONTENT_TYPE}` and
 `openapi::METRICS_PATH`.
+
+## 23. Environments
+
+An **environment** groups services and datastores on a private network of
+their own: `production`, which every server has, and the ones created next
+to it (`staging`, `qa`…). Its containers reach each other by name; nothing
+of another environment does, except through public URLs. One server runs
+staging and production side by side.
+
+**Data model** (migration `0009_environments.sql`). `Environment { id
+(env-…), name (unique, the rules of service names), created_at }`.
+`Service.environment` and `Datastore.environment` hold the *name* of their
+environment (environments are never renamed): picked when the resource is
+created (`CreateService.environment` / `CreateDatastore.environment`, an id
+or a name; omitted = `production`) and never changed. The migration adds the
+table and the `production` row, and sets every existing service and
+datastore to `production` (a column default: SQLite can't add a foreign key
+with a non-NULL default, so the store checks the environment exists on
+create — NotFound — and refuses to delete one that holds anything).
+`production` keeps the network, Docker names and hostnames of a server set
+up before environments: an upgrade restarts nothing and changes no URL.
+
+**Names.** A service or datastore name is still unique per server
+(`Store::name_taken`): the private name of a service is its name in every
+environment, and only the network differs. A service of `production` and
+another environment never share a name (`checks::check_environment_name_free`
+/ `check_service_name_free`, also for blueprints): once
+`*.staging.<domain>` exists, `staging.<domain>` exists in DNS without a
+record of its own and the domain's `*.<domain>` stops answering for it
+(RFC 4592), so the production service `staging` would lose its hostname.
+The same holds for the dashboard's host: an environment can't be named
+`ferry` while the dashboard is `ferry.<domain>` under a domain of the
+server, and a domain that would put one there can't be connected
+(`check_domain_free_of_environments`); environment creation takes the
+domain lock after the names lock for that. `--dashboard-host` is set at
+startup, so the engine only warns, at start, about a dashboard host an
+environment hides.
+
+**Networks** (`ferry-engine/src/environments.rs`). Each environment has a
+bridge network, `Naming::environment_network` (§3): `production`'s is the
+server's network, the others are `{prefix}-env-{name}`. Creating an
+environment makes its network (`Engine::create_environment`; when Docker
+refuses, the row is removed again: 502); deleting one removes it
+(`Engine::delete_environment`, `Docker::remove_network`: one that is
+already gone is fine, one with containers still attached is a Conflict).
+The engine makes the network of every environment when it starts (one it
+can't make is a server-log warning; production's still stops the start), and a
+container whose network is missing (removed behind Ferry's back) gets it
+made and is started once more (`environments::run_container`). Service
+instances, job runs and datastores join their environment's network only;
+the proxy and health checks reach containers through their ports published
+on `127.0.0.1` (§3), whatever the environment.
+
+**Hostnames.** Outside `production` a web service or static site answers at
+`<service>.<environment>.<domain>` under every served domain
+(`Service::host_label` = `<name>` or `<name>.<environment>`, used by
+`Config::service_hosts`, `service_url`, the health check's `Host`,
+`FERRY_EXTERNAL_HOSTNAME` / `FERRY_EXTERNAL_URL`); production keeps
+`<service>.<domain>`. Custom domains work as in production. The claims of
+hostnames (§21) use the host label: a custom domain can't be
+`shop.staging.<domain>` while `shop` is in `staging`. Each environment gets
+a wildcard DNS record of its own, `*.<environment>.<domain>`, for every
+domain of the server that is not local (a domain's `*.<domain>` doesn't
+reliably answer for names two levels down: a resolver stops at any record
+under `<environment>.<domain>`) — `EnvironmentView.dns`, which the dashboard
+and `ferry environments create` show. Local domains need nothing:
+`*.localhost` resolves at any depth.
+
+**References.** A `${{datastore.NAME…}}` / `${{service.NAME…}}` reference
+resolves inside the environment of the service that uses it
+(`Store::environment_reference_targets`); env groups stay server-wide and
+their references follow the service using them. One to a datastore or
+service of another environment fails the deploy before anything is built or
+pulled (`env::check_environment`): `cannot resolve environment variables:
+env var DATABASE_URL: datastore 'db' is not in environment 'staging' (it is
+in 'production'): a service only reaches the datastores and services of
+its own environment`. Services waiting for a referenced service's first
+deploy (§5) only wait for their own environment's.
+
+**Deleting.** Refused for `production`, and while the environment holds
+services or datastores — `environment 'staging' still holds service 'shop',
+datastore 'shop-db': delete them first` — under the names lock (§10).
+
+**Blueprints** apply to `production` (§11).
+
+**Changes** reach the dashboard through the change feed (kind
+`environment`, §10).
+
+Not covered: the same name in two environments (LAB-26); renaming an
+environment or moving a service to another one; copying an environment;
+promoting a deploy from staging to production; blueprint `environments:`
+sections; who may see or change which environment; CPU or memory limits per
+environment; the published ports of §15.

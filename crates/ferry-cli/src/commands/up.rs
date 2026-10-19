@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use ferry_core::dto::{LinkEnvGroup, PatchEnv, ServiceView};
+use ferry_core::dto::{EnvironmentView, LinkEnvGroup, PatchEnv, ServiceView};
 use ferry_core::{Deploy, EnvVar, ServiceType, SourceKind, validate};
 
 use super::services::{create_body, settings_labels, settings_update};
@@ -81,6 +81,22 @@ fn check_type(a: &UpArgs, existing: &ServiceView) -> Result<()> {
     }
 }
 
+/// `--environment` can only pick the environment of a new service.
+async fn check_environment(ctx: &Ctx, a: &UpArgs, existing: &ServiceView) -> Result<()> {
+    let current = &existing.service.environment;
+    let Some(wanted) = a.environment.as_deref().filter(|w| w != current) else { return Ok(()) };
+    // An id of its environment is fine too.
+    let named = ctx.client.get::<EnvironmentView>(&["environments", wanted], &[]).await.ok();
+    if named.is_some_and(|v| &v.data.environment.name == current) {
+        return Ok(());
+    }
+    bail!(
+        "service '{}' is in environment '{current}'; a service can't move to another environment \
+         (--environment {wanted} only applies when creating a service): deploy under another name",
+        existing.service.name,
+    )
+}
+
 /// Apply `ferry up`'s settings, variables and env groups to an existing
 /// service before deploying, so re-running `ferry up --start-cmd …` fixes it.
 async fn update_existing(ctx: &Ctx, mut svc: ServiceView, a: &UpArgs) -> Result<ServiceView> {
@@ -143,7 +159,10 @@ pub async fn up(ctx: &Ctx, a: UpArgs) -> Result<()> {
         Err(e) => return Err(e),
     };
     match &existing {
-        Some(svc) => check_type(&a, svc)?,
+        Some(svc) => {
+            check_type(&a, svc)?;
+            check_environment(ctx, &a, svc).await?;
+        }
         // Validate locally: the name will be used to create the service.
         None => validate::resource_name(&name).map_err(|e| anyhow!("{e}"))?,
     }
@@ -191,6 +210,7 @@ pub async fn up(ctx: &Ctx, a: UpArgs) -> Result<()> {
         }
         None => {
             let mut body = create_body(&name, Some(a.service_type.unwrap_or(ServiceType::WebService)), &a.settings);
+            body.environment = a.environment.clone();
             body.env = (!a.env.is_empty()).then(|| a.env.clone());
             body.env_groups = (!a.env_groups.is_empty()).then(|| a.env_groups.clone());
             body.deploy = Some(false);

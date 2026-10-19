@@ -17,6 +17,9 @@ pub const ENV_GROUP: &str = "evg";
 pub const GIT_CONNECTION: &str = "git";
 /// Prefix for domains (services are served at `<service>.<domain>`).
 pub const DOMAIN: &str = "dom";
+/// Prefix for environments (`production`, `staging`…: groups of services and
+/// datastores on a private network of their own).
+pub const ENVIRONMENT: &str = "env";
 
 /// Prefix for accounts (the administrator of the server).
 pub const USER: &str = "usr";

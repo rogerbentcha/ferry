@@ -25,8 +25,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
 use utoipa_swagger_ui::{Config, SwaggerUi};
 
 use crate::routes::{
-    auth, blueprints, custom_domains, datastores, deploys, domains, env, env_groups, git, hooks, info, jobs, server,
-    services,
+    auth, blueprints, custom_domains, datastores, deploys, domains, env, env_groups, environments, git, hooks, info,
+    jobs, server, services,
 };
 
 /// Where the document is served.
@@ -108,7 +108,8 @@ when the server shuts down.";
 pub(crate) const SSE_EVENTS: &str = "Server-Sent Events. First `event: ready` (`data: {}`) once the feed \
 watches the store: changes after it are reported, so (re)fetch your data after `ready`. Then one \
 `event: change` per change, whose `data` is a `ChangeEvent` JSON object `{kind, id, service_id, action}`: \
-`kind` is `service`, `deploy`, `datastore`, `env_group`, `job`, `git_connection` or `domain`; `action` is \
+`kind` is `service`, `deploy`, `datastore`, `env_group`, `job`, `git_connection`, `domain` or `environment`; \
+`action` is \
 `created`, `updated` or `deleted`; `service_id` is set for services (their own id), deploys and jobs, `null` otherwise. A subscriber \
 that falls behind gets `{\"kind\": \"all\", \"id\": \"*\", \"service_id\": null, \"action\": \"resync\"}` and \
 should refetch everything. `: keep-alive` comments every 15 s; the stream only ends when the server shuts \
@@ -186,6 +187,10 @@ down.";
         datastores::get,
         datastores::update,
         datastores::delete,
+        environments::list,
+        environments::create,
+        environments::get,
+        environments::delete,
         env_groups::list,
         env_groups::create,
         env_groups::get,
@@ -253,6 +258,10 @@ down.";
         ferry_core::dto::CreateDatastore,
         ferry_core::dto::UpdateDatastore,
         ferry_core::dto::DatastoreView,
+        ferry_core::dto::CreateEnvironment,
+        ferry_core::dto::EnvironmentView,
+        ferry_core::dto::EnvironmentDns,
+        ferry_core::Environment,
         ferry_core::dto::CreateEnvGroup,
         ferry_core::dto::EnvGroupView,
         ferry_core::dto::AuthorizeGit,
@@ -318,6 +327,7 @@ down.";
         (name = "services", description = "Web services, private services, background workers, static sites and cron jobs: CRUD, lifecycle actions (restart, suspend, resume, scale, rollback), status and runtime logs."),
         (name = "deploys", description = "Deploy history, manual deploys, source uploads (`ferry up`), cancellation and build logs."),
         (name = "env", description = "A service's own environment variables. `?restart=true` restarts the live service when its effective environment changed."),
+        (name = "environments", description = "Environments (`production`, `staging`…): groups of services and datastores, each on a private network of its own. A service or datastore picks its environment when it is created and reaches only the datastores and services of that environment by name; outside `production` a web service answers at `<service>.<environment>.<domain>`. Only public URLs cross from one environment to another."),
         (name = "env-groups", description = "Shared variable sets linked to services (a service's own variables win over its groups'), and linking / unlinking them."),
         (name = "domains", description = "The domains services are served under — `<service>.<domain>` for every web service and static site: the server's base domain and the domains connected to it, each pointed at the server with one wildcard DNS record and verified by the server — the certificates of the routed hostnames, and the custom domains of one service (unique across services)."),
         (name = "jobs", description = "Job runs: cron runs and one-off commands, with their logs."),
@@ -429,6 +439,7 @@ pub enum ChangeKind {
     Job,
     GitConnection,
     Domain,
+    Environment,
     /// Everything: sent with `resync` when a subscriber fell behind.
     All,
 }

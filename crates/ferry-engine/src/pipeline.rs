@@ -23,6 +23,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use crate::environments;
 use crate::health::{self, CommandSource, HealthCheck, Probe, wait_healthy};
 use crate::images;
 use crate::instances::{self, BuildInfo, STOP_GRACE_SECS};
@@ -159,6 +160,13 @@ async fn execute(
         ));
     }
     info!(service = %svc.name, deploy = %deploy.id, "deploy started");
+
+    // A reference to another environment can never resolve: say so before
+    // building anything.
+    let user = inner.store.effective_env(&svc.id).await.map_err(Failure::build)?;
+    spec::check_environment(inner, &svc, &user).await.map_err(|e| {
+        Failure::build(Error::invalid(format!("cannot resolve environment variables: {}", error_message(&e))))
+    })?;
 
     let built = build_stage(ctx, &svc, &deploy, opts).await?;
     drop(permit);
@@ -556,8 +564,9 @@ async fn pending_references(inner: &Inner, svc: &Service) -> ferry_core::Result<
     if names.is_empty() {
         return Ok(Vec::new());
     }
-    let (_, refs) = inner.store.reference_targets(&inner.config).await?;
-    let services = inner.store.list_services().await?;
+    // Inside the service's environment, where its references resolve.
+    let (_, refs) = inner.store.environment_reference_targets(&inner.config, &svc.environment).await?;
+    let (services, _) = inner.store.environment_members(&svc.environment).await?;
     let active = inner.store.active_deploys().await?;
     let mut pending = Vec::new();
     for name in names {
@@ -698,7 +707,7 @@ async fn start_and_swap(ctx: &Ctx, built: &Built, started: &mut Vec<(ContainerIn
     for _ in 0..desired {
         ctx.check_cancel(Stage::Deploy)?;
         let container_spec = instances::service_spec(&inner.naming, &svc, &ctx.deploy_id, &plan);
-        let info = inner.docker.run_container(&container_spec).await.map_err(|e| {
+        let info = environments::run_container(inner, &container_spec).await.map_err(|e| {
             Failure::deploy(Error::Docker(format!("starting an instance failed: {}", error_message(&e))))
         })?;
         let at = match (port, info.host_port) {
@@ -713,7 +722,7 @@ async fn start_and_swap(ctx: &Ctx, built: &Built, started: &mut Vec<(ContainerIn
     // Health checks, with the new instances' output in the deploy log.
     let timeout_secs = config.health_check_timeout_secs.max(1);
     let check = HealthCheck {
-        probe: Probe::for_service(&svc, config.default_host(&svc.name)),
+        probe: Probe::for_service(&svc, config.default_host(&svc.host_label())),
         deadline: Instant::now() + Duration::from_secs(timeout_secs),
         timeout_secs,
         container_port: port,

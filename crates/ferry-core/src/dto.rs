@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::models::{
-    ApiToken, Datastore, DatastoreKind, Deploy, Domain, EnvGroup, EnvVar, GitAuth, GitProvider, Runtime, Service,
-    ServiceState, ServiceType, User,
+    ApiToken, Datastore, DatastoreKind, Deploy, Domain, EnvGroup, EnvVar, Environment, GitAuth, GitProvider, Runtime,
+    Service, ServiceState, ServiceType, User,
 };
 
 /// `GET /api/v1/info`
@@ -79,6 +79,12 @@ pub struct ServiceView {
 #[serde(deny_unknown_fields)]
 pub struct CreateService {
     pub name: String,
+    /// The environment to create it in (id or name). Omitted = `production`.
+    /// It can't be changed later. Left out when `None`, so a client still
+    /// talks to a server older than environments (bodies reject unknown
+    /// fields).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
     #[serde(rename = "type")]
     pub service_type: Option<ServiceType>,
     pub repo_url: Option<String>,
@@ -552,6 +558,12 @@ pub struct ContainerPoint {
 pub struct CreateDatastore {
     pub name: String,
     pub kind: DatastoreKind,
+    /// The environment to create it in (id or name). Omitted = `production`.
+    /// It can't be changed later. Left out when `None`, so a client still
+    /// talks to a server older than environments (bodies reject unknown
+    /// fields).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
     /// Postgres major (default "16") / Redis major (default "7").
     pub version: Option<String>,
     /// Postgres database name (default: name with `-` → `_`).
@@ -586,6 +598,46 @@ pub struct DatastoreView {
     pub internal_url: String,
     /// Connection string from the Ferry host (published on 127.0.0.1).
     pub external_url: Option<String>,
+}
+
+/// `POST /api/v1/environments`
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateEnvironment {
+    /// The rules of service names: 1-40 lowercase letters, digits or `-`,
+    /// starting with a letter. It can't be changed later.
+    pub name: String,
+}
+
+/// The DNS records the services of an environment need under one domain of
+/// the server: `*.staging.example.com` (production's services are covered
+/// by the domain's own `*.example.com`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct EnvironmentDns {
+    /// The domain whose zone gets the records: `example.com`.
+    pub domain: String,
+    /// The names they cover: `*.staging.example.com`.
+    pub wildcard: String,
+    /// The records, named relative to the domain (`*.staging`).
+    pub records: Vec<DnsRecord>,
+}
+
+/// An environment as returned by the API (the stored row plus computed fields).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct EnvironmentView {
+    #[serde(flatten)]
+    pub environment: Environment,
+    /// Names of its services.
+    pub services: Vec<String>,
+    /// Names of its datastores.
+    pub datastores: Vec<String>,
+    /// Where a web service of this environment is found, with `<service>` in
+    /// the place of its name: `https://<service>.staging.example.com`
+    /// (`https://<service>.example.com` in `production`).
+    pub url_pattern: String,
+    /// The DNS records to create for its services, one entry per domain of
+    /// the server that is not local (none for `production`).
+    pub dns: Vec<EnvironmentDns>,
 }
 
 /// `POST /api/v1/env-groups`

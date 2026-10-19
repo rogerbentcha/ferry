@@ -128,6 +128,14 @@ pub struct DeleteQuery {
     pub restart: bool,
 }
 
+/// `?environment=` for listings.
+#[derive(Debug, Clone, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct EnvironmentQuery {
+    /// Only those of this environment (id or name). 404 when there is no such environment.
+    pub environment: Option<String>,
+}
+
 /// `?limit=` for listings.
 #[derive(Debug, Clone, Default, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]

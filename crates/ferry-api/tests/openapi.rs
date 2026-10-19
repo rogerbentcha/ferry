@@ -95,6 +95,10 @@ const ROUTES: &[(&str, &str)] = &[
     ("PATCH", "/api/v1/datastores/{id}"),
     ("DELETE", "/api/v1/datastores/{id}"),
     // env groups
+    ("GET", "/api/v1/environments"),
+    ("POST", "/api/v1/environments"),
+    ("GET", "/api/v1/environments/{id}"),
+    ("DELETE", "/api/v1/environments/{id}"),
     ("GET", "/api/v1/env-groups"),
     ("POST", "/api/v1/env-groups"),
     ("GET", "/api/v1/env-groups/{id}"),
@@ -138,6 +142,7 @@ const TAGS: &[&str] = &[
     "services",
     "deploys",
     "env",
+    "environments",
     "env-groups",
     "domains",
     "jobs",

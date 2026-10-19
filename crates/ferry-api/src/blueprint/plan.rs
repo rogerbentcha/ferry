@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 
 use ferry_core::dto::BlueprintAction;
 use ferry_core::{
-    Config, Datastore, DatastoreKind, DatastoreStatus, EnvGroup, EnvVar, Error, Result, Runtime, Service, ServiceType,
-    Store, git, ids, resources, validate,
+    Config, Datastore, DatastoreKind, DatastoreStatus, EnvGroup, EnvVar, Error, PRODUCTION, Result, Runtime, Service,
+    ServiceType, Store, git, ids, resources, validate,
 };
 
 use super::{Blueprint, DatastoreSpec, EnvVarSpec, RefTarget, ServiceSpec};
@@ -146,10 +146,41 @@ fn prefix_err(ctx: &str, e: Error) -> Error {
 }
 
 /// Validate `bp` against the current state and compute the actions. Reads
-/// the store; writes nothing.
+/// the store; writes nothing. A blueprint applies to `production`: its
+/// entries are created there, update only what is there, and their
+/// references resolve there.
 pub async fn plan(store: &Store, config: &Config, bp: &Blueprint) -> Result<Plan> {
-    let store_services = store.list_services().await?;
-    let store_datastores = store.list_datastores().await?;
+    let (all_services, all_datastores) = (store.list_services().await?, store.list_datastores().await?);
+    // An entry never takes over a resource of another environment.
+    for (kind, name, environment) in all_datastores
+        .iter()
+        .map(|d| ("datastore", &d.name, &d.environment))
+        .chain(all_services.iter().map(|s| ("service", &s.name, &s.environment)))
+        .filter(|(_, _, environment)| environment.as_str() != PRODUCTION)
+    {
+        if bp.datastores.iter().any(|d| &d.name == name) || bp.services.iter().any(|s| &s.name == name) {
+            return Err(Error::conflict(format!(
+                "'{name}': the name is used by a {kind} of environment '{environment}', and a blueprint applies to production"
+            )));
+        }
+    }
+    // A new service of production never takes an environment's name (see
+    // `checks::check_service_name_free`).
+    for s in &bp.services {
+        if !all_services.iter().any(|x| x.name == s.name)
+            && s.name != PRODUCTION
+            && store.find_environment(&s.name).await?.is_some_and(|e| e.name == s.name)
+        {
+            return Err(Error::conflict(format!(
+                "service '{0}': the name is the name of an environment (its services are served at <service>.{0}.<domain>, and that DNS record would hide {0}.<domain>)",
+                s.name
+            )));
+        }
+    }
+    // Hostnames are claimed across environments.
+    let every_service = all_services.clone();
+    let store_services: Vec<Service> = all_services.into_iter().filter(|s| s.environment == PRODUCTION).collect();
+    let store_datastores: Vec<Datastore> = all_datastores.into_iter().filter(|d| d.environment == PRODUCTION).collect();
     let store_groups = store.list_env_groups().await?;
     let mut warnings: Vec<String> = Vec::new();
 
@@ -385,7 +416,7 @@ pub async fn plan(store: &Store, config: &Config, bp: &Blueprint) -> Result<Plan
 
     // ---- custom domains & default hosts -------------------------------------------
     let blueprint_names: HashSet<&str> = bp.services.iter().map(|s| s.name.as_str()).collect();
-    let outside: Vec<&Service> = store_services.iter().filter(|s| !blueprint_names.contains(s.name.as_str())).collect();
+    let outside: Vec<&Service> = every_service.iter().filter(|s| !blueprint_names.contains(s.name.as_str())).collect();
     for (i, sp) in services.iter().enumerate() {
         let ctx = format!("service '{}'", sp.desired.name);
         let siblings: Vec<&Service> =
@@ -397,14 +428,14 @@ pub async fn plan(store: &Store, config: &Config, bp: &Blueprint) -> Result<Plan
             other => prefix_err(&ctx, other),
         };
         if sp.existing.is_none() || sp.domains_changed {
-            checks::check_domains(config, siblings.iter().copied(), &sp.desired.name, &sp.desired.custom_domains)
+            checks::check_domains(config, siblings.iter().copied(), &sp.desired, &sp.desired.custom_domains)
                 .map_err(inside)?;
-            checks::check_domains(config, outside.iter().copied(), &sp.desired.name, &sp.desired.custom_domains)
+            checks::check_domains(config, outside.iter().copied(), &sp.desired, &sp.desired.custom_domains)
                 .map_err(|e| prefix_err(&ctx, e))?;
         }
         if sp.existing.is_none() {
-            checks::check_default_host_free(config, siblings.iter().copied(), &sp.desired.name).map_err(inside)?;
-            checks::check_default_host_free(config, outside.iter().copied(), &sp.desired.name)
+            checks::check_default_host_free(config, siblings.iter().copied(), &sp.desired).map_err(inside)?;
+            checks::check_default_host_free(config, outside.iter().copied(), &sp.desired)
                 .map_err(|e| prefix_err(&ctx, e))?;
         }
     }

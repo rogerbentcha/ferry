@@ -131,18 +131,28 @@ pub(crate) async fn forget(store: &Store, deploy_ids: &[String]) {
     }
 }
 
-/// The service's effective env with every `${{…}}` reference resolved.
-/// Unresolvable references are an error.
+/// The service's effective env with every `${{…}}` reference resolved,
+/// inside the service's environment. Unresolvable references are an error,
+/// and so is one to a datastore or service of another environment.
 pub(crate) async fn resolve_user_env(inner: &Inner, svc: &Service) -> Result<Vec<EnvVar>> {
     let resolved = async {
         let user = inner.store.effective_env(&svc.id).await?;
-        let (datastores, services) = inner.store.reference_targets(&inner.config).await?;
+        check_environment(inner, svc, &user).await?;
+        let (datastores, services) = inner.store.environment_reference_targets(&inner.config, &svc.environment).await?;
         let ctx =
             RefContext { datastores: &datastores, services: &services, advertise_host: &inner.config.advertise_host };
         env::resolve_all(&user, &ctx)
     }
     .await;
     resolved.map_err(|e| Error::invalid(format!("cannot resolve environment variables: {}", error_message(&e))))
+}
+
+/// Fail when one of `vars` (variables of `svc`) references a datastore or
+/// service of another environment (`env::check_environment`).
+pub(crate) async fn check_environment(inner: &Inner, svc: &Service, vars: &[EnvVar]) -> Result<()> {
+    let datastores = inner.store.list_datastores().await?;
+    let services = inner.store.list_services().await?;
+    env::check_environment(vars, &svc.environment, &datastores, &services)
 }
 
 /// The spec of an existing deploy (reconciler, scale, resume, jobs): its

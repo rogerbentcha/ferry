@@ -139,6 +139,9 @@ pub fn router(state: AppState) -> axum::Router {
         // datastores
         .route("/v1/datastores", get(datastores::list).post(datastores::create))
         .route("/v1/datastores/{id}", get(datastores::get).patch(datastores::update).delete(datastores::delete))
+        // environments
+        .route("/v1/environments", get(environments::list).post(environments::create))
+        .route("/v1/environments/{id}", get(environments::get).delete(environments::delete))
         // env groups
         .route("/v1/env-groups", get(env_groups::list).post(env_groups::create))
         .route("/v1/env-groups/{id}", get(env_groups::get).delete(env_groups::delete))

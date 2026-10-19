@@ -1206,10 +1206,22 @@
           "datastores"
         ],
         "summary": "List datastores",
+        "description": "Every datastore with its connection info, or those of one `environment`.",
         "operationId": "listDatastores",
+        "parameters": [
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "Only those of this environment (id or name). 404 when there is no such environment.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "All datastores with their connection info.",
+            "description": "The datastores with their connection info.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1221,8 +1233,28 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1256,7 +1288,7 @@
           "datastores"
         ],
         "summary": "Create a datastore",
-        "description": "Creates the row (`creating`) and provisions the container. A failed provisioning still answers 201, with status `failed` and the reason in `error`. Datastores and services share one namespace of names. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit the container; omitted or `0` = the server default (see `GET /api/v1/info`).",
+        "description": "Creates the row (`creating`) in its `environment` (omitted: `production`) and provisions the container on that environment's private network: only its services reach it. A failed provisioning still answers 201, with status `failed` and the reason in `error`. Datastores and services share one namespace of names. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit the container; omitted or `0` = the server default (see `GET /api/v1/info`).",
         "operationId": "createDatastore",
         "requestBody": {
           "content": {
@@ -1280,7 +1312,7 @@
             }
           },
           "400": {
-            "description": "Invalid name, version, database, username or resource limits.",
+            "description": "Invalid name, version, database, username or resource limits, or an unknown environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1932,7 +1964,7 @@
             }
           },
           "409": {
-            "description": "The domain is already connected, or a service would be served at a hostname that is taken: a custom domain of another service, or the dashboard's host.",
+            "description": "The domain is already connected, or a service would be served at a hostname that is taken: a custom domain of another service, or the dashboard's host; or the DNS record of an environment under it would hide the dashboard's host.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2771,6 +2803,299 @@
         ]
       }
     },
+    "/api/v1/environments": {
+      "get": {
+        "tags": [
+          "environments"
+        ],
+        "summary": "List environments",
+        "description": "Every environment, `production` first, with the names of its services and datastores and the DNS records its services need.",
+        "operationId": "listEnvironments",
+        "responses": {
+          "200": {
+            "description": "The environments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EnvironmentView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API token, or no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server error (`docker_error` as 502, `database_error`, `internal_error`...).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "environments"
+        ],
+        "summary": "Create an environment",
+        "description": "Creates the environment and its private network. Create services and datastores in it by naming it (`environment`) when creating them. Its web services answer at `<service>.<environment>.<domain>`: for each domain of the server that is not local, create the wildcard DNS record of `dns` (`*.staging.example.com`). Names follow the rules of service names and can't be changed.",
+        "operationId": "createEnvironment",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEnvironment"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new environment, with the DNS records its services need.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API token, or no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The name is already taken, or it is the name of a service of production or the first label of the dashboard's host under a domain of the server (the environment's DNS record would hide that hostname).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Docker refused to create its network (nothing was created).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server error (`docker_error` as 502, `database_error`, `internal_error`...).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/environments/{id}": {
+      "get": {
+        "tags": [
+          "environments"
+        ],
+        "summary": "Get an environment",
+        "operationId": "getEnvironment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Environment id or name.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The environment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API token, or no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such environment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server error (`docker_error` as 502, `database_error`, `internal_error`...).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "environments"
+        ],
+        "summary": "Delete an environment",
+        "description": "Removes an empty environment and its private network. Refused while it holds services or datastores (the message lists them: delete them first), and always for `production`.",
+        "operationId": "deleteEnvironment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Environment id or name.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "description": "Missing or invalid API token, or no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such environment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It is `production`, it still holds services or datastores (the message lists them), or containers are still attached to its network.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Docker could not remove its network (the environment is kept).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server error (`docker_error` as 502, `database_error`, `internal_error`...).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/events": {
       "get": {
         "tags": [
@@ -2781,7 +3106,7 @@
         "operationId": "streamEvents",
         "responses": {
           "200": {
-            "description": "Server-Sent Events. First `event: ready` (`data: {}`) once the feed watches the store: changes after it are reported, so (re)fetch your data after `ready`. Then one `event: change` per change, whose `data` is a `ChangeEvent` JSON object `{kind, id, service_id, action}`: `kind` is `service`, `deploy`, `datastore`, `env_group`, `job`, `git_connection` or `domain`; `action` is `created`, `updated` or `deleted`; `service_id` is set for services (their own id), deploys and jobs, `null` otherwise. A subscriber that falls behind gets `{\"kind\": \"all\", \"id\": \"*\", \"service_id\": null, \"action\": \"resync\"}` and should refetch everything. `: keep-alive` comments every 15 s; the stream only ends when the server shuts down.",
+            "description": "Server-Sent Events. First `event: ready` (`data: {}`) once the feed watches the store: changes after it are reported, so (re)fetch your data after `ready`. Then one `event: change` per change, whose `data` is a `ChangeEvent` JSON object `{kind, id, service_id, action}`: `kind` is `service`, `deploy`, `datastore`, `env_group`, `job`, `git_connection`, `domain` or `environment`; `action` is `created`, `updated` or `deleted`; `service_id` is set for services (their own id), deploys and jobs, `null` otherwise. A subscriber that falls behind gets `{\"kind\": \"all\", \"id\": \"*\", \"service_id\": null, \"action\": \"resync\"}` and should refetch everything. `: keep-alive` comments every 15 s; the stream only ends when the server shuts down.",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -3975,11 +4300,22 @@
           "services"
         ],
         "summary": "List services",
-        "description": "Every service with its computed fields. The `state` of live services reflects their running instances (`degraded` when some are down), from counts refreshed at most every few seconds.",
+        "description": "Every service with its computed fields, or those of one `environment`. The `state` of live services reflects their running instances (`degraded` when some are down), from counts refreshed at most every few seconds.",
         "operationId": "listServices",
+        "parameters": [
+          {
+            "name": "environment",
+            "in": "query",
+            "description": "Only those of this environment (id or name). 404 when there is no such environment.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "All services.",
+            "description": "The services.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3991,8 +4327,28 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed request: invalid JSON body or query string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid API token, or no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4026,7 +4382,7 @@
           "services"
         ],
         "summary": "Create a service",
-        "description": "Creates the service with its own variables and env group links, then queues a first deploy (trigger `create`) when it has a repository or an image, unless `deploy` is `false`. Services and datastores share one namespace of names. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit every instance and job run of the service; omitted or `0` = the server default (see `GET /api/v1/info`).",
+        "description": "Creates the service in its `environment` (omitted: `production`) with its own variables and env group links, then queues a first deploy (trigger `create`) when it has a repository or an image, unless `deploy` is `false`. Services and datastores share one namespace of names. Outside `production` a web service answers at `<service>.<environment>.<domain>`, and its variables reference the datastores and services of its environment only. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit every instance and job run of the service; omitted or `0` = the server default (see `GET /api/v1/info`).",
         "operationId": "createService",
         "requestBody": {
           "content": {
@@ -4050,7 +4406,7 @@
             }
           },
           "400": {
-            "description": "Invalid settings (including resource limits out of range), name, variables or domains, or an unknown env group.",
+            "description": "Invalid settings (including resource limits out of range), name, variables or domains, or an unknown env group or environment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6951,6 +7307,7 @@
           "job",
           "git_connection",
           "domain",
+          "environment",
           "all"
         ]
       },
@@ -7318,6 +7675,13 @@
             ],
             "description": "Postgres database name (default: name with `-` → `_`)."
           },
+          "environment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The environment to create it in (id or name). Omitted = `production`.\nIt can't be changed later. Left out when `None`, so a client still\ntalks to a server older than environments (bodies reject unknown\nfields)."
+          },
           "kind": {
             "$ref": "#/components/schemas/DatastoreKind"
           },
@@ -7365,6 +7729,20 @@
             "items": {
               "$ref": "#/components/schemas/EnvVar"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateEnvironment": {
+        "type": "object",
+        "description": "`POST /api/v1/environments`",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The rules of service names: 1-40 lowercase letters, digits or `-`,\nstarting with a letter. It can't be changed later."
           }
         },
         "additionalProperties": false
@@ -7449,6 +7827,13 @@
               "type": "string"
             },
             "description": "Env groups to link (ids or names)."
+          },
+          "environment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The environment to create it in (id or name). Omitted = `production`.\nIt can't be changed later. Left out when `None`, so a client still\ntalks to a server older than environments (bodies reject unknown\nfields)."
           },
           "health_check_path": {
             "type": [
@@ -7593,6 +7978,10 @@
               "null"
             ],
             "description": "Postgres database name (redis: None)."
+          },
+          "environment": {
+            "type": "string",
+            "description": "The name of the environment the datastore belongs to (picked when it\nis created, never changed): only that environment's services reach it."
           },
           "error": {
             "type": [
@@ -8204,6 +8593,98 @@
           }
         },
         "additionalProperties": false
+      },
+      "Environment": {
+        "type": "object",
+        "description": "A group of services and datastores with a private network of its own\n(`production`, `staging`…): they reach each other by name, and nothing\nof another environment. Only public URLs cross.",
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique DNS-label name (the rules of service names), never changed."
+          }
+        }
+      },
+      "EnvironmentDns": {
+        "type": "object",
+        "description": "The DNS records the services of an environment need under one domain of\nthe server: `*.staging.example.com` (production's services are covered\nby the domain's own `*.example.com`).",
+        "required": [
+          "domain",
+          "wildcard",
+          "records"
+        ],
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The domain whose zone gets the records: `example.com`."
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DnsRecord"
+            },
+            "description": "The records, named relative to the domain (`*.staging`)."
+          },
+          "wildcard": {
+            "type": "string",
+            "description": "The names they cover: `*.staging.example.com`."
+          }
+        }
+      },
+      "EnvironmentView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Environment"
+          },
+          {
+            "type": "object",
+            "required": [
+              "services",
+              "datastores",
+              "url_pattern",
+              "dns"
+            ],
+            "properties": {
+              "datastores": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Names of its datastores."
+              },
+              "dns": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EnvironmentDns"
+                },
+                "description": "The DNS records to create for its services, one entry per domain of\nthe server that is not local (none for `production`)."
+              },
+              "services": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Names of its services."
+              },
+              "url_pattern": {
+                "type": "string",
+                "description": "Where a web service of this environment is found, with `<service>` in\nthe place of its name: `https://<service>.staging.example.com`\n(`https://<service>.example.com` in `production`)."
+              }
+            }
+          }
+        ],
+        "description": "An environment as returned by the API (the stored row plus computed fields)."
       },
       "GitAuth": {
         "type": "string",
@@ -9570,6 +10051,10 @@
             ],
             "description": "Dockerfile path relative to `root_dir` (default `Dockerfile`)."
           },
+          "environment": {
+            "type": "string",
+            "description": "The name of the environment the service belongs to (picked when it is\ncreated, never changed). Its instances and jobs join that\nenvironment's private network only."
+          },
           "health_check_path": {
             "type": [
               "string",
@@ -10109,6 +10594,10 @@
     {
       "name": "env",
       "description": "A service's own environment variables. `?restart=true` restarts the live service when its effective environment changed."
+    },
+    {
+      "name": "environments",
+      "description": "Environments (`production`, `staging`…): groups of services and datastores, each on a private network of its own. A service or datastore picks its environment when it is created and reaches only the datastores and services of that environment by name; outside `production` a web service answers at `<service>.<environment>.<domain>`. Only public URLs cross from one environment to another."
     },
     {
       "name": "env-groups",

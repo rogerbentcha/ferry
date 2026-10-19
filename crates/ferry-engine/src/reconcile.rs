@@ -25,6 +25,7 @@ use futures::StreamExt;
 use futures::future::join_all;
 use tracing::{debug, error, info, warn};
 
+use crate::environments;
 use crate::health::{TCP_SETTLE, tcp_accepting};
 use crate::instances::{self, STOP_GRACE_SECS};
 use crate::spec;
@@ -343,7 +344,7 @@ async fn start_missing(
     let mut started = 0;
     for _ in 0..count {
         let spec = instances::service_spec(&inner.naming, svc, &live.id, &plan);
-        match inner.docker.run_container(&spec).await {
+        match environments::run_container(inner, &spec).await {
             Ok(info) => {
                 started += 1;
                 debug!(service = %svc.name, instance = %instance_id(&info.name), "started instance");

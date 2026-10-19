@@ -25,6 +25,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0006_domains.sql"),
     include_str!("../migrations/0007_metrics.sql"),
     include_str!("../migrations/0008_requests.sql"),
+    include_str!("../migrations/0009_environments.sql"),
 ];
 
 /// Handle to the Ferry database.
@@ -79,6 +80,7 @@ fn row_to_service(r: &SqliteRow) -> Result<Service> {
     Ok(Service {
         id: r.try_get("id")?,
         name: r.try_get("name")?,
+        environment: r.try_get("environment")?,
         service_type: get_enum(r, "service_type")?,
         repo_url: r.try_get("repo_url")?,
         branch: r.try_get("branch")?,
@@ -146,6 +148,7 @@ fn row_to_datastore(r: &SqliteRow) -> Result<Datastore> {
     Ok(Datastore {
         id: r.try_get("id")?,
         name: r.try_get("name")?,
+        environment: r.try_get("environment")?,
         kind: get_enum(r, "kind")?,
         version: r.try_get("version")?,
         status: get_enum(r, "status")?,
@@ -168,6 +171,10 @@ fn row_to_env_group(r: &SqliteRow) -> Result<EnvGroup> {
         created_at: get_ts(r, "created_at")?,
         updated_at: get_ts(r, "updated_at")?,
     })
+}
+
+fn row_to_environment(r: &SqliteRow) -> Result<Environment> {
+    Ok(Environment { id: r.try_get("id")?, name: r.try_get("name")?, created_at: get_ts(r, "created_at")? })
 }
 
 fn row_to_env(r: &SqliteRow) -> Result<EnvVar> {
@@ -431,20 +438,23 @@ impl Store {
     // -----------------------------------------------------------------------
     // services
 
-    /// Insert a new service. Conflict if the name is taken by a service or datastore.
+    /// Insert a new service. Conflict if the name is taken by a service or
+    /// datastore; NotFound if its environment doesn't exist.
     pub async fn create_service(&self, s: &Service) -> Result<()> {
         if self.name_taken(&s.name).await? {
             return Err(Error::conflict(format!("name '{}' is already in use", s.name)));
         }
+        self.require_environment_named(&s.environment).await?;
         let res = sqlx::query(
-            "INSERT INTO services (id, name, service_type, repo_url, branch, image, runtime, root_dir, dockerfile_path,
-                build_command, start_command, publish_dir, port, health_check_path, schedule, instances, auto_deploy,
-                suspended, disk_mount_path, memory_limit_mb, cpu_limit, custom_domains, deploy_hook_key, live_deploy_id,
-                created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO services (id, name, environment, service_type, repo_url, branch, image, runtime, root_dir,
+                dockerfile_path, build_command, start_command, publish_dir, port, health_check_path, schedule, instances,
+                auto_deploy, suspended, disk_mount_path, memory_limit_mb, cpu_limit, custom_domains, deploy_hook_key,
+                live_deploy_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&s.id)
         .bind(&s.name)
+        .bind(&s.environment)
         .bind(s.service_type.as_str())
         .bind(&s.repo_url)
         .bind(&s.branch)
@@ -484,7 +494,8 @@ impl Store {
     /// Engine-owned columns — `instances`, `suspended` and `live_deploy_id` —
     /// are NOT written (use [`Store::set_instances`], [`Store::set_suspended`],
     /// [`Store::set_live_deploy`]), so a concurrent settings update can never
-    /// revert a scale, suspend or deploy. `name` and `id` are immutable.
+    /// revert a scale, suspend or deploy. `name`, `environment` and `id`
+    /// are immutable.
     pub async fn update_service(&self, s: &Service) -> Result<Service> {
         let res = sqlx::query(
             "UPDATE services SET service_type = ?, repo_url = ?, branch = ?, image = ?, runtime = ?, root_dir = ?,
@@ -1048,18 +1059,21 @@ impl Store {
     // -----------------------------------------------------------------------
     // datastores
 
-    /// Insert a datastore. Conflict if the name is taken by a service or datastore.
+    /// Insert a datastore. Conflict if the name is taken by a service or
+    /// datastore; NotFound if its environment doesn't exist.
     pub async fn create_datastore(&self, d: &Datastore) -> Result<()> {
         if self.name_taken(&d.name).await? {
             return Err(Error::conflict(format!("name '{}' is already in use", d.name)));
         }
+        self.require_environment_named(&d.environment).await?;
         let res = sqlx::query(
-            "INSERT INTO datastores (id, name, kind, version, status, username, password, database, host_port,
-                memory_limit_mb, cpu_limit, error, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO datastores (id, name, environment, kind, version, status, username, password, database,
+                host_port, memory_limit_mb, cpu_limit, error, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&d.id)
         .bind(&d.name)
+        .bind(&d.environment)
         .bind(d.kind.as_str())
         .bind(&d.version)
         .bind(d.status.as_str())
@@ -1157,6 +1171,121 @@ impl Store {
         if res.rows_affected() == 0 {
             return Err(Error::not_found("datastore", id));
         }
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // environments
+
+    /// Insert an environment. Conflict if the name is taken.
+    pub async fn create_environment(&self, e: &Environment) -> Result<()> {
+        let res = sqlx::query("INSERT INTO environments (id, name, created_at) VALUES (?, ?, ?)")
+            .bind(&e.id)
+            .bind(&e.name)
+            .bind(ts(&e.created_at))
+            .execute(&self.pool)
+            .await;
+        match res {
+            Ok(_) => Ok(()),
+            Err(err) if is_unique_violation(&err) => {
+                Err(Error::conflict(format!("environment '{}' already exists", e.name)))
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    /// Look up by id or name.
+    pub async fn find_environment(&self, id_or_name: &str) -> Result<Option<Environment>> {
+        sqlx::query("SELECT * FROM environments WHERE id = ?1 OR name = ?1 ORDER BY (id = ?1) DESC LIMIT 1")
+            .bind(id_or_name)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(|r| row_to_environment(&r))
+            .transpose()
+    }
+
+    /// Look up by id or name; NotFound if missing.
+    pub async fn require_environment(&self, id_or_name: &str) -> Result<Environment> {
+        self.find_environment(id_or_name).await?.ok_or_else(|| Error::not_found("environment", id_or_name))
+    }
+
+    /// The environment named `name` (never an id: rows hold names); NotFound
+    /// if missing.
+    async fn require_environment_named(&self, name: &str) -> Result<Environment> {
+        sqlx::query("SELECT * FROM environments WHERE name = ?")
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(|r| row_to_environment(&r))
+            .transpose()?
+            .ok_or_else(|| Error::not_found("environment", name))
+    }
+
+    /// Every environment: `production` first, then by name.
+    pub async fn list_environments(&self) -> Result<Vec<Environment>> {
+        sqlx::query("SELECT * FROM environments ORDER BY (name = ?) DESC, name")
+            .bind(PRODUCTION)
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(row_to_environment)
+            .collect()
+    }
+
+    /// The services and datastores of an environment (by name), each ordered
+    /// by name.
+    pub async fn environment_members(&self, environment: &str) -> Result<(Vec<Service>, Vec<Datastore>)> {
+        let services = sqlx::query("SELECT * FROM services WHERE environment = ? ORDER BY name")
+            .bind(environment)
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(row_to_service)
+            .collect::<Result<Vec<_>>>()?;
+        let datastores = sqlx::query("SELECT * FROM datastores WHERE environment = ? ORDER BY name")
+            .bind(environment)
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(row_to_datastore)
+            .collect::<Result<Vec<_>>>()?;
+        Ok((services, datastores))
+    }
+
+    /// Delete an empty environment. Conflict for `production`, or while it
+    /// holds services or datastores (the message lists them).
+    pub async fn delete_environment(&self, id: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        let env = match sqlx::query("SELECT * FROM environments WHERE id = ?").bind(id).fetch_optional(&mut *tx).await?
+        {
+            Some(row) => row_to_environment(&row)?,
+            None => return Err(Error::not_found("environment", id)),
+        };
+        if env.is_production() {
+            return Err(Error::conflict("environment 'production' can't be deleted"));
+        }
+        let mut held = Vec::new();
+        for row in sqlx::query(
+            "SELECT 'service' AS kind, name FROM services WHERE environment = ?1
+             UNION ALL SELECT 'datastore' AS kind, name FROM datastores WHERE environment = ?1
+             ORDER BY kind DESC, name",
+        )
+        .bind(&env.name)
+        .fetch_all(&mut *tx)
+        .await?
+        {
+            let (kind, name): (String, String) = (row.try_get("kind")?, row.try_get("name")?);
+            held.push(format!("{kind} '{name}'"));
+        }
+        if !held.is_empty() {
+            return Err(Error::conflict(format!(
+                "environment '{}' still holds {}: delete them first",
+                env.name,
+                held.join(", ")
+            )));
+        }
+        sqlx::query("DELETE FROM environments WHERE id = ?").bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1927,6 +2056,21 @@ impl Store {
         }
         Ok((datastores, refs))
     }
+
+    /// [`Store::reference_targets`] for a service of `environment`: only the
+    /// datastores and services of that environment (references resolve
+    /// inside it, see [`crate::env::check_environment`]).
+    pub async fn environment_reference_targets(
+        &self,
+        config: &Config,
+        environment: &str,
+    ) -> Result<(Vec<Datastore>, Vec<ServiceRef>)> {
+        let (mut datastores, mut refs) = self.reference_targets(config).await?;
+        datastores.retain(|d| d.environment == environment);
+        let (services, _) = self.environment_members(environment).await?;
+        refs.retain(|r| services.iter().any(|s| s.name == r.name));
+        Ok((datastores, refs))
+    }
 }
 
 #[cfg(test)]
@@ -2673,7 +2817,7 @@ mod tests {
         }
         let store = Store::open(&path).await.unwrap();
         let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(store.pool()).await.unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, MIGRATIONS.len() as i64);
         assert_eq!(store.metrics_history(t, t, 10).await.unwrap().0.len(), 1, "the host's readings are kept");
         assert_eq!(store.request_history(t, t, 10).await.unwrap(), vec![]);
         store.insert_requests(t, &[requests("srv-1", "web", 3, 0, 5)]).await.unwrap();
@@ -2740,6 +2884,117 @@ mod tests {
         let entries = store.request_history(secs(0), secs(180), 10).await.unwrap();
         let steps: Vec<_> = entries.iter().map(|(at, r)| (at.timestamp() - t0, r.target.as_str())).collect();
         assert_eq!(steps, [(0, "dashboard"), (0, srv1), (0, srv2), (10, srv1), (120, srv1), (130, srv1)]);
+    }
+
+    /// A database written before environments (schema v8) puts every
+    /// service and datastore in `production`, which it creates, and keeps
+    /// everything else.
+    #[tokio::test]
+    async fn upgrades_a_database_without_environments() {
+        use sqlx::Connection;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ferry.db");
+        {
+            let opts = SqliteConnectOptions::new().filename(&path).create_if_missing(true).foreign_keys(true);
+            let mut conn = sqlx::SqliteConnection::connect_with(&opts).await.unwrap();
+            for sql in &MIGRATIONS[..8] {
+                sqlx::raw_sql(sql).execute(&mut conn).await.unwrap();
+            }
+            sqlx::raw_sql(
+                "PRAGMA user_version = 8;
+                 INSERT INTO services (id, name, service_type, image, deploy_hook_key, live_deploy_id, created_at, updated_at)
+                 VALUES ('srv-00000000000000000001', 'web', 'web_service', 'nginx', 'k', 'dep-00000000000000000001',
+                         '2026-01-01T00:00:00.000000Z', '2026-01-01T00:00:00.000000Z'),
+                        ('srv-00000000000000000002', 'api', 'private_service', 'nginx', 'k', NULL,
+                         '2026-01-01T00:00:00.000000Z', '2026-01-01T00:00:00.000000Z');
+                 INSERT INTO datastores (id, name, kind, version, status, username, password, host_port, created_at, updated_at)
+                 VALUES ('dbs-00000000000000000001', 'db', 'postgres', '16', 'available', 'db', 'pw', 5555,
+                         '2026-01-01T00:00:00.000000Z', '2026-01-01T00:00:00.000000Z');",
+            )
+            .execute(&mut conn)
+            .await
+            .unwrap();
+            conn.close().await.unwrap();
+        }
+        let store = Store::open(&path).await.unwrap();
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(store.pool()).await.unwrap();
+        assert_eq!(version, MIGRATIONS.len() as i64);
+        let envs = store.list_environments().await.unwrap();
+        assert_eq!(envs.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["production"]);
+        assert!(crate::ids::has_prefix(&envs[0].id, crate::ids::ENVIRONMENT), "{}", envs[0].id);
+        let web = store.require_service("web").await.unwrap();
+        assert_eq!(
+            (web.environment.as_str(), web.live_deploy_id.as_deref()),
+            ("production", Some("dep-00000000000000000001"))
+        );
+        // Its hostnames and URL don't change.
+        assert_eq!(Config::default().service_url(&web).unwrap(), "http://web.localhost:8080");
+        let db = store.require_datastore("db").await.unwrap();
+        assert_eq!((db.environment.as_str(), db.host_port), ("production", Some(5555)));
+        let (services, datastores) = store.environment_members("production").await.unwrap();
+        assert_eq!(services.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["api", "web"]);
+        assert_eq!(datastores.len(), 1);
+        // Reopening applies nothing twice.
+        store.pool().close().await;
+        let store = Store::open(&path).await.unwrap();
+        assert_eq!(store.list_environments().await.unwrap(), envs);
+    }
+
+    #[tokio::test]
+    async fn environments_hold_services_and_datastores() {
+        let store = Store::open_in_memory().await.unwrap();
+        let production = store.require_environment("production").await.unwrap();
+        assert!(production.is_production());
+        let staging = Environment::new("staging");
+        store.create_environment(&staging).await.unwrap();
+        assert!(matches!(store.create_environment(&Environment::new("staging")).await, Err(Error::Conflict(_))));
+        assert_eq!(store.require_environment(&staging.id).await.unwrap(), staging);
+        let names: Vec<_> = store.list_environments().await.unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["production", "staging"], "production first");
+
+        // Created in an environment, which must exist.
+        let mut shop = Service::new("shop", ServiceType::WebService);
+        shop.environment = "staging".into();
+        store.create_service(&shop).await.unwrap();
+        let mut shop_db = Datastore::new("shop-db", DatastoreKind::Postgres);
+        shop_db.environment = "staging".into();
+        store.create_datastore(&shop_db).await.unwrap();
+        assert_eq!(store.require_service("shop").await.unwrap().environment, "staging");
+        let mut lost = Service::new("lost", ServiceType::WebService);
+        lost.environment = "qa".into();
+        assert!(matches!(store.create_service(&lost).await, Err(Error::NotFound(_))));
+        // A row holds the name, never the id.
+        lost.environment = staging.id.clone();
+        assert!(matches!(store.create_service(&lost).await, Err(Error::NotFound(_))));
+        let mut lost_db = Datastore::new("lost-db", DatastoreKind::Redis);
+        lost_db.environment = "qa".into();
+        assert!(matches!(store.create_datastore(&lost_db).await, Err(Error::NotFound(_))));
+        // A name is still unique per server.
+        let mut web = Service::new("shop", ServiceType::WebService);
+        web.environment = "production".into();
+        assert!(matches!(store.create_service(&web).await, Err(Error::Conflict(_))));
+        // Settings updates never move a service.
+        let mut moved = store.require_service("shop").await.unwrap();
+        moved.environment = "production".into();
+        assert_eq!(store.update_service(&moved).await.unwrap().environment, "staging");
+
+        // References resolve inside the environment.
+        store.create_service(&Service::new("api", ServiceType::PrivateService)).await.unwrap();
+        let (dss, refs) = store.environment_reference_targets(&Config::default(), "staging").await.unwrap();
+        assert_eq!(dss.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["shop-db"]);
+        assert_eq!(refs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["shop"]);
+        assert_eq!(refs[0].public_url.as_deref(), Some("http://shop.staging.localhost:8080"));
+
+        // Deleted only once empty; production never.
+        let e = store.delete_environment(&staging.id).await.unwrap_err().to_string();
+        assert!(e.contains("still holds service 'shop', datastore 'shop-db'"), "{e}");
+        let e = store.delete_environment(&production.id).await.unwrap_err();
+        assert!(matches!(&e, Error::Conflict(m) if m.contains("can't be deleted")), "{e:?}");
+        store.delete_service(&shop.id).await.unwrap();
+        store.delete_datastore(&shop_db.id).await.unwrap();
+        store.delete_environment(&staging.id).await.unwrap();
+        assert!(store.find_environment("staging").await.unwrap().is_none());
+        assert!(matches!(store.delete_environment(&staging.id).await, Err(Error::NotFound(_))));
     }
 
     #[tokio::test]
