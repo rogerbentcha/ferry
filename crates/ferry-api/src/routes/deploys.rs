@@ -13,7 +13,9 @@ use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 
 use crate::error::{ApiError, ApiResult};
-use crate::extract::{ApiJson, ApiPath, ApiQuery, FollowQuery, LimitQuery, de_flag};
+use crate::extract::{ApiJson, ApiPath, ApiQuery, FollowQuery, LimitQuery, ScopeQuery, de_flag};
+use crate::lookup;
+use crate::routes::services::SERVICE_ID;
 use crate::{AppState, UPLOAD_LIMIT, sse};
 
 /// `GET /api/v1/services/{id}/deploys?limit=20` (newest first)
@@ -24,18 +26,19 @@ use crate::{AppState, UPLOAD_LIMIT, sse};
     operation_id = "listDeploys",
     summary = "List a service's deploys",
     description = "Newest first.",
-    params(("id" = String, Path, description = "Service id or name."), LimitQuery),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery, LimitQuery),
     responses(
         (status = 200, description = "The deploys, newest first.", body = [Deploy]),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
     ),
 )]
 pub async fn list(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
     ApiQuery(q): ApiQuery<LimitQuery>,
 ) -> ApiResult<Json<Vec<Deploy>>> {
-    let svc = st.store.require_service(&id).await?;
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     Ok(Json(st.store.list_deploys(&svc.id, q.get()).await?))
 }
 
@@ -47,21 +50,22 @@ pub async fn list(
     operation_id = "triggerDeploy",
     summary = "Deploy a service",
     description = "Queues a manual deploy of the configured source: the branch head (or `commit`) of the repository, or the image. An empty body deploys with the defaults.",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     request_body = TriggerDeploy,
     responses(
         (status = 202, description = "The deploy, queued.", body = Deploy),
         (status = 400, description = "Invalid commit, a commit for a service that doesn't deploy from git, or no source to deploy.", body = ApiErrorBody),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
         (status = 409, description = "The service is suspended or being deleted, or the server is shutting down.", body = ApiErrorBody),
     ),
 )]
 pub async fn trigger(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
     ApiJson(req): ApiJson<TriggerDeploy>,
 ) -> ApiResult<(StatusCode, Json<Deploy>)> {
-    let svc = st.store.require_service(&id).await?;
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     let commit = req.commit.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
     if let Some(c) = &commit {
         validate::commit(c)?;
@@ -168,7 +172,7 @@ fn not_gzip() -> ApiError {
     operation_id = "uploadDeploy",
     summary = "Deploy uploaded source code",
     description = "Deploys a `.tar.gz` of the source tree (what `ferry up` sends) to a service without a repository or image; the deploy has trigger `upload` and an `archive` source.",
-    params(("id" = String, Path, description = "Service id or name."), UploadQuery),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery, UploadQuery),
     request_body(
         content = inline(crate::openapi::SourceArchive),
         content_type = "application/gzip",
@@ -177,7 +181,7 @@ fn not_gzip() -> ApiError {
     responses(
         (status = 202, description = "The deploy, queued.", body = Deploy),
         (status = 400, description = "The body isn't a gzip archive.", body = ApiErrorBody),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
         (status = 409, description = "The service deploys from a repository or an image: clear its source first.", body = ApiErrorBody),
         (status = 413, description = "The archive exceeds 512 MiB.", body = ApiErrorBody),
     ),
@@ -185,10 +189,11 @@ fn not_gzip() -> ApiError {
 pub async fn upload(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
     ApiQuery(q): ApiQuery<UploadQuery>,
     req: Request,
 ) -> ApiResult<(StatusCode, Json<Deploy>)> {
-    let svc = st.store.require_service(&id).await?;
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     // The next plain deploy would silently switch back to the configured
     // source, and the service would keep reporting it while running the upload.
     let source = match (&svc.image, &svc.repo_url) {

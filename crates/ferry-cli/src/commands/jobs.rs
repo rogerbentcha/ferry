@@ -28,7 +28,7 @@ pub fn job_command(args: &[String]) -> Option<String> {
 
 pub async fn run(ctx: &Ctx, name: &str, args: &[String], follow: bool) -> Result<()> {
     let body = RunJobRequest { command: job_command(args) };
-    let resp = ctx.client.post::<_, JobRun>(&["services", name, "jobs"], &[], &body).await?;
+    let resp = ctx.client.post::<_, JobRun>(&["services", name, "jobs"], &ctx.scope(), &body).await?;
     let j = &resp.data;
     if follow {
         if !ctx.json {
@@ -45,7 +45,10 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String], follow: bool) -> Result
 }
 
 pub async fn list(ctx: &Ctx, name: &str, limit: u32) -> Result<()> {
-    let resp = ctx.client.get::<Vec<JobRun>>(&["services", name, "jobs"], &[("limit", limit.to_string())]).await?;
+    let resp = ctx
+        .client
+        .get::<Vec<JobRun>>(&["services", name, "jobs"], &ctx.scope_and(&[("limit", limit.to_string())]))
+        .await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
@@ -76,7 +79,7 @@ pub async fn cancel(ctx: &Ctx, job_id: &str) -> Result<()> {
     if job.status.is_terminal() {
         bail!("job {} already finished ({}): nothing to cancel", job.id, job.status);
     }
-    let resp = match ctx.client.post_empty::<JobRun>(&["jobs", &job.id, "cancel"]).await {
+    let resp = match ctx.client.post_empty::<JobRun>(&["jobs", &job.id, "cancel"], &[]).await {
         Ok(r) => r,
         Err(e) => {
             let status = e.chain().find_map(|c| c.downcast_ref::<ApiError>()).map(|a| a.status);

@@ -154,7 +154,8 @@ pub(crate) async fn sample(
     let changes = sampler.since_last(&totals);
     let mut rows = Vec::with_capacity(changes.len());
     if !changes.is_empty() {
-        let names: HashMap<String, String> = store.list_services().await?.into_iter().map(|s| (s.id, s.name)).collect();
+        let names: HashMap<String, String> =
+            store.list_services().await?.into_iter().map(|s| (s.id.clone(), s.qualified_name())).collect();
         for (target, counts) in changes {
             let target = target_id(target);
             // A service deleted since: its id stands for its name.
@@ -181,7 +182,7 @@ pub(crate) async fn totals(store: &Store, stats: &RequestStats) -> Vec<TargetReq
     let names: HashMap<String, String> = match services.then(|| store.list_services()) {
         None => HashMap::new(),
         Some(listed) => match listed.await {
-            Ok(services) => services.into_iter().map(|s| (s.id, s.name)).collect(),
+            Ok(services) => services.into_iter().map(|s| (s.id.clone(), s.qualified_name())).collect(),
             Err(e) => {
                 warn!("GET /metrics: the services' names can't be read, their ids stand for them: {e}");
                 HashMap::new()

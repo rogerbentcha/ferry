@@ -171,7 +171,7 @@ pub(crate) struct Plan {
 /// Container spec of one instance.
 pub(crate) fn service_spec(naming: &Naming, svc: &Service, deploy_id: &str, plan: &Plan) -> ContainerSpec {
     let mut spec = ContainerSpec {
-        name: naming.service_container(&svc.name, deploy_id, &ids::random_secret(6)),
+        name: naming.service_container(&svc.qualified_name(), deploy_id, &ids::random_secret(6)),
         image: plan.image.clone(),
         env: plan.env.clone(),
         cmd: plan.cmd.clone(),
@@ -346,6 +346,8 @@ mod tests {
         let spec = service_spec(&naming, &shop, deploy_id, &plan);
         assert_eq!(spec.network.as_deref(), Some("ferry-env-staging"));
         assert_eq!(spec.network_aliases, vec!["web"]);
+        // Its containers carry the environment: never one of production's `web`.
+        assert!(spec.name.starts_with("ferry-web.staging-cdef4567-"), "{}", spec.name);
     }
 
     #[tokio::test]

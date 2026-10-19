@@ -271,8 +271,8 @@ pub struct RequestMetrics {
     /// A service id; `dashboard` for the dashboard's host; `unrouted` for a
     /// host no service has (and the requests without a valid host).
     pub target: String,
-    /// The service's name (its last one in the range); the target itself
-    /// for `dashboard` and `unrouted`.
+    /// The service's qualified name (`api`, `api.staging`; its last one in
+    /// the range); the target itself for `dashboard` and `unrouted`.
     pub name: String,
     /// The requests per second, on average over the time.
     pub requests_per_sec: f64,
@@ -343,7 +343,8 @@ pub struct ContainerMetrics {
     pub kind: ContainerKind,
     /// Id of the service or datastore.
     pub id: String,
-    /// Name of the service or datastore.
+    /// Qualified name of the service or datastore: `api` in production,
+    /// `api.staging` elsewhere.
     pub name: String,
     /// The instance, as in the logs (last 6 characters of the container
     /// name). `null` for a datastore: it has one container.
@@ -533,7 +534,7 @@ pub struct ContainerSeries {
     pub kind: ContainerKind,
     /// Id of the service or datastore.
     pub id: String,
-    /// Its name when it was last read.
+    /// Its qualified name (`api`, `api.staging`) when it was last read.
     pub name: String,
     /// The instance, as in the logs; `null` for a datastore.
     pub instance: Option<String>,
@@ -655,7 +656,8 @@ pub struct EnvGroupView {
     #[serde(flatten)]
     pub group: EnvGroup,
     pub vars: Vec<EnvVar>,
-    /// Names of linked services.
+    /// Qualified names of linked services (`api`, `api.staging`): env
+    /// groups are server-wide.
     pub services: Vec<String>,
 }
 
@@ -871,8 +873,8 @@ pub struct GitConnectionView {
     /// to set up on a repository. `false` for the other kinds of connection.
     #[serde(default)]
     pub push_events: bool,
-    /// Names of the services whose repository is cloned with this
-    /// connection.
+    /// Qualified names (`api`, `api.staging`) of the services whose
+    /// repository is cloned with this connection.
     pub services: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

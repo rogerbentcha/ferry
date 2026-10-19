@@ -136,6 +136,16 @@ pub struct EnvironmentQuery {
     pub environment: Option<String>,
 }
 
+/// `?environment=` on the routes of one service or datastore: names are
+/// unique in an environment only (DESIGN.md §23).
+#[derive(Debug, Clone, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ScopeQuery {
+    /// The environment (id or name) of the service or datastore the path names. Omitted = `production`. With an
+    /// id in the path, the environment must be that one's. 404 when there is no such environment.
+    pub environment: Option<String>,
+}
+
 /// `?limit=` for listings.
 #[derive(Debug, Clone, Default, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]

@@ -29,7 +29,7 @@ code).
 | Manual deploy, deploy hooks (secret URL) | ✅ `/hooks/deploy/{id}?key=` |
 | Env vars, secret files → env vars, environment groups | ✅ env vars + env groups (no secret files) |
 | Private network (`service-name:port`) | ✅ user-defined Docker bridge + DNS aliases, one per environment |
-| Environments (staging next to production) | ✅ environments (§23): a private network each, `<service>.<env>.<domain>`; no projects above them |
+| Environments (staging next to production) | ✅ environments (§23): a private network each, the same service and datastore names in each, `<service>.<env>.<domain>`; no projects above them |
 | Managed Postgres, Key Value (Redis) | ✅ containers + volumes, internal & external URLs |
 | Persistent disks | ✅ named volume, recreate deploys, 1 instance |
 | Custom domains + free TLS | ✅ ACME HTTP-01 (Let's Encrypt) |
@@ -111,14 +111,32 @@ Leaf crates must not depend on each other beyond this table.
 
 ## 4. Docker resource naming & labels
 
-Always use `ferry_core::Naming` (from `config.naming()`):
+Always use `ferry_core::Naming` (from `config.naming()`). A service or
+datastore is named by its **qualified name** `{q}`
+(`Service::qualified_name`, `Datastore::qualified_name`): its name in
+`production`, `<name>.<environment>` elsewhere — the same form as its
+hostnames (§23). Names are unique in their environment only (§23), so the
+same `api` in two environments needs two of everything:
 
-* images `"{prefix}/{service}:{deploy_id}"`; service containers
-  `"{prefix}-{service}-{deploy_short}-{rand6}"`; jobs `"{prefix}-job-{service}-{job_short}"`;
-  datastores `"{prefix}-ds-{name}"` with volume `"{prefix}-ds-{name}-data"`;
-  service disks `"{prefix}-svc-{service_id}-disk"`; networks `"{prefix}"`
-  (`production`) and `"{prefix}-env-{environment}"` (the others). Names stay
-  unique per server (§23), so no other name carries the environment.
+| Resource | Name | `api` / `db` of `production` | of `staging` |
+|---|---|---|---|
+| image | `{prefix}/{q}:{deploy_id}` | `ferry/api:dep-…` | `ferry/api.staging:dep-…` |
+| service container | `{prefix}-{q}-{deploy_short}-{rand6}` | `ferry-api-1a2b3c4d-9f8e7d` | `ferry-api.staging-1a2b3c4d-9f8e7d` |
+| job container | `{prefix}-job-{q}-{job_short}` | `ferry-job-api-5e6f7a8b` | `ferry-job-api.staging-5e6f7a8b` |
+| datastore container | `{prefix}-ds-{q}` | `ferry-ds-db` | `ferry-ds-db.staging` |
+| datastore volume | `{prefix}-ds-{q}-data` | `ferry-ds-db-data` | `ferry-ds-db.staging-data` |
+| service disk | `{prefix}-svc-{service_id}-disk` | by id | by id |
+| network | `{prefix}` (`production`), `{prefix}-env-{environment}` | `ferry` | `ferry-env-staging` |
+
+* `production` keeps the names of a server set up before environments: an
+  upgrade renames nothing and restarts nothing.
+* The environment is joined with a `.`, which names never hold: a `-` join
+  would mix up `db` of `qa-1` and `1-db` of `qa` (`ferry-ds-qa-1-db`), or
+  `db` of `staging` and `staging-db` of production. Docker accepts the `.`
+  in container, volume and image names
+  (`naming::tests::names_never_clash_across_environments`).
+* The private hostname (network alias) stays the plain name: each
+  environment has a network of its own (§3).
 * Labels: `ferry.managed=true`, `ferry.instance={prefix}`, `ferry.role=service|job|datastore`,
   `ferry.service`, `ferry.deploy`, `ferry.job`, `ferry.datastore`. The engine
   only ever lists/touches containers whose `ferry.instance` equals its prefix.
@@ -393,9 +411,19 @@ carry an API token as
 `Authorization: Bearer <token>` (GET requests may use `?access_token=<token>`
 instead: EventSource can't set headers) or the dashboard's session cookie.
 The account's own operations (`/api/v1/auth/...`) only take the session.
-Errors: `ApiErrorBody` with `Error::status()`. `{id}` = id or name. JSON
-bodies; 404 JSON for unknown `/api` routes (behind the authentication, like
-every `/api` path).
+Errors: `ApiErrorBody` with `Error::status()`. `{id}` = id or name. On
+the routes of one service or datastore (`/api/v1/services/{id}/…`,
+`/api/v1/datastores/{id}`) a name is looked up in the environment of
+`?environment=` (`ScopeQuery`, an environment id or name; omitted:
+`production`, so a client older than environments keeps working) — names
+are unique in an environment only (§23). An id finds its resource in any
+environment, unless `environment` names another (404); an unknown
+environment is a 404 (`lookup.rs`). A name looked up in `production` that
+only other environments use answers a 404 that names them: `service 'shop'
+not found in environment 'production' (environment 'staging' has one):
+name its environment, e.g. --environment staging in the CLI or
+?environment=staging in the API`. JSON bodies; 404 JSON for unknown `/api`
+routes (behind the authentication, like every `/api` path).
 
 **OpenAPI.** Every handler carries a `#[utoipa::path]` (method, path, tag,
 params, bodies, responses with `ApiErrorBody` errors); `openapi::ApiDoc`
@@ -495,8 +523,9 @@ routes and checks that the document, the router and `lib.rs` agree.
 | `POST /hooks/github` | GitHub webhook. A delivery is signed with the webhook secret of a GitHub App registered for this server (§18: nothing was set up on the repository) or with the server's `github_webhook_secret` (a webhook added to a repository by hand); 404 while neither exists; verify `X-Hub-Signature-256` against each of them (HMAC-SHA256, constant-time) → 401; `ping` → 200; `push` → deploy (trigger `webhook`, commit = `after`) every service with `auto_deploy`, matching `git::normalize_repo_url` of `repository.clone_url`/`ssh_url`/`html_url`, and `refs/heads/<branch>`; deleted-branch pushes ignored → 200 `{"deploys": [...]}` |
 
 Name rules: `validate::resource_name` for services/datastores (names shared
-between both, unique per server whatever their environment; id-shaped
-names are rejected) and environments (`validate::environment_name`, the
+between both and unique in their environment — `Store::name_taken_in`, a
+unique index on `(environment, name)` —, another environment may use the
+same ones; id-shaped names are rejected) and environments (`validate::environment_name`, the
 same rules), `validate::env_group_name`,
 `validate::env_vars` (32 KiB per value, 256 KiB per owner, also checked on
 the merged service + linked groups). Resource limits (`memory_limit_mb` /
@@ -615,17 +644,23 @@ services:
   also take the row locks of the existing datastores they name.
   Services with neither repo nor image produce a warning ("deploy with `ferry up <name>`").
 * A blueprint applies to `production` (§23): its entries are created there,
-  update what is there, and their references resolve there. An entry whose
-  name is a service or datastore of another environment is a Conflict
-  (`'shop': the name is used by a service of environment 'staging', and a
-  blueprint applies to production`). Render's `projects[].environments[]`
-  stay flattened (with a warning).
+  update what is there, and their references resolve there. Another
+  environment's services and datastores of the same names are left alone
+  (their custom domains still count as taken). Render's
+  `projects[].environments[]` stay flattened (with a warning).
 * Blueprints don't mention git connections (§18): a service's `repo` is
   cloned with the connection of the server that serves it, like any other
   service's.
 * `dry_run: true` computes the same result without writing anything.
 
 ## 12. CLI (`ferry`)
+
+Every command that names a service or datastore takes `--environment ENV`
+(id or name): the environment its name is looked up in (`?environment=`,
+§10), production when omitted — a script written before environments keeps
+deploying production's `api`. `create`, `up` and `db create` also create in
+it; the commands Ferry suggests afterwards carry it
+(`ferry restart api --environment staging`).
 
 Config: `~/.config/ferry/config.json` `{server, token}` (0600), written by
 `ferry login`. Overrides:
@@ -655,7 +690,8 @@ ferry deploy NAME [--commit SHA] [--clear-cache] [--follow]        # follow = st
 ferry up [NAME] [--dir .] [--type web] [--environment ENV] [settings flags of create, incl. --memory/--cpu] [-e K=V]...
          [--env-group G]... [--clear-cache] [--follow]
       # tar.gz the directory (respect .gitignore/.ferryignore; skip .git, node_modules, target, .venv),
-      # create the service if missing (type/runtime auto), upload → deploy; NAME defaults to dir name
+      # create the service if missing from the environment (type/runtime auto), upload → deploy;
+      # NAME defaults to dir name
 ferry deploys NAME
 ferry cancel DEPLOY_ID
 ferry rollback NAME DEPLOY_ID
@@ -794,6 +830,18 @@ Rust build never runs Node.
   toolbar filters by it (kept with its other view preferences,
   `ferry.services-view`). The Variables tab only offers
   references to the datastores and services of the service's environment.
+  Names are unique in an environment only, so the dashboard names a
+  service or datastore by its **qualified name** (`src/lib/api/refs.ts`
+  `qualifiedName`: `api`, `api.staging`) or its id: the `:name` of
+  `/services/:name/…` and `/datastores/:name` (`/services/api.staging/deploys`;
+  production's URLs don't change), the key of its cached views, and the
+  `ref` of every endpoint, which `splitRef` turns into the name in the path
+  and `?environment=` (`endpoints.ts` `resourcePath`; `buildUrl` keeps that
+  query and adds the others). References in a service's variables are
+  looked up in its environment (`findInEnvironment`); server-wide lists
+  (env groups, git connections, metrics) hold qualified names. The `ferry`
+  commands the dashboard suggests add `--environment` outside production
+  (`cliName`).
 * **Monitoring in the UI** (§22): Server → Monitoring
   (`?section=monitoring`) asks `GET /api/v1/server/metrics` every 5 s
   (`useServerMetrics`; TanStack Query stops asking while the tab is
@@ -1229,6 +1277,17 @@ ancestor cgroup, e.g. `system.slice`, has one too).
   migration, the delete rules, the hostnames and the reference error are
   tested without Docker (`ferry-core` store, config and env tests,
   `ferry-engine/src/tests.rs`, `ferry-api/tests/environments.rs`).
+  The same names in two environments: `the_same_names_run_in_two_environments`
+  (e2e) runs `api` and `db` in both, checks their own containers, volumes,
+  images and hostnames, and that a job of each environment reaches its own
+  `api` and `db` by name (the redis password tells them apart); without
+  Docker, the store (`same_names_in_every_environment`, the v10 migration
+  keeping deploys and job runs), `Naming` (no two Docker names alike),
+  the engine (routes and resolved references per environment),
+  `ferry-api/tests/same_names.rs` (create, `?environment=`, the production
+  default, references and deletes, deploy hooks, blueprints), the OpenAPI
+  test (every route of one service or datastore documents `environment`)
+  and `ferry-cli/tests/cli.rs` (every name-taking command sends it).
 * The background commands of `ferryd` (§19) are tested on the real binary
   in `ferryd/tests/background.rs`: without Docker, a start that fails
   before the server listens (its error reaches the terminal, exit code 1)
@@ -2025,7 +2084,8 @@ its own start): `rate()` over them gives the live view's rates, and the
 Monitoring page's CPU % is
 `100 × (1 − rate(idle + iowait) / rate(all modes))`. `target` is the service id,
 `dashboard` or `unrouted` (a service may be named either), `name` its
-name. The label of an instance is `instance_id`, not `instance`:
+qualified name (`api`, `api.staging`: §23, the same name in two
+environments stays two series). The label of an instance is `instance_id`, not `instance`:
 Prometheus gives every series it collects an `instance` label (the
 target's address) and would rename ours `exported_instance`. Limits are
 not published: the 10 s reading does not inspect the containers. A value
@@ -2051,7 +2111,8 @@ to it (`staging`, `qa`…). Its containers reach each other by name; nothing
 of another environment does, except through public URLs. One server runs
 staging and production side by side.
 
-**Data model** (migration `0009_environments.sql`). `Environment { id
+**Data model** (migrations `0009_environments.sql`,
+`0010_names_per_environment.sql`). `Environment { id
 (env-…), name (unique, the rules of service names), created_at }`.
 `Service.environment` and `Datastore.environment` hold the *name* of their
 environment (environments are never renamed): picked when the resource is
@@ -2064,10 +2125,21 @@ create — NotFound — and refuses to delete one that holds anything).
 `production` keeps the network, Docker names and hostnames of a server set
 up before environments: an upgrade restarts nothing and changes no URL.
 
-**Names.** A service or datastore name is still unique per server
-(`Store::name_taken`): the private name of a service is its name in every
-environment, and only the network differs. A service of `production` and
-another environment never share a name (`checks::check_environment_name_free`
+**Names.** A service or datastore name is unique in its environment, not
+on the server (`Store::name_taken_in`, a unique index on `(environment,
+name)`; migration 10 rebuilt both tables without the old `UNIQUE` on
+`name`, with foreign keys off — `Store::migrate` — so deploys, job runs
+and links stay): staging runs `api`, `web` and `db` with the same names
+and settings as production. Twice in one environment is a Conflict: `name
+'api' is already in use in environment 'staging'`. A name is looked up in
+one environment: `?environment=` on the API (§10), `--environment` in the
+CLI (§12), the qualified name in the dashboard's URLs (§13); without one,
+`production` (`Store::find_service` / `find_datastore`, kept for that;
+`find_service_in` / `find_datastore_in` take the environment). Docker names
+carry the environment outside production (§4). Server-wide lists name
+services by qualified name (`api.staging`): env group views, git
+connection views, the metrics and their history (§22, the `name` label of
+`/metrics`). A service of `production` and another environment never share a name (`checks::check_environment_name_free`
 / `check_service_name_free`, also for blueprints): once
 `*.staging.<domain>` exists, `staging.<domain>` exists in DNS without a
 record of its own and the domain's `*.<domain>` stops answering for it
@@ -2112,8 +2184,12 @@ and `ferry environments create` show. Local domains need nothing:
 
 **References.** A `${{datastore.NAME…}}` / `${{service.NAME…}}` reference
 resolves inside the environment of the service that uses it
-(`Store::environment_reference_targets`); env groups stay server-wide and
-their references follow the service using them. One to a datastore or
+(`Store::environment_reference_targets`: that environment's datastores and
+services only, so `${{datastore.db.connectionString}}` gives each
+environment's `web` its own `db`); env groups stay server-wide and
+their references follow the service using them. Deleting a service or
+datastore is held back only by the references of its own environment
+(`checks::referencing_services`). One to a datastore or
 service of another environment fails the deploy before anything is built or
 pulled (`env::check_environment`): `cannot resolve environment variables:
 env var DATABASE_URL: datastore 'db' is not in environment 'staging' (it is
@@ -2130,8 +2206,7 @@ datastore 'shop-db': delete them first` — under the names lock (§10).
 **Changes** reach the dashboard through the change feed (kind
 `environment`, §10).
 
-Not covered: the same name in two environments (LAB-26); renaming an
-environment or moving a service to another one; copying an environment;
+Not covered: renaming an environment or moving a service to another one; copying an environment;
 promoting a deploy from staging to production; blueprint `environments:`
 sections; who may see or change which environment; CPU or memory limits per
 environment; the published ports of §15.

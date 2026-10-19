@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use ferry_core::dto::{RuntimeStatus, ServiceView};
 use ferry_core::{ServiceState, ServiceType};
 
-use super::{Ctx, follow_deploy, follow_job, print_log_event};
+use super::{Ctx, environment_flag, follow_deploy, follow_job, print_log_event};
 use crate::cli::LogsArgs;
 use crate::client::ApiError;
 use crate::output::{self, Color, errln};
@@ -41,13 +41,15 @@ async fn replay(ctx: &Ctx, segments: &[&str]) -> Result<()> {
 /// Why a service has no runtime output, and where to look instead.
 pub fn no_instances_hint(v: &ServiceView, follow: bool) -> String {
     let n = &v.service.name;
+    // The commands to suggest name its environment.
+    let c = &format!("{n}{}", environment_flag(&v.service.environment));
     let mut hint = if v.service.service_type == ServiceType::CronJob {
         return format!(
             "'{n}' is a cron job: it has no long-running instances, each run has its own log. \
-             List runs with 'ferry jobs {n}', then use 'ferry logs --job JOB_ID'"
+             List runs with 'ferry jobs {c}', then use 'ferry logs --job JOB_ID'"
         );
     } else if v.state == ServiceState::Suspended {
-        format!("'{n}' is suspended, so nothing is running. Resume it with 'ferry resume {n}'")
+        format!("'{n}' is suspended, so nothing is running. Resume it with 'ferry resume {c}'")
     } else {
         match &v.latest_deploy {
             None => format!("'{n}' has no running instances: it has never been deployed"),
@@ -64,7 +66,7 @@ pub fn no_instances_hint(v: &ServiceView, follow: bool) -> String {
                 )
             }
             Some(_) => format!(
-                "'{n}' has no running instances (state: {}). Check 'ferry status {n}' and 'ferry deploys {n}'",
+                "'{n}' has no running instances (state: {}). Check 'ferry status {c}' and 'ferry deploys {c}'",
                 v.state
             ),
         }
@@ -78,11 +80,11 @@ pub fn no_instances_hint(v: &ServiceView, follow: bool) -> String {
 /// Explain up front when nothing is running, instead of printing nothing
 /// (or waiting silently). Best effort: errors surface from the log stream.
 async fn explain_if_idle(ctx: &Ctx, name: &str, follow: bool) {
-    let Ok(status) = ctx.client.get::<RuntimeStatus>(&["services", name, "status"], &[]).await else { return };
+    let Ok(status) = ctx.client.get::<RuntimeStatus>(&["services", name, "status"], &ctx.scope()).await else { return };
     if status.data.instances.iter().any(|i| i.state == "running") {
         return;
     }
-    let Ok(view) = ctx.client.get::<ServiceView>(&["services", name], &[]).await else { return };
+    let Ok(view) = ctx.client.get::<ServiceView>(&["services", name], &ctx.scope()).await else { return };
     errln!("{}", output::err(Color::Yellow, &no_instances_hint(&view.data, follow)));
 }
 
@@ -94,7 +96,7 @@ async fn runtime(ctx: &Ctx, name: &str, follow: bool, tail: Option<u32>) -> Resu
     let mut tail = tail;
     let mut failures = 0u32;
     loop {
-        let mut query = vec![("follow", follow.to_string())];
+        let mut query = ctx.scope_and(&[("follow", follow.to_string())]);
         if let Some(t) = tail {
             query.push(("tail", t.to_string()));
         }

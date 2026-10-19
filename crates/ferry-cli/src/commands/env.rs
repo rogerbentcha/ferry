@@ -8,7 +8,7 @@ use anyhow::Result;
 use ferry_core::dto::{CreateEnvGroup, DatastoreView, EnvGroupView, LinkEnvGroup, PatchEnv, ServiceView};
 use ferry_core::{Deploy, DeployStatus, EnvVar, env};
 
-use super::{Ctx, confirm, print_json, queued_deploy};
+use super::{Ctx, confirm, environment_flag, print_json, queued_deploy};
 use crate::client::Json;
 use crate::envref;
 use crate::output::{self, Cell, Table, errln, outln};
@@ -55,28 +55,29 @@ pub async fn list(ctx: &Ctx, name: &str, effective: bool) -> Result<()> {
     if effective {
         return list_effective(ctx, name).await;
     }
-    let resp = ctx.client.get::<Vec<EnvVar>>(&["services", name, "env"], &[]).await?;
+    let resp = ctx.client.get::<Vec<EnvVar>>(&["services", name, "env"], &ctx.scope()).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
     // Linked env groups contribute variables too (best effort: only a hint).
-    let groups = match ctx.client.get::<ServiceView>(&["services", name], &[]).await {
+    let groups = match ctx.client.get::<ServiceView>(&["services", name], &ctx.scope()).await {
         Ok(v) => v.data.env_groups,
         Err(_) => Vec::new(),
     };
     print_vars(&resp.data)?;
     let groups = groups.join(", ");
+    let f = ctx.flag();
     match (resp.data.is_empty(), groups.is_empty()) {
         (true, true) => {
-            errln!("No environment variables set on '{name}'. Add some with: ferry env set {name} KEY=VALUE");
+            errln!("No environment variables set on '{name}'. Add some with: ferry env set {name}{f} KEY=VALUE");
         }
         (true, false) => errln!(
             "No variables set on '{name}' itself; it gets those of its linked env group(s) {groups}. \
-             Show them with: ferry env {name} --effective"
+             Show them with: ferry env {name}{f} --effective"
         ),
         (false, false) => errln!(
             "Also inherited from linked env group(s) {groups} (the variables above take precedence). \
-             Show the merged set with: ferry env {name} --effective"
+             Show the merged set with: ferry env {name}{f} --effective"
         ),
         (false, true) => {}
     }
@@ -87,7 +88,7 @@ pub async fn list(ctx: &Ctx, name: &str, effective: bool) -> Result<()> {
 /// the service's own variables (later layers win). References are resolved
 /// and Ferry's variables (`PORT`, `FERRY_*`) added when the service starts.
 async fn list_effective(ctx: &Ctx, name: &str) -> Result<()> {
-    let view = ctx.client.get::<ServiceView>(&["services", name], &[]).await?.data;
+    let view = ctx.client.get::<ServiceView>(&["services", name], &ctx.scope()).await?.data;
     let own = ctx.client.get::<Vec<EnvVar>>(&["services", &view.service.id, "env"], &[]).await?.data;
     let mut layers = Vec::new();
     for g in &view.env_groups {
@@ -128,9 +129,13 @@ async fn warn_unresolved(ctx: &Ctx, vars: &[EnvVar], service: Option<&str>) {
     ) else {
         return;
     };
-    let environment = service
-        .and_then(|s| services.data.iter().find(|v| v.service.name == s || v.service.id == s))
-        .map(|v| v.service.environment.as_str());
+    // The service as the command names it: in the environment of
+    // `--environment` (an id or a name), production's without it.
+    let named = match service {
+        Some(s) => ctx.client.get::<ServiceView>(&["services", s], &ctx.scope()).await.ok().map(|v| v.data),
+        None => None,
+    };
+    let environment = named.as_ref().map(|v| v.service.environment.as_str());
     for (key, why) in envref::unresolved(vars, &datastores.data, &services.data, environment) {
         errln!("{} {key}: {why}; deploys fail until it resolves", output::err(output::Color::Yellow, "warning:"));
     }
@@ -189,14 +194,15 @@ impl Restart {
 /// Why nothing restarted after an env change that asked for a restart.
 fn no_restart_reason(v: &ServiceView) -> String {
     let n = &v.service.name;
+    let f = environment_flag(&v.service.environment);
     if v.service.suspended {
         format!(
-            "Saved. '{n}' is suspended, so nothing restarts: after resuming it, apply the new environment with: ferry restart {n}"
+            "Saved. '{n}' is suspended, so nothing restarts: after resuming it, apply the new environment with: ferry restart {n}{f}"
         )
     } else if v.service.live_deploy_id.is_none() {
         format!("Saved. '{n}' isn't live, so nothing restarts: its next deploy uses the new environment.")
     } else {
-        format!("Saved, but no restart was queued. Apply the new environment with: ferry restart {n}")
+        format!("Saved, but no restart was queued. Apply the new environment with: ferry restart {n}{f}")
     }
 }
 
@@ -204,8 +210,9 @@ async fn patch(ctx: &Ctx, name: &str, body: PatchEnv, restart: bool, follow: boo
     // The service and its variables before the change: to warn about keys
     // that aren't set, to skip a restart that would change nothing, and to
     // recognize the deploy the server queues for the restart.
-    let before = ctx.client.get::<ServiceView>(&["services", name], &[]).await?.data;
+    let before = ctx.client.get::<ServiceView>(&["services", name], &ctx.scope()).await?.data;
     let (id, shown) = (before.service.id.as_str(), before.service.name.as_str());
+    let f = environment_flag(&before.service.environment);
     let old = ctx.client.get::<Vec<EnvVar>>(&["services", id, "env"], &[]).await?.data;
     let missing = missing_keys(&old, &body.unset);
     if !missing.is_empty() {
@@ -246,14 +253,14 @@ async fn patch(ctx: &Ctx, name: &str, body: PatchEnv, restart: bool, follow: boo
     if !restart {
         let in_flight = before.latest_deploy.as_ref().is_some_and(|d| d.status.is_active());
         if before.service.live_deploy_id.is_some() || in_flight {
-            errln!("Saved without restarting. Apply with: ferry restart {shown}");
+            errln!("Saved without restarting. Apply with: ferry restart {shown}{f}");
         } else {
             errln!("Saved without restarting: the next deploy of '{shown}' uses the new environment.");
         }
         return Ok(());
     }
     let (Some(outcome), Some(after)) = (outcome, after) else {
-        errln!("Saved. '{shown}' restarts with the new environment if it is live (see: ferry deploys {shown}).");
+        errln!("Saved. '{shown}' restarts with the new environment if it is live (see: ferry deploys {shown}{f}).");
         return Ok(());
     };
     let deploy = match outcome {
@@ -388,25 +395,25 @@ pub async fn group_remove(ctx: &Ctx, name: &str, yes: bool, force: bool, restart
 
 pub async fn group_link(ctx: &Ctx, service: &str, group: &str) -> Result<()> {
     let body = LinkEnvGroup { group: group.to_string() };
-    let resp = ctx.client.post::<_, ServiceView>(&["services", service, "env-groups"], &[], &body).await?;
+    let resp = ctx.client.post::<_, ServiceView>(&["services", service, "env-groups"], &ctx.scope(), &body).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
     let v = &resp.data;
     outln!("Linked '{group}' to '{}' (groups: {})", v.service.name, v.env_groups.join(", "))?;
-    errln!("Restart to apply: ferry restart {}", v.service.name);
+    errln!("Restart to apply: ferry restart {}{}", v.service.name, environment_flag(&v.service.environment));
     Ok(())
 }
 
 pub async fn group_unlink(ctx: &Ctx, service: &str, group: &str) -> Result<()> {
-    let resp = ctx.client.delete::<ServiceView>(&["services", service, "env-groups", group]).await?;
+    let resp = ctx.client.delete::<ServiceView>(&["services", service, "env-groups", group], &ctx.scope()).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
     let v = &resp.data;
     let groups = if v.env_groups.is_empty() { "none".to_string() } else { v.env_groups.join(", ") };
     outln!("Unlinked '{group}' from '{}' (groups: {groups})", v.service.name)?;
-    errln!("Restart to apply: ferry restart {}", v.service.name);
+    errln!("Restart to apply: ferry restart {}{}", v.service.name, environment_flag(&v.service.environment));
     Ok(())
 }
 

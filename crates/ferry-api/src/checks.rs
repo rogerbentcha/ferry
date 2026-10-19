@@ -174,17 +174,20 @@ pub fn references(value: &str) -> Vec<(RefKind, String)> {
     out
 }
 
-/// Services (other than `exclude`) whose environment references the
-/// datastore or service `name`, as `service 'web' (DATABASE_URL, ...)`.
-/// Deleting the target would make every later deploy / restart of them fail.
+/// Services of `environment` (other than `exclude`) whose environment
+/// references the datastore or service `name` of that environment, as
+/// `service 'web' (DATABASE_URL, ...)`. Deleting the target would make every
+/// later deploy / restart of them fail. Another environment's references to
+/// the same name resolve to its own.
 pub async fn referencing_services(
     store: &Store,
     kind: RefKind,
     name: &str,
+    environment: &str,
     exclude: Option<&str>,
 ) -> Result<Vec<String>> {
     let mut out = Vec::new();
-    for svc in store.list_services().await? {
+    for svc in store.environment_members(environment).await?.0 {
         if exclude == Some(svc.id.as_str()) {
             continue;
         }

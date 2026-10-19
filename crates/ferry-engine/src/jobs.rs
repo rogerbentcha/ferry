@@ -155,7 +155,7 @@ async fn execute(
     running: &RunningJob,
 ) {
     let image = job.image.clone().unwrap_or_default();
-    let container_name = inner.naming.job_container(&svc.name, &job.id);
+    let container_name = inner.naming.job_container(&svc.qualified_name(), &job.id);
     let prepared = async {
         let spec = spec?;
         if !inner.docker.image_exists(&image).await? {
@@ -561,7 +561,7 @@ pub(crate) async fn run_scheduler(inner: Arc<Inner>) {
             }
         };
         for id in ticker.due(Utc::now(), &services) {
-            let name = services.iter().find(|s| s.id == id).map(|s| s.name.clone()).unwrap_or_default();
+            let name = services.iter().find(|s| s.id == id).map(Service::qualified_name).unwrap_or_default();
             let running = inner.running_jobs_of(&id);
             if let Some(previous) = running.iter().min_by_key(|j| j.started) {
                 // Runs never overlap: a hung run blocks the schedule until it

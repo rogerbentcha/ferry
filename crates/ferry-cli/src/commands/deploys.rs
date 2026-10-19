@@ -10,7 +10,7 @@ use crate::output::{self, Cell, Table, outln};
 
 pub async fn deploy(ctx: &Ctx, a: DeployArgs) -> Result<()> {
     let body = TriggerDeploy { commit: a.commit.clone(), clear_cache: a.clear_cache };
-    let resp = ctx.client.post::<_, Deploy>(&["services", &a.name, "deploys"], &[], &body).await?;
+    let resp = ctx.client.post::<_, Deploy>(&["services", &a.name, "deploys"], &ctx.scope(), &body).await?;
     queued_deploy(ctx, &resp, a.follow).await
 }
 
@@ -42,7 +42,10 @@ pub fn deploys_table(deploys: &[Deploy], color: bool) -> String {
 }
 
 pub async fn list(ctx: &Ctx, name: &str, limit: u32) -> Result<()> {
-    let resp = ctx.client.get::<Vec<Deploy>>(&["services", name, "deploys"], &[("limit", limit.to_string())]).await?;
+    let resp = ctx
+        .client
+        .get::<Vec<Deploy>>(&["services", name, "deploys"], &ctx.scope_and(&[("limit", limit.to_string())]))
+        .await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
@@ -60,7 +63,7 @@ pub async fn list(ctx: &Ctx, name: &str, limit: u32) -> Result<()> {
 }
 
 pub async fn cancel(ctx: &Ctx, deploy_id: &str) -> Result<()> {
-    let resp = ctx.client.post_empty::<Deploy>(&["deploys", deploy_id, "cancel"]).await?;
+    let resp = ctx.client.post_empty::<Deploy>(&["deploys", deploy_id, "cancel"], &[]).await?;
     if ctx.json {
         return print_json(&resp.raw);
     }
@@ -71,12 +74,12 @@ pub async fn cancel(ctx: &Ctx, deploy_id: &str) -> Result<()> {
 
 pub async fn rollback(ctx: &Ctx, name: &str, deploy_id: &str, follow: bool) -> Result<()> {
     let body = RollbackRequest { deploy_id: deploy_id.to_string() };
-    let resp = ctx.client.post::<_, Deploy>(&["services", name, "rollback"], &[], &body).await?;
+    let resp = ctx.client.post::<_, Deploy>(&["services", name, "rollback"], &ctx.scope(), &body).await?;
     queued_deploy(ctx, &resp, follow).await
 }
 
 pub async fn restart(ctx: &Ctx, name: &str, follow: bool) -> Result<()> {
-    let resp = ctx.client.post_empty::<Deploy>(&["services", name, "restart"]).await?;
+    let resp = ctx.client.post_empty::<Deploy>(&["services", name, "restart"], &ctx.scope()).await?;
     queued_deploy(ctx, &resp, follow).await
 }
 

@@ -16,12 +16,17 @@ use serde::Deserialize;
 use crate::AppState;
 use crate::checks::{self, RefKind};
 use crate::error::{ApiError, ApiResult};
-use crate::extract::{ApiJson, ApiPath, ApiQuery, DeleteQuery, EnvironmentQuery, de_flag};
+use crate::extract::{ApiJson, ApiPath, ApiQuery, DeleteQuery, EnvironmentQuery, ScopeQuery, de_flag};
 use crate::locks;
+use crate::lookup;
 use crate::ops;
 use crate::runtime;
 use crate::sse;
 use crate::views::service_view;
+
+/// The `{id}` of the routes of one service.
+pub(crate) const SERVICE_ID: &str =
+    "Service id, or name: a name is looked up in the environment of `environment` (omitted: `production`).";
 
 /// `GET /api/v1/services`
 ///
@@ -64,14 +69,18 @@ pub async fn list(
     tag = "services",
     operation_id = "getService",
     summary = "Get a service",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     responses(
         (status = 200, description = "The service.", body = ServiceView),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
     ),
 )]
-pub async fn get(State(st): State<AppState>, ApiPath(id): ApiPath<String>) -> ApiResult<Json<ServiceView>> {
-    let svc = st.store.require_service(&id).await?;
+pub async fn get(
+    State(st): State<AppState>,
+    ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
+) -> ApiResult<Json<ServiceView>> {
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     runtime::refresh(&st.engine, std::slice::from_ref(&svc)).await;
     Ok(Json(service_view(&st.store, &st.config, svc).await?))
 }
@@ -132,7 +141,7 @@ fn new_service(req: &CreateService) -> Result<Service, Error> {
     tag = "services",
     operation_id = "createService",
     summary = "Create a service",
-    description = "Creates the service in its `environment` (omitted: `production`) with its own variables and env group links, then queues a first deploy (trigger `create`) when it has a repository or an image, unless `deploy` is `false`. Services and datastores share one namespace of names. Outside `production` a web service answers at `<service>.<environment>.<domain>`, and its variables reference the datastores and services of its environment only. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit every instance and job run of the service; omitted or `0` = the server default (see `GET /api/v1/info`).",
+    description = "Creates the service in its `environment` (omitted: `production`) with its own variables and env group links, then queues a first deploy (trigger `create`) when it has a repository or an image, unless `deploy` is `false`. A name is unique in its environment, which services and datastores share: another environment may use the same names. Outside `production` a web service answers at `<service>.<environment>.<domain>`, and its variables reference the datastores and services of its environment only. `memory_limit_mb` (MiB, 16 MiB to 1 TiB) and `cpu_limit` (CPUs, 0.01 to 512, rounded to 0.01) limit every instance and job run of the service; omitted or `0` = the server default (see `GET /api/v1/info`).",
     request_body = CreateService,
     responses(
         (status = 201, description = "The new service.", body = ServiceView),
@@ -326,25 +335,31 @@ fn row_changed(a: &Service, b: &Service) -> bool {
     operation_id = "updateService",
     summary = "Update a service",
     description = "Every field is optional; for optional string settings an empty string clears the value. `instances` scales, `suspended` suspends or resumes, `custom_domains` refreshes the routes; build settings take effect on the next deploy. Resource limits (`memory_limit_mb`, `cpu_limit`; `0` = back to the server default) are only saved: they take effect with the next deploy or restart, this request doesn't redeploy. Switching between a git repository and an image requires clearing the other source in the same request. When a side effect fails after the settings were saved, the error message says so.",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     request_body = UpdateService,
     responses(
         (status = 200, description = "The updated service.", body = ServiceView),
         (status = 400, description = "Invalid settings (including resource limits out of range).", body = ApiErrorBody),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
         (status = 409, description = "A source switch that doesn't clear the old source, or a custom domain another service uses.", body = ApiErrorBody),
     ),
 )]
 pub async fn update(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
     ApiJson(req): ApiJson<UpdateService>,
 ) -> ApiResult<Json<ServiceView>> {
-    locks::detached(update_service(st, id, req)).await
+    locks::detached(update_service(st, id, scope, req)).await
 }
 
-async fn update_service(st: AppState, id: String, req: UpdateService) -> ApiResult<Json<ServiceView>> {
-    let service_id = st.store.require_service(&id).await?.id;
+async fn update_service(
+    st: AppState,
+    id: String,
+    scope: ScopeQuery,
+    req: UpdateService,
+) -> ApiResult<Json<ServiceView>> {
+    let service_id = lookup::service(&st.store, &id, &scope).await?.id;
     // Lock order: domains first (only when they may change), then the row.
     let domains_guard = match req.custom_domains {
         Some(_) => Some(locks::domains().await),
@@ -439,22 +454,25 @@ async fn update_service(st: AppState, id: String, req: UpdateService) -> ApiResu
     summary = "Delete a service",
     description = "Removes its containers, routes, deploys and variables. Refused while other services reference it in their env (`${{service.NAME...}}`), unless `force=true`.",
     params(
-        ("id" = String, Path, description = "Service id or name."),
+        ("id" = String, Path, description = SERVICE_ID),
+        ScopeQuery,
         ("force" = Option<bool>, Query, description = "Delete even though other services reference it (they will fail to deploy or restart)."),
     ),
     responses(
         (status = 204, description = "Deleted."),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
         (status = 409, description = "Other services reference it (the message lists them).", body = ApiErrorBody),
     ),
 )]
 pub async fn delete(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
     ApiQuery(q): ApiQuery<DeleteQuery>,
 ) -> ApiResult<StatusCode> {
-    let svc = st.store.require_service(&id).await?;
-    let users = checks::referencing_services(&st.store, RefKind::Service, &svc.name, Some(&svc.id)).await?;
+    let svc = lookup::service(&st.store, &id, &scope).await?;
+    let users =
+        checks::referencing_services(&st.store, RefKind::Service, &svc.name, &svc.environment, Some(&svc.id)).await?;
     if !users.is_empty() {
         if !q.force {
             return Err(Error::conflict(format!(
@@ -480,18 +498,19 @@ pub async fn delete(
     operation_id = "rotateDeployHook",
     summary = "Rotate the deploy hook key",
     description = "Replaces the secret of the service's deploy hook URL: the old URL stops working, the new one is the returned `deploy_hook_path`.",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     responses(
         (status = 200, description = "The service with its new `deploy_hook_path`.", body = ServiceView),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
     ),
 )]
 pub async fn rotate_deploy_hook(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
 ) -> ApiResult<Json<ServiceView>> {
     locks::detached(async move {
-        let service_id = st.store.require_service(&id).await?.id;
+        let service_id = lookup::service(&st.store, &id, &scope).await?.id;
         let _guard = locks::owner(&service_id).await;
         let mut svc = st.store.require_service(&service_id).await?;
         svc.deploy_hook_key = ids::random_secret(32);
@@ -510,14 +529,18 @@ pub async fn rotate_deploy_hook(
     operation_id = "getServiceStatus",
     summary = "Runtime status",
     description = "The live state of each container: Docker state, host port, restarts, CPU and memory.",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     responses(
         (status = 200, description = "Runtime status.", body = RuntimeStatus),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
     ),
 )]
-pub async fn status(State(st): State<AppState>, ApiPath(id): ApiPath<String>) -> ApiResult<Json<RuntimeStatus>> {
-    let svc = st.store.require_service(&id).await?;
+pub async fn status(
+    State(st): State<AppState>,
+    ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
+) -> ApiResult<Json<RuntimeStatus>> {
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     let status = st.engine.service_status(&svc.id).await?;
     runtime::record(&svc, &status);
     Ok(Json(status))
@@ -541,18 +564,19 @@ pub struct LogsQuery {
     operation_id = "streamServiceLogs",
     summary = "Runtime logs (SSE)",
     description = "The merged output of the service's current containers (`instance` names the container). Cron jobs have no long-running containers: their stream is a few `system` lines pointing at the job logs.",
-    params(("id" = String, Path, description = "Service id or name."), LogsQuery),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery, LogsQuery),
     responses(
         (status = 200, description = crate::openapi::SSE_RUNTIME_LOGS, content_type = "text/event-stream", body = String, example = "event: log\ndata: {\"ts\":\"2026-01-01T12:00:00Z\",\"stream\":\"system\",\"line\":\"==> Build succeeded\"}\n\nevent: end\ndata: \n\n"),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
     ),
 )]
 pub async fn logs(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
     ApiQuery(q): ApiQuery<LogsQuery>,
 ) -> ApiResult<Response> {
-    let svc = st.store.require_service(&id).await?;
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     if svc.service_type == ServiceType::CronJob {
         // No long-running containers: point at the per-run job logs instead
         // of returning nothing (or, with follow, hanging forever).
@@ -582,18 +606,19 @@ pub async fn logs(
     operation_id = "restartService",
     summary = "Restart a service",
     description = "Rolls out the live deploy's image again (a new deploy with trigger `restart`), picking up changed variables.",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     responses(
         (status = 202, description = "The restart deploy, queued.", body = Deploy),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
         (status = 409, description = "The service has no live deploy yet, or it is suspended or being deleted.", body = ApiErrorBody),
     ),
 )]
 pub async fn restart(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
 ) -> ApiResult<(StatusCode, Json<Deploy>)> {
-    let svc = st.store.require_service(&id).await?;
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     let d = st.engine.restart(&svc.id, DeployTrigger::Restart).await?;
     Ok((StatusCode::ACCEPTED, Json(d)))
 }
@@ -606,14 +631,18 @@ pub async fn restart(
     operation_id = "suspendService",
     summary = "Suspend a service",
     description = "Stops its containers; settings, variables and deploys stay until it is resumed.",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     responses(
         (status = 200, description = "The suspended service.", body = ServiceView),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
     ),
 )]
-pub async fn suspend(State(st): State<AppState>, ApiPath(id): ApiPath<String>) -> ApiResult<Json<ServiceView>> {
-    let svc = st.store.require_service(&id).await?;
+pub async fn suspend(
+    State(st): State<AppState>,
+    ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
+) -> ApiResult<Json<ServiceView>> {
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     st.engine.suspend(&svc.id).await?;
     let svc = st.store.require_service(&svc.id).await?;
     Ok(Json(service_view(&st.store, &st.config, svc).await?))
@@ -627,14 +656,18 @@ pub async fn suspend(State(st): State<AppState>, ApiPath(id): ApiPath<String>) -
     operation_id = "resumeService",
     summary = "Resume a service",
     description = "Starts the live deploy's containers again.",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     responses(
         (status = 200, description = "The resumed service.", body = ServiceView),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
     ),
 )]
-pub async fn resume(State(st): State<AppState>, ApiPath(id): ApiPath<String>) -> ApiResult<Json<ServiceView>> {
-    let svc = st.store.require_service(&id).await?;
+pub async fn resume(
+    State(st): State<AppState>,
+    ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
+) -> ApiResult<Json<ServiceView>> {
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     st.engine.resume(&svc.id).await?;
     let svc = st.store.require_service(&svc.id).await?;
     Ok(Json(service_view(&st.store, &st.config, svc).await?))
@@ -648,21 +681,22 @@ pub async fn resume(State(st): State<AppState>, ApiPath(id): ApiPath<String>) ->
     operation_id = "scaleService",
     summary = "Scale a service",
     description = "Sets the number of instances. Cron jobs can't be scaled, and services with a disk run 1 instance.",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     request_body = ScaleRequest,
     responses(
         (status = 200, description = "The scaled service.", body = ServiceView),
         (status = 400, description = "Invalid instance count for this service.", body = ApiErrorBody),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
     ),
 )]
 pub async fn scale(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
     ApiJson(req): ApiJson<ScaleRequest>,
 ) -> ApiResult<Json<ServiceView>> {
     locks::detached(async move {
-        let service_id = st.store.require_service(&id).await?.id;
+        let service_id = lookup::service(&st.store, &id, &scope).await?.id;
         // Validated against the row a concurrent PATCH (e.g. adding a disk,
         // which limits the service to 1 instance) can't change meanwhile.
         let _row_guard = locks::owner(&service_id).await;
@@ -686,21 +720,22 @@ pub async fn scale(
     operation_id = "rollbackService",
     summary = "Roll back to an earlier deploy",
     description = "Queues a deploy (trigger `rollback`) reusing the image of an earlier deploy of this service that went live.",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     request_body = RollbackRequest,
     responses(
         (status = 202, description = "The rollback deploy, queued.", body = Deploy),
         (status = 400, description = "The deploy belongs to another service, never went live or has no image.", body = ApiErrorBody),
-        (status = 404, description = "No such service or deploy.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, environment or deploy.", body = ApiErrorBody),
         (status = 409, description = "The service is suspended or being deleted.", body = ApiErrorBody),
     ),
 )]
 pub async fn rollback(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
     ApiJson(req): ApiJson<RollbackRequest>,
 ) -> ApiResult<(StatusCode, Json<Deploy>)> {
-    let svc = st.store.require_service(&id).await?;
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     let target = st.store.require_deploy(req.deploy_id.trim()).await?;
     if target.service_id != svc.id {
         return Err(Error::invalid(format!("deploy '{}' does not belong to service '{}'", target.id, svc.name)).into());

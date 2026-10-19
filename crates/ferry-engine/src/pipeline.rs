@@ -256,7 +256,7 @@ async fn build_stage(ctx: &Ctx, svc: &Service, deploy: &Deploy, opts: DeployOpti
             // tag), but rollbacks, restarts, crash replacements and jobs of this
             // deploy must run exactly this image. The pin is one of the service's
             // own images, so retention deletes only this tag, never the pulled image.
-            let pinned = inner.naming.image_tag(&svc.name, &deploy.id);
+            let pinned = inner.naming.image_tag(&svc.qualified_name(), &deploy.id);
             inner.docker.tag_image(&image, &pinned).await.map_err(|e| {
                 Failure::build(Error::Build(format!("pinning image {image} as {pinned}: {}", error_message(&e))))
             })?;
@@ -389,7 +389,7 @@ async fn build_image(
         build_command: svc.build_command.clone(),
         start_command: svc.start_command.clone(),
         publish_dir: svc.publish_dir.clone(),
-        image_tag: inner.naming.image_tag(&svc.name, &deploy.id),
+        image_tag: inner.naming.image_tag(&svc.qualified_name(), &deploy.id),
         build_args,
         labels: inner.naming.service_labels(&svc.id, &deploy.id),
         clear_cache: opts.clear_cache,
@@ -1078,7 +1078,7 @@ pub(crate) async fn cleanup_after_deploy(inner: &Arc<Inner>, service_id: &str) {
             protected.insert(image.clone());
         }
     }
-    let repo = inner.naming.image_repo(&svc.name);
+    let repo = inner.naming.image_repo(&svc.qualified_name());
     for image in images::images_to_remove(&deploys, &repo, inner.config.keep_images, &protected) {
         match inner.docker.remove_image(&image).await {
             Ok(()) => {

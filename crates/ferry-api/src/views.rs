@@ -130,7 +130,7 @@ pub async fn git_connection_users(
         if let Some(repo) = service.repo_url.as_deref()
             && let Some(connection) = git_connection_for(connections, repo)
         {
-            users.entry(connection.id.clone()).or_default().push(service.name);
+            users.entry(connection.id.clone()).or_default().push(service.qualified_name());
         }
     }
     for names in users.values_mut() {
@@ -240,7 +240,7 @@ pub fn certificate_view(
 /// Build the [`EnvGroupView`] of an env group.
 pub async fn env_group_view(store: &Store, group: EnvGroup) -> Result<EnvGroupView> {
     let vars = store.list_env(&group.id).await?;
-    let services = store.env_group_services(&group.id).await?.into_iter().map(|s| s.name).collect();
+    let services = store.env_group_services(&group.id).await?.iter().map(Service::qualified_name).collect();
     Ok(EnvGroupView { group, vars, services })
 }
 

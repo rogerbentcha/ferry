@@ -9,7 +9,9 @@ use http::StatusCode;
 
 use crate::AppState;
 use crate::error::ApiResult;
-use crate::extract::{ApiJson, ApiPath, ApiQuery, FollowQuery, LimitQuery};
+use crate::extract::{ApiJson, ApiPath, ApiQuery, FollowQuery, LimitQuery, ScopeQuery};
+use crate::lookup;
+use crate::routes::services::SERVICE_ID;
 use crate::sse;
 
 /// `GET /api/v1/services/{id}/jobs?limit=20` (newest first)
@@ -20,18 +22,19 @@ use crate::sse;
     operation_id = "listJobs",
     summary = "List a service's job runs",
     description = "Cron runs and one-off jobs, newest first.",
-    params(("id" = String, Path, description = "Service id or name."), LimitQuery),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery, LimitQuery),
     responses(
         (status = 200, description = "The job runs, newest first.", body = [JobRun]),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
     ),
 )]
 pub async fn list(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
     ApiQuery(q): ApiQuery<LimitQuery>,
 ) -> ApiResult<Json<Vec<JobRun>>> {
-    let svc = st.store.require_service(&id).await?;
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     Ok(Json(st.store.list_job_runs(&svc.id, q.get()).await?))
 }
 
@@ -43,21 +46,22 @@ pub async fn list(
     operation_id = "runJob",
     summary = "Run a job",
     description = "Runs a one-off command (`sh -c`) in a new container from the service's live image. Cron jobs run their own command when `command` is omitted.",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     request_body = RunJobRequest,
     responses(
         (status = 202, description = "The job run, started.", body = JobRun),
         (status = 400, description = "No command for a service that isn't a cron job.", body = ApiErrorBody),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
         (status = 409, description = "The service has no live deploy to run from, is suspended or being deleted.", body = ApiErrorBody),
     ),
 )]
 pub async fn run(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
     ApiJson(req): ApiJson<RunJobRequest>,
 ) -> ApiResult<(StatusCode, Json<JobRun>)> {
-    let svc = st.store.require_service(&id).await?;
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     let command = req.command.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
     if command.is_none() && svc.service_type != ServiceType::CronJob {
         return Err(Error::invalid(format!(

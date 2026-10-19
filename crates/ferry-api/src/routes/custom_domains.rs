@@ -8,9 +8,11 @@ use ferry_core::{Error, validate};
 use crate::AppState;
 use crate::checks;
 use crate::error::ApiResult;
-use crate::extract::{ApiJson, ApiPath};
+use crate::extract::{ApiJson, ApiPath, ApiQuery, ScopeQuery};
 use crate::locks;
+use crate::lookup;
 use crate::ops;
+use crate::routes::services::SERVICE_ID;
 
 /// `GET /api/v1/services/{id}/domains`
 #[utoipa::path(
@@ -19,14 +21,18 @@ use crate::ops;
     tag = "domains",
     operation_id = "listDomains",
     summary = "List custom domains",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     responses(
         (status = 200, description = "The service's custom domains.", body = [String]),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
     ),
 )]
-pub async fn list(State(st): State<AppState>, ApiPath(id): ApiPath<String>) -> ApiResult<Json<Vec<String>>> {
-    let svc = st.store.require_service(&id).await?;
+pub async fn list(
+    State(st): State<AppState>,
+    ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
+) -> ApiResult<Json<Vec<String>>> {
+    let svc = lookup::service(&st.store, &id, &scope).await?;
     Ok(Json(svc.custom_domains))
 }
 
@@ -38,22 +44,23 @@ pub async fn list(State(st): State<AppState>, ApiPath(id): ApiPath<String>) -> A
     operation_id = "addDomain",
     summary = "Add a custom domain",
     description = "Web services and static sites only. The domain is normalized (lowercase, no trailing dot) and must not be used by another service or be a default host.",
-    params(("id" = String, Path, description = "Service id or name.")),
+    params(("id" = String, Path, description = SERVICE_ID), ScopeQuery),
     request_body = DomainRequest,
     responses(
         (status = 200, description = "The service's custom domains.", body = [String]),
         (status = 400, description = "Invalid domain, or the service type has no public HTTP.", body = ApiErrorBody),
-        (status = 404, description = "No such service.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment.", body = ApiErrorBody),
         (status = 409, description = "The domain is already added, or another service uses it.", body = ApiErrorBody),
     ),
 )]
 pub async fn add(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
     ApiJson(req): ApiJson<DomainRequest>,
 ) -> ApiResult<Json<Vec<String>>> {
     locks::detached(async move {
-        let service_id = st.store.require_service(&id).await?.id;
+        let service_id = lookup::service(&st.store, &id, &scope).await?.id;
         let domain = validate::domain(&req.domain)?;
         // The uniqueness check and the write happen under the domain lock (no
         // other service can claim the host meanwhile), the read-modify-write
@@ -86,18 +93,19 @@ pub async fn add(
     tag = "domains",
     operation_id = "removeDomain",
     summary = "Remove a custom domain",
-    params(("id" = String, Path, description = "Service id or name."), ("domain" = String, Path, description = "The custom domain.")),
+    params(("id" = String, Path, description = SERVICE_ID), ("domain" = String, Path, description = "The custom domain."), ScopeQuery),
     responses(
         (status = 200, description = "The service's remaining custom domains.", body = [String]),
-        (status = 404, description = "No such service, or the domain isn't one of its custom domains.", body = ApiErrorBody),
+        (status = 404, description = "No such service in that environment, or no such environment, or the domain isn't one of its custom domains.", body = ApiErrorBody),
     ),
 )]
 pub async fn remove(
     State(st): State<AppState>,
     ApiPath((id, domain)): ApiPath<(String, String)>,
+    ApiQuery(scope): ApiQuery<ScopeQuery>,
 ) -> ApiResult<Json<Vec<String>>> {
     locks::detached(async move {
-        let service_id = st.store.require_service(&id).await?.id;
+        let service_id = lookup::service(&st.store, &id, &scope).await?.id;
         let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
         let row_guard = locks::owner(&service_id).await;
         let mut svc = st.store.require_service(&service_id).await?;

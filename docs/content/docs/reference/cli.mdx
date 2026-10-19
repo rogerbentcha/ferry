@@ -227,7 +227,7 @@ Show a service's settings and state
 **Usage**
 
 ```text
-ferry show <NAME>
+ferry show [OPTIONS] <NAME>
 ```
 
 **Arguments**
@@ -235,6 +235,12 @@ ferry show <NAME>
 | Argument | Description |
 |---|---|
 | `<NAME>` | Service name or id |
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 
 ## `ferry update`
 
@@ -258,6 +264,7 @@ Clearing settings: pass an empty value to a text setting (--start-cmd "", --heal
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `--repo <URL>` | Git repository URL or server-side path ("" clears; a relative path that exists here is sent as an absolute path) |
 | `--branch <BRANCH>` | Git branch |
 | `--image <IMAGE>` | Prebuilt Docker image ("" clears) |
@@ -300,6 +307,7 @@ ferry delete [OPTIONS] <NAME>
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `-y`, `--yes` | Don't ask for confirmation |
 | `--force` | Delete even if other services still reference it (their next deploy or restart will fail) |
 
@@ -323,6 +331,7 @@ ferry deploy [OPTIONS] <NAME>
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `--commit <SHA>` | Build this exact commit (git services) |
 | `--clear-cache` | Build without the Docker layer cache |
 | `-f`, `--follow` | Stream the build/deploy logs until it finishes (exit 1 if it fails) |
@@ -351,7 +360,7 @@ If the service doesn't exist, it is created with these flags. If it exists, the 
 |---|---|---|
 | `-d`, `--dir <DIR>` | Directory to upload | `.` |
 | `-t`, `--type <TYPE>` | Service type, only used when creating the service: web, pserv, worker, cron, static [default: web] |  |
-| `--environment <ENV>` | Environment, only used when creating the service [default: production]; an existing service must be in it |  |
+| `--environment <ENV>` | Environment the service is looked up in, and created in when it doesn't exist there [default: production] |  |
 | `--runtime <RUNTIME>` | Runtime: auto, docker, image, node, python, go, rust, ruby, static |  |
 | `--root-dir <DIR>` | Build context subdirectory (monorepos) |  |
 | `--dockerfile <PATH>` | Dockerfile path relative to the root dir |  |
@@ -391,6 +400,7 @@ ferry deploys [OPTIONS] <NAME>
 
 | Option | Description | Default |
 |---|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |  |
 | `-n`, `--limit <N>` | Maximum number of entries | `20` |
 
 ## `ferry cancel`
@@ -430,6 +440,7 @@ ferry rollback [OPTIONS] <NAME> <DEPLOY_ID>
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `-f`, `--follow` | Stream the deploy logs until it finishes (exit 1 if it fails) |
 
 ## `ferry restart`
@@ -452,6 +463,7 @@ ferry restart [OPTIONS] <NAME>
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `-f`, `--follow` | Stream the build/deploy logs until it finishes (exit 1 if it fails) |
 
 ## `ferry suspend`
@@ -461,7 +473,7 @@ Stop a service's containers (the proxy answers 503)
 **Usage**
 
 ```text
-ferry suspend <NAME>
+ferry suspend [OPTIONS] <NAME>
 ```
 
 **Arguments**
@@ -469,6 +481,12 @@ ferry suspend <NAME>
 | Argument | Description |
 |---|---|
 | `<NAME>` | Service name or id |
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 
 ## `ferry resume`
 
@@ -477,7 +495,7 @@ Resume a suspended service
 **Usage**
 
 ```text
-ferry resume <NAME>
+ferry resume [OPTIONS] <NAME>
 ```
 
 **Arguments**
@@ -486,6 +504,12 @@ ferry resume <NAME>
 |---|---|
 | `<NAME>` | Service name or id |
 
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
+
 ## `ferry scale`
 
 Set the number of instances
@@ -493,7 +517,7 @@ Set the number of instances
 **Usage**
 
 ```text
-ferry scale <NAME> <INSTANCES>
+ferry scale [OPTIONS] <NAME> <INSTANCES>
 ```
 
 **Arguments**
@@ -503,6 +527,12 @@ ferry scale <NAME> <INSTANCES>
 | `<NAME>` | Service name or id |
 | `<INSTANCES>` | Number of instances |
 
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
+
 ## `ferry status`
 
 Show running instances with CPU and memory usage
@@ -510,7 +540,7 @@ Show running instances with CPU and memory usage
 **Usage**
 
 ```text
-ferry status <NAME>
+ferry status [OPTIONS] <NAME>
 ```
 
 **Arguments**
@@ -518,6 +548,12 @@ ferry status <NAME>
 | Argument | Description |
 |---|---|
 | `<NAME>` | Service name or id |
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 
 ## `ferry logs`
 
@@ -539,6 +575,7 @@ ferry logs [OPTIONS] <NAME|--deploy <DEPLOY_ID>|--job <JOB_ID>>
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `--deploy <DEPLOY_ID>` | Show a deploy's build/deploy log instead |
 | `--job <JOB_ID>` | Show a job run's log instead |
 | `-f`, `--follow` | Keep streaming new lines |
@@ -571,6 +608,7 @@ ferry env <COMMAND>
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `--effective` | List the merged environment: linked env groups, then the service's own variables |
 
 ## `ferry env ls`
@@ -595,6 +633,7 @@ ferry env ls [OPTIONS] <NAME>
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `--effective` | List the merged environment: linked env groups, then the service's own variables |
 
 ## `ferry env set`
@@ -618,6 +657,7 @@ ferry env set [OPTIONS] <NAME> <KEY=VALUE>...
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `--no-restart` | Save without restarting |
 | `-f`, `--follow` | Stream the restart's logs until it finishes (exit 1 if it fails) |
 
@@ -642,6 +682,7 @@ ferry env unset [OPTIONS] <NAME> <KEY>...
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `--no-restart` | Save without restarting |
 | `-f`, `--follow` | Stream the restart's logs until it finishes (exit 1 if it fails) |
 
@@ -652,7 +693,7 @@ The server's domains (services are served at \<service>.\<domain>), or a service
 **Usage**
 
 ```text
-ferry domains [NAME]
+ferry domains [OPTIONS] [NAME]
 ferry domains <COMMAND>
 ```
 
@@ -671,6 +712,12 @@ ferry domains <COMMAND>
 | Argument | Description |
 |---|---|
 | `<NAME>` | Service name or id: lists its custom domains. Without it: the server's domains |
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 
 ## `ferry domains connect`
 
@@ -749,7 +796,7 @@ List a service's custom domains
 **Usage**
 
 ```text
-ferry domains ls <NAME>
+ferry domains ls [OPTIONS] <NAME>
 ```
 
 **Command Alias:** `list`
@@ -760,6 +807,12 @@ ferry domains ls <NAME>
 |---|---|
 | `<NAME>` | Service name or id |
 
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
+
 ## `ferry domains add`
 
 Add a custom domain to a service
@@ -767,7 +820,7 @@ Add a custom domain to a service
 **Usage**
 
 ```text
-ferry domains add <NAME> <DOMAIN>
+ferry domains add [OPTIONS] <NAME> <DOMAIN>
 ```
 
 **Arguments**
@@ -777,6 +830,12 @@ ferry domains add <NAME> <DOMAIN>
 | `<NAME>` | Service name or id |
 | `<DOMAIN>` | Domain name, e.g. app.example.com |
 
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
+
 ## `ferry domains rm`
 
 Remove a custom domain from a service
@@ -784,7 +843,7 @@ Remove a custom domain from a service
 **Usage**
 
 ```text
-ferry domains rm <NAME> <DOMAIN>
+ferry domains rm [OPTIONS] <NAME> <DOMAIN>
 ```
 
 **Command Alias:** `remove`
@@ -795,6 +854,12 @@ ferry domains rm <NAME> <DOMAIN>
 |---|---|
 | `<NAME>` | Service name or id |
 | `<DOMAIN>` | Domain name, e.g. app.example.com |
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 
 ## `ferry certificates`
 
@@ -829,6 +894,7 @@ ferry run [OPTIONS] <NAME> [-- <CMD>...]
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `-f`, `--follow` | Stream the job's output until it finishes (exit 1 if it fails) |
 
 ## `ferry jobs`
@@ -857,6 +923,7 @@ ferry jobs <COMMAND>
 
 | Option | Description | Default |
 |---|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |  |
 | `-n`, `--limit <N>` | Maximum number of entries | `20` |
 
 ## `ferry jobs ls`
@@ -881,6 +948,7 @@ ferry jobs ls [OPTIONS] <NAME>
 
 | Option | Description | Default |
 |---|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |  |
 | `-n`, `--limit <N>` | Maximum number of entries | `20` |
 
 ## `ferry jobs cancel`
@@ -971,23 +1039,7 @@ Show a datastore with its connection URLs
 **Usage**
 
 ```text
-ferry db show <NAME>
-```
-
-**Arguments**
-
-| Argument | Description |
-|---|---|
-| `<NAME>` | Datastore name or id |
-
-## `ferry db update`
-
-Change a datastore's memory / CPU limits (applied to the running container, no restart)
-
-**Usage**
-
-```text
-ferry db update <--memory <SIZE>|--cpu <CPUS>> <NAME>
+ferry db show [OPTIONS] <NAME>
 ```
 
 **Arguments**
@@ -1000,6 +1052,29 @@ ferry db update <--memory <SIZE>|--cpu <CPUS>> <NAME>
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
+
+## `ferry db update`
+
+Change a datastore's memory / CPU limits (applied to the running container, no restart)
+
+**Usage**
+
+```text
+ferry db update [OPTIONS] <--memory <SIZE>|--cpu <CPUS>> <NAME>
+```
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<NAME>` | Datastore name or id |
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `--memory <SIZE>` | Memory limit, e.g. 256M or 1G (a plain number is MiB; 'default' = the server's default) |
 | `--cpu <CPUS>` | CPU limit, e.g. 0.5, 2 or 500m ('default' = the server's default) |
 
@@ -1025,6 +1100,7 @@ ferry db rm [OPTIONS] <NAME>
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `-y`, `--yes` | Don't ask for confirmation |
 | `--force` | Delete even if other services still reference it (their next deploy or restart will fail) |
 
@@ -1263,7 +1339,7 @@ Link an env group to a service
 **Usage**
 
 ```text
-ferry env-group link <SERVICE> <GROUP>
+ferry env-group link [OPTIONS] <SERVICE> <GROUP>
 ```
 
 **Arguments**
@@ -1272,6 +1348,12 @@ ferry env-group link <SERVICE> <GROUP>
 |---|---|
 | `<SERVICE>` | Service name or id |
 | `<GROUP>` | Env group name or id |
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 
 ## `ferry env-group unlink`
 
@@ -1280,7 +1362,7 @@ Unlink an env group from a service
 **Usage**
 
 ```text
-ferry env-group unlink <SERVICE> <GROUP>
+ferry env-group unlink [OPTIONS] <SERVICE> <GROUP>
 ```
 
 **Arguments**
@@ -1289,6 +1371,12 @@ ferry env-group unlink <SERVICE> <GROUP>
 |---|---|
 | `<SERVICE>` | Service name or id |
 | `<GROUP>` | Env group name or id |
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 
 ## `ferry blueprint`
 
@@ -1333,7 +1421,7 @@ Print (and try to open) a service's URL
 **Usage**
 
 ```text
-ferry open <NAME>
+ferry open [OPTIONS] <NAME>
 ```
 
 **Arguments**
@@ -1341,6 +1429,12 @@ ferry open <NAME>
 | Argument | Description |
 |---|---|
 | `<NAME>` | Service name or id |
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 
 ## `ferry deploy-hook`
 
@@ -1364,7 +1458,7 @@ Print the deploy hook URL (POST or GET it to deploy)
 **Usage**
 
 ```text
-ferry deploy-hook show <NAME>
+ferry deploy-hook show [OPTIONS] <NAME>
 ```
 
 **Arguments**
@@ -1372,6 +1466,12 @@ ferry deploy-hook show <NAME>
 | Argument | Description |
 |---|---|
 | `<NAME>` | Service name or id |
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 
 ## `ferry deploy-hook rotate`
 
@@ -1393,5 +1493,6 @@ ferry deploy-hook rotate [OPTIONS] <NAME>
 
 | Option | Description |
 |---|---|
+| `--environment <ENV>` | Environment the name is looked up in (default: production) |
 | `-y`, `--yes` | Don't ask for confirmation |
 

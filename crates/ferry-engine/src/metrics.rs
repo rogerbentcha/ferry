@@ -142,10 +142,11 @@ pub(crate) async fn containers(inner: &Inner, with_limits: bool) -> Result<Optio
             return Ok(None);
         }
     };
+    // Qualified names (`api.staging`): the same name in two environments reads as two.
     let services: HashMap<String, String> =
-        inner.store.list_services().await?.into_iter().map(|s| (s.id, s.name)).collect();
+        inner.store.list_services().await?.into_iter().map(|s| (s.id.clone(), s.qualified_name())).collect();
     let datastores: HashMap<String, String> =
-        inner.store.list_datastores().await?.into_iter().map(|d| (d.id, d.name)).collect();
+        inner.store.list_datastores().await?.into_iter().map(|d| (d.id.clone(), d.qualified_name())).collect();
     let mut rows = join_all(
         list.iter()
             .filter_map(|c| owner(c, &services, &datastores).map(|o| (c, o)))

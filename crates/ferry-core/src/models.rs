@@ -525,7 +525,8 @@ pub enum SourceKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Service {
     pub id: String,
-    /// Unique DNS-label name; also the private-network hostname.
+    /// DNS-label name, unique in its environment (another environment may use
+    /// it too); also the private-network hostname.
     pub name: String,
     /// The name of the environment the service belongs to (picked when it is
     /// created, never changed). Its instances and jobs join that
@@ -626,6 +627,13 @@ impl Service {
     /// (`shop.staging.example.com`).
     pub fn host_label(&self) -> String {
         host_label(&self.name, &self.environment)
+    }
+
+    /// The name that tells it apart on the whole server
+    /// ([`qualified_name`]): `web`, `web.staging`. Its images and containers
+    /// are named with it.
+    pub fn qualified_name(&self) -> String {
+        qualified_name(&self.name, &self.environment)
     }
 
     /// Publicly routed through the proxy (web services and static sites).
@@ -760,7 +768,8 @@ impl JobRun {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Datastore {
     pub id: String,
-    /// Unique DNS-label name; also the private-network hostname.
+    /// DNS-label name, unique in its environment (another environment may use
+    /// it too); also the private-network hostname.
     pub name: String,
     /// The name of the environment the datastore belongs to (picked when it
     /// is created, never changed): only that environment's services reach it.
@@ -816,6 +825,13 @@ impl Datastore {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    /// The name that tells it apart on the whole server
+    /// ([`qualified_name`]): `db`, `db.staging`. Its container and volume are
+    /// named with it.
+    pub fn qualified_name(&self) -> String {
+        qualified_name(&self.name, &self.environment)
     }
 
     /// Hostname on the private network (same as the name).
@@ -908,6 +924,15 @@ fn production() -> String {
 /// `<name>` in `production`, `<name>.<environment>` elsewhere: what comes
 /// before a domain in the hostnames of a service ([`Service::host_label`]).
 pub fn host_label(name: &str, environment: &str) -> String {
+    qualified_name(name, environment)
+}
+
+/// The name of a service or datastore on the whole server: `<name>` in
+/// `production`, `<name>.<environment>` elsewhere (`api.staging`), like its
+/// hostnames. Names are unique in their environment and hold no dot, so two
+/// resources never share one; production keeps the plain name, so the
+/// Docker names of a server set up before environments don't change.
+pub fn qualified_name(name: &str, environment: &str) -> String {
     if environment == PRODUCTION { name.to_string() } else { format!("{name}.{environment}") }
 }
 

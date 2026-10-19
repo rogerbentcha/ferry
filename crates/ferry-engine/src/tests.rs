@@ -649,6 +649,48 @@ async fn services_outside_production_are_routed_under_their_environment() {
     assert_ne!(f.routes.resolve("shop.localhost"), Resolution::Upstream(upstream), "production's host stays free");
 }
 
+/// The same name in two environments: each service keeps its own routes,
+/// and resolves its references to its own environment's datastores and
+/// services.
+#[tokio::test]
+async fn the_same_name_in_two_environments_stays_apart() {
+    let f = fixture(2).await;
+    staging(&f.store).await;
+    let api = service(&f.store, "api", ServiceType::WebService, |_| {}).await;
+    let staging_api = service(&f.store, "api", ServiceType::WebService, |s| s.environment = "staging".into()).await;
+    let (one, two): (std::net::SocketAddr, std::net::SocketAddr) =
+        ("127.0.0.1:4243".parse().unwrap(), "127.0.0.1:4244".parse().unwrap());
+    f.routes.set_service_routes(&api.id, &["one.invalid".into()], vec![one]);
+    f.routes.set_service_routes(&staging_api.id, &["two.invalid".into()], vec![two]);
+    for svc in [&api, &staging_api] {
+        let _busy = f.engine.inner.service_locks.try_lock(&svc.id).unwrap();
+        f.engine.refresh_routes(&svc.id).await.unwrap();
+    }
+    assert_eq!(f.routes.resolve("api.localhost:8080"), Resolution::Upstream(one));
+    assert_eq!(f.routes.resolve("api.staging.localhost:8080"), Resolution::Upstream(two));
+
+    // `db` in both: each `web` gets its own environment's.
+    let mut db = Datastore::new("db", DatastoreKind::Postgres);
+    db.password = "production-pw".into();
+    let mut staging_db = Datastore::new("db", DatastoreKind::Postgres);
+    staging_db.password = "staging-pw".into();
+    staging_db.environment = "staging".into();
+    f.store.create_datastore(&db).await.unwrap();
+    f.store.create_datastore(&staging_db).await.unwrap();
+    for (env, password, api_url) in [
+        ("production", "production-pw", "http://api.localhost:8080"),
+        ("staging", "staging-pw", "http://api.staging.localhost:8080"),
+    ] {
+        let web = service(&f.store, "web", ServiceType::WebService, |s| s.environment = env.into()).await;
+        f.store.set_env(&web.id, "DATABASE_URL", "${{datastore.db.connectionString}}").await.unwrap();
+        f.store.set_env(&web.id, "API_URL", "${{service.api.url}}").await.unwrap();
+        let vars = crate::spec::resolve_user_env(&f.engine.inner, &web).await.unwrap();
+        let get = |k: &str| vars.iter().find(|v| v.key == k).map(|v| v.value.clone()).unwrap();
+        assert!(get("DATABASE_URL").contains(&format!(":{password}@db:5432/")), "{env}: {}", get("DATABASE_URL"));
+        assert_eq!(get("API_URL"), api_url, "{env}");
+    }
+}
+
 #[tokio::test]
 async fn refresh_routes_and_suspend_route_states() {
     let f = fixture(2).await;
