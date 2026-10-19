@@ -178,7 +178,7 @@ each domain of the server. A server starts with one domain, its
 `--base-domain` (`localhost` by default), and you connect others while it
 runs — no restart, no deploy:
 
-1. **Connect it**: **Server → Domains → Connect a domain** in the
+1. **Connect it**: **Domains → Connect a domain** in the
    dashboard, or `ferry domains connect example.com`. A subdomain works too
    (`apps.example.com`).
 2. **Create one DNS record** where the DNS of the domain is managed (your
@@ -256,7 +256,7 @@ A server has one account, its administrator. `ferryd` prints a link
 |---|---|
 | The dashboard | the account's email and password. The session is an `HttpOnly`, `SameSite=Strict` cookie that ends 30 days after its last use; a request that changes something must also come from the dashboard's own origin |
 | A terminal | `ferry login --server URL`: the dashboard shows who asks and a code, you approve, and the terminal gets an API token of its own |
-| Scripts and CI | an API token created under **Server → Account** (named, optionally expiring, shown once): `FERRY_TOKEN`, or `Authorization: Bearer <token>` |
+| Scripts and CI | an API token created under **Account** (named, optionally expiring, shown once): `FERRY_TOKEN`, or `Authorization: Bearer <token>` |
 | Scripts on the server itself | the server token in `<data-dir>/api_token` (`0600`), which always works and is never printed |
 
 Tokens and sessions are stored as SHA-256 digests, the password as an Argon2id

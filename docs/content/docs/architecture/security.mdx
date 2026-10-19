@@ -26,7 +26,7 @@ After 10 failed sign-ins in 5 minutes, the server refuses each sign-in for a sho
 
 **What you do**
 
-- In **Server → Account**, look at the list of sessions. Sign out each browser that you do not know.
+- On the **Account** page, look at the list of sessions. Sign out each browser that you do not know.
 - If you forget the password, run the command below on the server. It signs each browser out. The API tokens continue to work.
 
 ```bash title="Terminal"
@@ -39,7 +39,7 @@ The <Term id="cli" />, scripts and <Term id="ci" /> prove their identity with an
 
 `ferry login` gets a token for one terminal. It prints the address of a page and a code. You open the page in the dashboard and approve the request. The request expires after 10 minutes. The CLI saves the server and the token in `~/.config/ferry/config.json`, with the mode `0600`.
 
-For CI and scripts, create a token in **Server → Account → New token**. The dashboard shows the token one time. Send it in a header:
+For CI and scripts, create a token in **Account → New token**. The dashboard shows the token one time. Send it in a header:
 
 ```bash title="Terminal"
 curl -H "Authorization: Bearer $FERRY_TOKEN" http://127.0.0.1:7878/api/v1/services
@@ -58,7 +58,7 @@ Two more secrets give access to the server:
 
 - Keep each token as secret as a root password.
 - Approve a `ferry login` only if the page shows the code of your terminal and your `user@host`. If not, deny the request.
-- In **Server → Account**, revoke each token that you do not use. The server refuses it immediately.
+- On the **Account** page, revoke each token that you do not use. The server refuses it immediately.
 
 ## Who can reach the dashboard
 
