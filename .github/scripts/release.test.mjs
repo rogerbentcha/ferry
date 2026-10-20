@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, test } from 'node:test'
@@ -16,6 +16,7 @@ import {
   parseVersion,
   plan,
   releaseNotes,
+  setNpmVersion,
   setWorkspaceVersion,
   workspaceVersion,
 } from './release.mjs'
@@ -147,6 +148,34 @@ strip = true
   })
 })
 
+describe('npm/ferry-cli/package.json', () => {
+  const manifest = {
+    name: 'ferry-cli',
+    version: '0.1.0',
+    bin: { ferry: 'bin/ferry.js' },
+    optionalDependencies: { 'ferry-cli-darwin-arm64': '0.1.0', 'ferry-cli-linux-x64': '0.1.0' },
+  }
+
+  test('setNpmVersion sets the version and pins each binary package to it', () => {
+    const updated = JSON.parse(setNpmVersion(JSON.stringify(manifest), '0.6.0'))
+    assert.deepEqual(updated, {
+      ...manifest,
+      version: '0.6.0',
+      optionalDependencies: { 'ferry-cli-darwin-arm64': '0.6.0', 'ferry-cli-linux-x64': '0.6.0' },
+    })
+  })
+
+  test('setNpmVersion takes X.Y.Z only', () => {
+    assert.throws(() => setNpmVersion(JSON.stringify(manifest), 'v0.6.0'), /not a version/)
+  })
+
+  test('the real package.json keeps every binary package at its own version', () => {
+    const path = fileURLToPath(new URL('../../npm/ferry-cli/package.json', import.meta.url))
+    const real = JSON.parse(readFileSync(path, 'utf8'))
+    for (const [name, version] of Object.entries(real.optionalDependencies)) assert.equal(version, real.version, name)
+  })
+})
+
 describe('releaseNotes', () => {
   test('grouped, oldest first, each change once', () => {
     // Newest first, as git log lists them.
@@ -259,7 +288,10 @@ describe('the command, on a real repository', () => {
 
   git('init', '-q', '-b', 'main')
   writeFileSync(join(dir, 'Cargo.toml'), '[workspace.package]\nversion = "0.1.0"\n')
-  git('add', 'Cargo.toml')
+  mkdirSync(join(dir, 'npm/ferry-cli'), { recursive: true })
+  const npm = { name: 'ferry-cli', version: '0.1.0', optionalDependencies: { 'ferry-cli-linux-x64': '0.1.0' } }
+  writeFileSync(join(dir, 'npm/ferry-cli/package.json'), `${JSON.stringify(npm, null, 2)}\n`)
+  git('add', 'Cargo.toml', 'npm/ferry-cli/package.json')
   commitAll('chore: start')
 
   test('before the first tag', () => {
@@ -334,6 +366,9 @@ describe('the command, on a real repository', () => {
   test('set-version', () => {
     release('set-version', '0.3.0')
     assert.equal(readFileSync(join(dir, 'Cargo.toml'), 'utf8'), '[workspace.package]\nversion = "0.3.0"\n')
+    const npm = JSON.parse(readFileSync(join(dir, 'npm/ferry-cli/package.json'), 'utf8'))
+    assert.equal(npm.version, '0.3.0')
+    assert.deepEqual(npm.optionalDependencies, { 'ferry-cli-linux-x64': '0.3.0' })
     assert.throws(() => release('set-version', 'latest'), /not a version: latest/)
   })
 })
