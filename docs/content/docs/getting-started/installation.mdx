@@ -94,7 +94,7 @@ The first line selects the archive of your CPU: `uname -m` prints `x86_64` or `a
 
 ### Build from source
 
-On macOS, build the two programs from the source.
+On macOS, build the two programs from the source. For the CLI only, [download it](#install-the-cli).
 
 ```bash title="Terminal"
 git clone https://github.com/rogerbentcha/ferry
@@ -156,11 +156,36 @@ The `ferry` command sends each of your commands to the API of `ferryd`. It works
 
 ### Install the CLI
 
-The install script, the release archive and the build all give you `ferry`. It is one <Term id="binary" /> with no dependencies. To control Ferry from another machine, copy `ferry` to that machine, for example to `/usr/local/bin`.
+The install script, the Linux archive and the build all give you `ferry`. It is one <Term id="binary" /> with no dependencies. To control Ferry from another machine, copy `ferry` to that machine, for example to `/usr/local/bin`.
+
+On a Mac, download `ferry` from the latest release. You need no build tools.
+
+```bash title="Terminal"
+archive=ferry-$(uname -m | sed 's/arm64/aarch64/')-apple-darwin.tar.gz
+curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/$archive
+curl -fsSLO https://github.com/rogerbentcha/ferry/releases/latest/download/SHA256SUMS
+shasum -a 256 -c --ignore-missing SHA256SUMS
+sudo mkdir -p /usr/local/bin
+sudo tar -xzf $archive -C /usr/local/bin ferry
+```
+
+The first line selects the archive of your Mac: `ferry-aarch64-apple-darwin.tar.gz` for <Term id="apple-silicon" />, `ferry-x86_64-apple-darwin.tar.gz` for an Intel CPU. The archive has only `ferry`, because the server runs on Linux. `ferry` runs on macOS 14 or newer. If the checksum is not correct, do not install the archive.
 
 ```bash title="Terminal"
 ferry --version
 ```
+
+<Accordions>
+  <Accordion title="If macOS blocks ferry">
+    If you downloaded the archive with a browser, macOS can refuse to open `ferry`. A message says that Apple cannot verify it. <Term id="gatekeeper" /> blocks this program because it has no Apple signature. Make sure that the checksum is correct. Then remove the mark that the browser put on the file:
+
+    ```bash title="Terminal"
+    sudo xattr -d com.apple.quarantine /usr/local/bin/ferry
+    ```
+
+    Or open **System Settings → Privacy & Security**. Click **Open Anyway** next to `ferry`. `curl` puts no mark on a file. Thus macOS does not block a `ferry` from the commands above.
+  </Accordion>
+</Accordions>
 
 ### Log in
 

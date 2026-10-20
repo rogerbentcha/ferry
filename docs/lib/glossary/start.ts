@@ -43,6 +43,17 @@ export const terms = {
     definition: 'The C library of most Linux systems. A program built with one version runs with that version or a newer one.',
   },
 
+  // --- Install the CLI on a Mac --------------------------------------------
+  'apple-silicon': {
+    term: 'Apple Silicon',
+    definition: 'The arm64 CPUs of Apple (M1 and newer), in the Macs since 2020. On a Mac, `uname -m` calls them `arm64`.',
+    see: ['arm64'],
+  },
+  gatekeeper: {
+    term: 'Gatekeeper',
+    definition: 'The part of macOS that checks a program from the internet before it opens. It can block a program with no Apple signature.',
+  },
+
   // --- Build Ferry ---------------------------------------------------------
   cargo: {
     term: 'cargo',
