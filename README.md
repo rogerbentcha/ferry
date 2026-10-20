@@ -57,9 +57,16 @@ sudo tar -xzf $archive -C /usr/local/bin ferryd ferry
 ferryd                                  # starts the server in the background; prints the dashboard URL and the link that creates your account
 ```
 
-On a Mac that only runs the CLI, the release has `ferry` alone for Apple Silicon and Intel
-(macOS 14+): `ferry-aarch64-apple-darwin.tar.gz` and `ferry-x86_64-apple-darwin.tar.gz`, checked with
-`shasum -a 256 -c --ignore-missing SHA256SUMS`.
+On a laptop that only runs the CLI, install it with npm (Node.js 22+; macOS 14+ on Apple Silicon or
+Intel, Linux x86_64 or arm64 with glibc 2.35+). No Rust needed, and `npm install -g ferry-cli@latest`
+upgrades it:
+
+```bash
+npm install -g ferry-cli
+```
+
+The release also has `ferry` alone for macOS: `ferry-aarch64-apple-darwin.tar.gz` and
+`ferry-x86_64-apple-darwin.tar.gz`, checked with `shasum -a 256 -c --ignore-missing SHA256SUMS`.
 
 Elsewhere (`ferryd` on macOS), build from source with Rust 1.89+ and Node.js 20+:
 
@@ -426,8 +433,11 @@ on 0.x), with `ferry-x86_64-unknown-linux-gnu.tar.gz` and `ferry-aarch64-unknown
 `ferry-x86_64-apple-darwin.tar.gz` (`ferry` alone, macOS 14+, built and run on macOS 15 arm64 and Intel),
 `install.sh` and `SHA256SUMS`. Before it publishes, a job runs
 `install.sh` with the new assets on a fresh Ubuntu 22.04 and 26.04 runner of each CPU (`.github/scripts/install.test.sh`):
-the cases that must stop, a first install, a rerun and an upgrade. If one build fails, nothing is published.
-The version is set in the release build only: `Cargo.toml` keeps `0.1.0`.
+the cases that must stop, a first install, a rerun and an upgrade, and another installs the npm packages
+with `npm install -g` on Linux and macOS of each CPU. If one build fails, nothing is published. After the
+GitHub release, `ferry-cli` and its four binary packages go to npm at the same version, with provenance
+([`npm/README.md`](npm/README.md)). The version is set in the release build only: `Cargo.toml` and
+`npm/ferry-cli/package.json` keep `0.1.0`.
 
 Crates: `ferry-core` (models, store, contracts) · `ferry-docker` · `ferry-build` ·
 `ferry-proxy` · `ferry-tls` · `ferry-engine` · `ferry-api` (REST + SSE + OpenAPI) ·

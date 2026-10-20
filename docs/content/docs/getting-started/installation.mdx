@@ -94,7 +94,7 @@ The first line selects the archive of your CPU: `uname -m` prints `x86_64` or `a
 
 ### Build from source
 
-On macOS, build the two programs from the source. For the CLI only, [download it](#install-the-cli).
+On macOS, build the two programs from the source. For the CLI only, [install it with npm](#install-the-cli).
 
 ```bash title="Terminal"
 git clone https://github.com/rogerbentcha/ferry
@@ -156,9 +156,20 @@ The `ferry` command sends each of your commands to the API of `ferryd`. It works
 
 ### Install the CLI
 
-The install script, the Linux archive and the build all give you `ferry`. It is one <Term id="binary" /> with no dependencies. To control Ferry from another machine, copy `ferry` to that machine, for example to `/usr/local/bin`.
+On your laptop, install `ferry` with <Term id="npm" />. You need Node.js 22 or newer.
 
-On a Mac, download `ferry` from the latest release. You need no build tools.
+```bash title="Terminal"
+npm install -g ferry-cli
+ferry --version
+```
+
+npm installs the `ferry` <Term id="binary" /> of your system. You need no build tools. `ferry` runs on macOS 14 or newer, with <Term id="apple-silicon" /> or an Intel CPU. It also runs on Linux x86_64 or arm64 with <Term id="glibc" /> 2.35 or newer. On another system, `ferry` tells you the supported systems.
+
+To upgrade, run `npm install -g ferry-cli@latest`. You stay logged in, because the login is in the <Term id="config-file" />, not in the package.
+
+The install script, the Linux archive and the build also give you `ferry`. It is one file with no dependencies. To control Ferry from another machine, copy `ferry` to that machine, for example to `/usr/local/bin`.
+
+On a Mac with no Node.js, download `ferry` from the latest release.
 
 ```bash title="Terminal"
 archive=ferry-$(uname -m | sed 's/arm64/aarch64/')-apple-darwin.tar.gz
@@ -169,13 +180,12 @@ sudo mkdir -p /usr/local/bin
 sudo tar -xzf $archive -C /usr/local/bin ferry
 ```
 
-The first line selects the archive of your Mac: `ferry-aarch64-apple-darwin.tar.gz` for <Term id="apple-silicon" />, `ferry-x86_64-apple-darwin.tar.gz` for an Intel CPU. The archive has only `ferry`, because the server runs on Linux. `ferry` runs on macOS 14 or newer. If the checksum is not correct, do not install the archive.
-
-```bash title="Terminal"
-ferry --version
-```
+The first line selects the archive of your Mac: `ferry-aarch64-apple-darwin.tar.gz` for Apple Silicon, `ferry-x86_64-apple-darwin.tar.gz` for an Intel CPU. The archive has only `ferry`, because the server runs on Linux. If the checksum is not correct, do not install the archive.
 
 <Accordions>
+  <Accordion title="If npm cannot write to its folder">
+    If `npm install -g` stops with `EACCES`, your Node.js is in a system folder. Run the command with `sudo`, or install Node.js with a version manager, for example [nvm](https://github.com/nvm-sh/nvm).
+  </Accordion>
   <Accordion title="If macOS blocks ferry">
     If you downloaded the archive with a browser, macOS can refuse to open `ferry`. A message says that Apple cannot verify it. <Term id="gatekeeper" /> blocks this program because it has no Apple signature. Make sure that the checksum is correct. Then remove the mark that the browser put on the file:
 
