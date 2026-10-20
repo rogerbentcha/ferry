@@ -435,7 +435,8 @@ on 0.x), with `ferry-x86_64-unknown-linux-gnu.tar.gz` and `ferry-aarch64-unknown
 `install.sh` with the new assets on a fresh Ubuntu 22.04 and 26.04 runner of each CPU (`.github/scripts/install.test.sh`):
 the cases that must stop, a first install, a rerun and an upgrade, and another installs the npm packages
 with `npm install -g` on Linux and macOS of each CPU. If one build fails, nothing is published. After the
-GitHub release, `ferry-cli` and its four binary packages go to npm at the same version, with provenance
+GitHub release, `ferry-cli` and its four binary packages go to npm at the same version, with provenance, if
+the CLI changed since the version npm has: a release of the server only leaves npm as it is
 ([`npm/README.md`](npm/README.md)). The version is set in the release build only: `Cargo.toml` and
 `npm/ferry-cli/package.json` keep `0.1.0`.
 

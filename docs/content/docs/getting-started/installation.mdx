@@ -167,6 +167,8 @@ npm installs the `ferry` <Term id="binary" /> of your system. You need no build 
 
 To upgrade, run `npm install -g ferry-cli@latest`. You stay logged in, because the login is in the <Term id="config-file" />, not in the package.
 
+npm gets a new `ferry-cli` only when the CLI changes. Thus `ferry --version` can show an older version than your server. This is normal: you have the latest `ferry`.
+
 The install script, the Linux archive and the build also give you `ferry`. It is one file with no dependencies. To control Ferry from another machine, copy `ferry` to that machine, for example to `/usr/local/bin`.
 
 On a Mac with no Node.js, download `ferry` from the latest release.

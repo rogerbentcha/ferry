@@ -7,7 +7,8 @@
 # made from them on each system. The publish job tags and publishes the
 # release, only after every asset is built and checked: a release has the
 # archives of all the systems, or there is no release. Then npm gets ferry-cli
-# at the same version (npm/README.md).
+# at the same version, when the CLI changed since the version npm has
+# (npm/README.md).
 name: Release
 
 on:
@@ -486,8 +487,10 @@ jobs:
           fi
 
   # After the GitHub release: npm gets ferry-cli and its binary packages, made
-  # from the same assets. A re-run of this job publishes only the packages npm
-  # does not have at this version yet. The one-time npm setup: npm/README.md.
+  # from the same assets, when the CLI changed since the version npm has. A
+  # release of the server only leaves npm as it is (npm.mjs plan). A re-run of
+  # this job publishes only the packages npm does not have at this version yet.
+  # The one-time npm setup: npm/README.md.
   npm:
     name: Publish to npm
     needs: [plan, publish]
@@ -502,25 +505,49 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the tag of the version npm has
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # Read when the job runs: a re-run of an old release sees that npm has a
+      # newer ferry-cli, and does not move `latest` back.
+      - name: Has the CLI changed?
+        id: plan
+        run: node .github/scripts/npm.mjs plan "$VERSION" | tee -a "$GITHUB_OUTPUT"
+      - name: Summary
+        env:
+          PUBLISH: ${{ steps.plan.outputs.publish }}
+          REASON: ${{ steps.plan.outputs.reason }}
+        run: |
+          if [ "$PUBLISH" = true ]; then
+            echo "::notice title=npm gets ferry-cli $VERSION::$REASON"
+            { echo "## npm gets ferry-cli $VERSION"; echo; echo "$REASON"; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice title=ferry-cli $VERSION not published::$REASON"
+            { echo "## ferry-cli $VERSION not published"; echo; echo "$REASON"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
       # Trusted publishing needs npm 11.5.1 or newer. Node 22 comes with npm 10.
       - name: Install npm 11
+        if: steps.plan.outputs.publish == 'true'
         run: |
           npm install -g npm@11.6.2
           npm --version
-      - uses: actions/download-artifact@v4
+      - if: steps.plan.outputs.publish == 'true'
+        uses: actions/download-artifact@v4
         with:
           name: release-assets
           path: dist
       - name: Set the version
+        if: steps.plan.outputs.publish == 'true'
         run: node .github/scripts/release.mjs set-version "$VERSION"
       - name: Stage the packages
+        if: steps.plan.outputs.publish == 'true'
         run: |
           (cd dist && sha256sum -c --ignore-missing SHA256SUMS)
           node .github/scripts/npm.mjs stage dist "$RUNNER_TEMP/npm"
       - name: Publish ferry-cli ${{ needs.plan.outputs.version }}
+        if: steps.plan.outputs.publish == 'true'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |

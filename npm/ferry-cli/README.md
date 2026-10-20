@@ -22,7 +22,9 @@ Windows and Alpine (musl) are not supported yet: `ferry` says so and names the s
 To upgrade, run `npm install -g ferry-cli@latest`. Your login stays: it is in
 `~/.config/ferry/config.json`, not in the package.
 
-The version of this package is the version of the Ferry release, and of `ferry --version`.
+The version of this package, and of `ferry --version`, is the version of the Ferry release that
+published it. npm gets a new version only when the CLI changes. Thus it can be older than the
+version of your server: you still have the latest `ferry`.
 
 - Documentation: [Install Ferry → Set up the CLI](https://github.com/rogerbentcha/ferry/blob/main/docs/content/docs/getting-started/installation.mdx#set-up-the-cli),
   [CLI reference](https://github.com/rogerbentcha/ferry/blob/main/docs/content/docs/reference/cli.mdx)
