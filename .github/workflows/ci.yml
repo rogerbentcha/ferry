@@ -1,5 +1,7 @@
 # Checks every push to main/dev and every pull request on Linux — the
 # platform Ferry servers run on (Linux-only code paths, cgroups, OOM scores).
+# The ferry CLI also ships for macOS (release.yml): it is built and tested on
+# a Mac too.
 name: CI
 
 on:
@@ -33,6 +35,24 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --tests -- -D warnings
       - run: cargo test --workspace --no-fail-fast
+
+  # A macOS break of the CLI shows here, not at release time. The CLI's
+  # end-to-end test stays on Linux: it needs Docker.
+  cli-macos:
+    name: Rust — CLI on macOS
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-macos
+      - run: cargo clippy -p ferry-cli --tests -- -D warnings
+      - run: cargo test -p ferry-cli --no-fail-fast
 
   e2e:
     name: Rust — Docker end-to-end
