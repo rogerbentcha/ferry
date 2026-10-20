@@ -1,10 +1,11 @@
 # Ships a version on every push to main that holds a feature, a fix or a
 # breaking change. The version comes from the Conventional Commits since the
 # last `vX.Y.Z` tag (.github/scripts/release.mjs). The builds make ferryd (the
-# dashboard inside) and ferry for Linux x86_64 and arm64, and install.sh
-# installs them on a fresh Ubuntu 22.04 and 26.04 of each CPU. The last job
-# tags and publishes the release, only after every asset is built and
-# checked: a release has the archives of all the CPUs, or there is no release.
+# dashboard inside) and ferry for Linux x86_64 and arm64, and ferry alone for
+# macOS Apple Silicon and Intel; install.sh installs the Linux ones on a fresh
+# Ubuntu 22.04 and 26.04 of each CPU. The last job tags and publishes the
+# release, only after every asset is built and checked: a release has the
+# archives of all the systems, or there is no release.
 name: Release
 
 on:
@@ -37,11 +38,13 @@ env:
   CARGO_INCREMENTAL: 0
   # Same toolchain as ci.yml.
   RUST_TOOLCHAIN: "1.95.0"
-  # One archive per build of the matrix below. Asset names carry no version,
-  # so releases/latest/download/<name> always works.
+  # One archive per build of the build and build-macos matrices. Asset names
+  # carry no version, so releases/latest/download/<name> always works.
   ARCHIVES: >-
     ferry-x86_64-unknown-linux-gnu.tar.gz
     ferry-aarch64-unknown-linux-gnu.tar.gz
+    ferry-aarch64-apple-darwin.tar.gz
+    ferry-x86_64-apple-darwin.tar.gz
 
 jobs:
   plan:
@@ -211,10 +214,111 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # ferry alone: ferryd runs on Linux only.
+  build-macos:
+    name: Build — macOS ${{ matrix.cpu }} (CLI)
+    needs: plan
+    if: needs.plan.outputs.release == 'true' || github.event_name != 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cpu: arm64
+            target: aarch64-apple-darwin
+            runner: macos-15
+          - cpu: x86_64
+            target: x86_64-apple-darwin
+            runner: macos-15-intel
+    # Each CPU builds on a runner of that CPU, and the binary runs there.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      CPU: ${{ matrix.cpu }}
+      ARCHIVE: ferry-${{ matrix.target }}.tar.gz
+      # The oldest macOS the binary runs on. The linker writes it in the
+      # binary (minos), and the C code of SQLite and ring is built for it too.
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      # In this checkout only, as on Linux.
+      - name: Set the version
+        run: |
+          node .github/scripts/release.mjs set-version "$VERSION"
+          cargo update --workspace
+      - name: Build ferry
+        run: cargo build --release --locked --target "$TARGET" -p ferry-cli
+
+      # Apple Silicon runs signed code only: the run also checks that `strip`
+      # (profile.release) left the linker's signature valid.
+      - name: Check the version, the CPU and the macOS version
+        working-directory: target/${{ matrix.target }}/release
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          printed=$(./ferry --version)
+          [ "$printed" = "ferry $VERSION" ] || fail "ferry --version printed '$printed', not 'ferry $VERSION'"
+          archs=$(lipo -archs ferry)
+          [ "$archs" = "$CPU" ] || fail "ferry is built for '$archs', not $CPU"
+          # awk reads to the end: an early exit would stop otool with SIGPIPE (pipefail).
+          minos=$(otool -l ferry | awk '$1 == "minos" && !found { print $2; found = 1 }')
+          echo "ferry needs macOS $minos"
+          [ "$minos" = "$MACOSX_DEPLOYMENT_TARGET" ] || fail "ferry needs macOS $minos, not $MACOSX_DEPLOYMENT_TARGET"
+
+      - name: Package
+        run: |
+          mkdir dist
+          # Owned by root, as on Linux. No macOS metadata: no ._ files
+          # (COPYFILE_DISABLE) and no extended attributes, which `sudo tar -x`
+          # would put back on the user's files.
+          COPYFILE_DISABLE=1 tar --uid 0 --gid 0 --numeric-owner --no-xattrs -czf "dist/$ARCHIVE" \
+            -C "target/$TARGET/release" ferry -C "$GITHUB_WORKSPACE" LICENSE
+          # bsdtar lists the uid and the gid in columns 3 and 4.
+          tar -tzvf "dist/$ARCHIVE" --numeric-owner
+          if tar -tzvf "dist/$ARCHIVE" --numeric-owner | awk '$3 != 0 || $4 != 0 { bad = 1 } END { exit !bad }'; then
+            echo "::error::$ARCHIVE has files not owned by 0/0"
+            exit 1
+          fi
+          files=$(tar -tzf "dist/$ARCHIVE" | LC_ALL=C sort | tr '\n' ' ')
+          if [ "$files" != "LICENSE ferry " ]; then
+            echo "::error::$ARCHIVE holds $files, not LICENSE and ferry"
+            exit 1
+          fi
+      # The commands of the docs (Install the CLI): this Mac picks this
+      # archive, and the ferry in it runs.
+      - name: Unpack and run
+        run: |
+          archive=ferry-$(uname -m | sed 's/arm64/aarch64/')-apple-darwin.tar.gz
+          if [ "$archive" != "$ARCHIVE" ]; then
+            echo "::error::on this Mac the docs download $archive, not $ARCHIVE"
+            exit 1
+          fi
+          mkdir "$RUNNER_TEMP/bin"
+          tar -xzf "dist/$ARCHIVE" -C "$RUNNER_TEMP/bin" ferry
+          printed=$("$RUNNER_TEMP/bin/ferry" --version)
+          if [ "$printed" != "ferry $VERSION" ]; then
+            echo "::error::the ferry of $ARCHIVE printed '$printed', not 'ferry $VERSION'"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
   # SHA256SUMS covers every archive: it waits for all the builds.
   assets:
     name: Checksums
-    needs: build
+    needs: [build, build-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -281,7 +385,7 @@ jobs:
 
   publish:
     name: Tag and publish
-    needs: [plan, build, assets, install]
+    needs: [plan, build, build-macos, assets, install]
     if: github.event_name == 'push' && needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
