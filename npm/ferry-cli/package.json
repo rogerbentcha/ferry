@@ -1,0 +1,38 @@
+{
+  "name": "ferry-cli",
+  "version": "0.1.0",
+  "description": "The ferry CLI: deploy apps to your Ferry server from your laptop.",
+  "keywords": [
+    "ferry",
+    "deploy",
+    "self-hosted",
+    "paas",
+    "docker",
+    "cli"
+  ],
+  "homepage": "https://github.com/rogerbentcha/ferry/blob/main/docs/content/docs/getting-started/installation.mdx#install-the-cli",
+  "bugs": "https://github.com/rogerbentcha/ferry/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rogerbentcha/ferry.git",
+    "directory": "npm/ferry-cli"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "ferry": "bin/ferry.js"
+  },
+  "files": [
+    "bin/ferry.js",
+    "lib/platform.js"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "optionalDependencies": {
+    "ferry-cli-darwin-arm64": "0.1.0",
+    "ferry-cli-darwin-x64": "0.1.0",
+    "ferry-cli-linux-arm64": "0.1.0",
+    "ferry-cli-linux-x64": "0.1.0"
+  }
+}

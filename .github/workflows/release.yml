@@ -3,9 +3,11 @@
 # last `vX.Y.Z` tag (.github/scripts/release.mjs). The builds make ferryd (the
 # dashboard inside) and ferry for Linux x86_64 and arm64, and ferry alone for
 # macOS Apple Silicon and Intel; install.sh installs the Linux ones on a fresh
-# Ubuntu 22.04 and 26.04 of each CPU. The last job tags and publishes the
+# Ubuntu 22.04 and 26.04 of each CPU, and npm installs the ferry-cli packages
+# made from them on each system. The publish job tags and publishes the
 # release, only after every asset is built and checked: a release has the
-# archives of all the systems, or there is no release.
+# archives of all the systems, or there is no release. Then npm gets ferry-cli
+# at the same version (npm/README.md).
 name: Release
 
 on:
@@ -17,7 +19,9 @@ on:
       - .github/workflows/release.yml
       - .github/scripts/release.mjs
       - .github/scripts/install.test.sh
+      - .github/scripts/npm.mjs
       - install.sh
+      - npm/**
   workflow_dispatch:
 
 # One release at a time, in push order: each run reads the tag of the one before.
@@ -383,9 +387,74 @@ jobs:
         if: failure()
         run: sudo journalctl -u ferryd --no-pager -n 100 || true
 
+  # The npm packages of the release assets, packed and installed with
+  # `npm install -g` as a user installs them: npm picks the binary package of
+  # this system, and the `ferry` command runs it.
+  npm-check:
+    name: npm — ${{ matrix.system }}
+    needs: [plan, assets]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: Linux x86_64
+            package: ferry-cli-linux-x64
+            runner: ubuntu-22.04
+          - system: Linux arm64
+            package: ferry-cli-linux-arm64
+            runner: ubuntu-22.04-arm
+          - system: macOS arm64
+            package: ferry-cli-darwin-arm64
+            runner: macos-15
+          - system: macOS x86_64
+            package: ferry-cli-darwin-x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      PACKAGE: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      # In this checkout only, as in the builds.
+      - name: Set the version
+        run: node .github/scripts/release.mjs set-version "$VERSION"
+      - name: Stage the packages
+        run: node .github/scripts/npm.mjs stage dist "$RUNNER_TEMP/npm"
+      # npm refuses a package of another system named on its command line: only
+      # this system's binary package goes next to ferry-cli. --ignore-scripts:
+      # the packages have none, and ferry must work without them.
+      - name: Pack and install
+        run: |
+          mkdir "$RUNNER_TEMP/packs"
+          npm pack "$RUNNER_TEMP/npm/ferry-cli" "$RUNNER_TEMP/npm/$PACKAGE" --pack-destination "$RUNNER_TEMP/packs"
+          npm install -g --prefix "$RUNNER_TEMP/global" --ignore-scripts \
+            "$RUNNER_TEMP/packs/ferry-cli-$VERSION.tgz" "$RUNNER_TEMP/packs/$PACKAGE-$VERSION.tgz"
+      - name: Run ferry
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          ferry="$RUNNER_TEMP/global/bin/ferry"
+          printed=$("$ferry" --version)
+          [ "$printed" = "ferry $VERSION" ] || fail "ferry --version printed '$printed', not 'ferry $VERSION'"
+          for name in ferry-cli "$PACKAGE"; do
+            version=$(node -p "require('$RUNNER_TEMP/global/lib/node_modules/$name/package.json').version")
+            [ "$version" = "$VERSION" ] || fail "npm installed $name $version, not $VERSION"
+          done
+          # The exit code of ferry goes through the launcher: 2 for a usage error.
+          status=0
+          "$ferry" no-such-command 2> /dev/null || status=$?
+          [ "$status" = 2 ] || fail "ferry no-such-command exited with $status, not 2"
+
   publish:
     name: Tag and publish
-    needs: [plan, build, build-macos, assets, install]
+    needs: [plan, build, build-macos, assets, install, npm-check]
     if: github.event_name == 'push' && needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -415,3 +484,53 @@ jobs:
           if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = true ]; then
             gh release delete "$TAG" --yes
           fi
+
+  # After the GitHub release: npm gets ferry-cli and its binary packages, made
+  # from the same assets. A re-run of this job publishes only the packages npm
+  # does not have at this version yet. The one-time npm setup: npm/README.md.
+  npm:
+    name: Publish to npm
+    needs: [plan, publish]
+    if: github.event_name == 'push' && needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # Trusted publishing (OIDC) and the provenance of each package.
+      id-token: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Trusted publishing needs npm 11.5.1 or newer. Node 22 comes with npm 10.
+      - name: Install npm 11
+        run: |
+          npm install -g npm@11.6.2
+          npm --version
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Set the version
+        run: node .github/scripts/release.mjs set-version "$VERSION"
+      - name: Stage the packages
+        run: |
+          (cd dist && sha256sum -c --ignore-missing SHA256SUMS)
+          node .github/scripts/npm.mjs stage dist "$RUNNER_TEMP/npm"
+      - name: Publish ferry-cli ${{ needs.plan.outputs.version }}
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Trusted publishing needs no token. Without it (the first publish of
+          # a package), npm uses the NPM_TOKEN secret: the file names the
+          # variable, not the token.
+          if [ -n "$NPM_TOKEN" ]; then
+            # shellcheck disable=SC2016 # npm reads ${NPM_TOKEN} itself
+            echo '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' > "$RUNNER_TEMP/.npmrc"
+            export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/.npmrc"
+          fi
+          node .github/scripts/npm.mjs publish "$RUNNER_TEMP/npm"
+          echo "Published https://www.npmjs.com/package/ferry-cli/v/$VERSION" >> "$GITHUB_STEP_SUMMARY"

@@ -17,7 +17,8 @@
 //
 //   node .github/scripts/release.mjs set-version <X.Y.Z>
 //     Writes the version into [workspace.package] of Cargo.toml, so the
-//     binaries report it (`ferry --version`, ferryd.json, the OpenAPI info).
+//     binaries report it (`ferry --version`, ferryd.json, the OpenAPI info),
+//     and into npm/ferry-cli/package.json, so npm gets the same version.
 //     The release build does this in its own checkout: the repository keeps
 //     its version, and no commit goes back to main.
 
@@ -33,6 +34,8 @@ const BREAKING_FOOTER = /^BREAKING[ -]CHANGE: */
 const FOOTER_TOKEN = /^[A-Za-z-]+(: | #)/
 // The types of the commit skill (.claude/skills/commit); others count as "other".
 const TYPES = ['feat', 'fix', 'docs', 'refactor', 'perf', 'test', 'build', 'ci', 'style', 'chore', 'revert']
+// The npm package of the CLI (.github/scripts/npm.mjs).
+const NPM_PACKAGE = 'npm/ferry-cli/package.json'
 
 /** `[major, minor, patch]` of `X.Y.Z` or `vX.Y.Z`, or null. */
 export function parseVersion(text) {
@@ -116,6 +119,18 @@ export function setWorkspaceVersion(cargoToml, version) {
   const lines = cargoToml.split('\n')
   lines[line.index] = lines[line.index].replace(`"${line.value}"`, `"${version}"`)
   return lines.join('\n')
+}
+
+/**
+ * The package.json of the npm package ferry-cli with `version` set, and each
+ * of its `optionalDependencies` (the binary of each system) pinned to it.
+ */
+export function setNpmVersion(packageJson, version) {
+  if (!parseVersion(version) || version.startsWith('v')) throw new Error(`not a version: ${version}`)
+  const manifest = JSON.parse(packageJson)
+  manifest.version = version
+  for (const name of Object.keys(manifest.optionalDependencies ?? {})) manifest.optionalDependencies[name] = version
+  return `${JSON.stringify(manifest, null, 2)}\n`
 }
 
 function workspaceVersionLine(cargoToml) {
@@ -252,6 +267,7 @@ function main([command, ...args]) {
     const [version] = args
     if (!version) throw new Error('set-version needs a version')
     writeFileSync('Cargo.toml', setWorkspaceVersion(readFileSync('Cargo.toml', 'utf8'), version))
+    writeFileSync(NPM_PACKAGE, setNpmVersion(readFileSync(NPM_PACKAGE, 'utf8'), version))
     return
   }
   throw new Error('usage: release.mjs plan [--notes <file>] [--publish] | set-version <X.Y.Z>')

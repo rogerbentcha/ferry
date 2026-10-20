@@ -97,7 +97,7 @@ jobs:
       - run: npm run build
 
   release-scripts:
-    name: Release scripts
+    name: Release scripts and npm package
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -105,8 +105,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # The version and notes of a release (.github/workflows/release.yml).
-      - run: node --test .github/scripts/release.test.mjs
+      # The version and notes of a release, the npm packages made from it
+      # (.github/workflows/release.yml), and the `ferry` launcher of ferry-cli.
+      - run: node --test .github/scripts/*.test.mjs npm/ferry-cli/test/*.test.js
 
   install-script:
     name: Install script — ShellCheck
