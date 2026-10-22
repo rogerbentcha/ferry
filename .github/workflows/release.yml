@@ -493,6 +493,7 @@ jobs:
   # The one-time npm setup: npm/README.md.
   npm:
     name: Publish to npm
+    environment: prod
     needs: [plan, publish]
     if: github.event_name == 'push' && needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
